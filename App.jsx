@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
   Calendar,
@@ -17,6 +17,8 @@ import {
   Mail,
   MessageCircle,
   UserRound,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 const SUPABASE_URL =
@@ -30,6 +32,7 @@ const SUPABASE_ANON_KEY =
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
 const cityImageMemoryCache = {};
+const CHAT_CACHE_KEY = "tp_chat_cache_v1";
 
 const TODAY_STR = new Date().toISOString().slice(0, 10);
 function getTodayStr() {
@@ -54,15 +57,127 @@ function buildParticipantAvatarUrl(seed) {
   return `https://api.dicebear.com/9.x/initials/svg?seed=${safe}`;
 }
 
+function isValidEmail(value) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(String(value || "").trim());
+}
+
 function parseEmails(input) {
   const raw = String(input || "");
   const candidates = raw
     .split(/[,;\s]+/g)
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const unique = [...new Set(candidates)];
-  return unique.filter((mail) => emailRegex.test(mail));
+  return unique.filter((mail) => isValidEmail(mail));
+}
+
+function buildParticipantsFromInvites(invitedEmailsInput) {
+  const invites = Array.isArray(invitedEmailsInput)
+    ? [...new Set(invitedEmailsInput.map((m) => String(m || "").trim().toLowerCase()).filter((m) => isValidEmail(m)))]
+    : [];
+  return ["Moi", ...invites];
+}
+
+function canonicalParticipants(participantsInput, invitedEmailsInput) {
+  const invited = Array.isArray(invitedEmailsInput)
+    ? [...new Set(invitedEmailsInput.map((m) => String(m || "").trim().toLowerCase()).filter((m) => isValidEmail(m)))]
+    : [];
+  // Single source of truth for budget sharing:
+  // only "Moi" + invited emails (participants list can contain legacy noise).
+  return ["Moi", ...invited];
+}
+
+function loadChatCacheFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(CHAT_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch (_e) {
+    return {};
+  }
+}
+
+function saveChatCacheToStorage(cache) {
+  try {
+    window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(cache || {}));
+  } catch (_e) {
+    // ignore storage errors
+  }
+}
+
+function getCurrentUserDisplayName(session) {
+  const first = String(session?.user?.user_metadata?.first_name || "").trim();
+  const last = String(session?.user?.user_metadata?.last_name || "").trim();
+  const full = `${first} ${last}`.trim();
+  if (full) return full;
+  const fromMeta = String(session?.user?.user_metadata?.full_name || "").trim();
+  if (fromMeta) return fromMeta;
+  const emailLocal = String(session?.user?.email || "").split("@")[0] || "";
+  return emailLocal || "Moi";
+}
+
+function initialsFromLabel(label) {
+  const raw = String(label || "").trim();
+  if (!raw) return "??";
+  const emailLocal = raw.includes("@") ? raw.split("@")[0] : raw;
+  const tokens = emailLocal
+    .split(/[\s._-]+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (tokens.length >= 2) return `${tokens[0][0] || ""}${tokens[tokens.length - 1][0] || ""}`.toUpperCase();
+  const t = tokens[0] || "";
+  return (t.slice(0, 2) || "??").toUpperCase();
+}
+
+function participantDisplayFromRaw(value, currentUserDisplayName) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Membre";
+  if (raw.toLowerCase() === "moi") return String(currentUserDisplayName || "Moi");
+  if (!raw.includes("@")) return raw;
+  const local = raw.split("@")[0] || "";
+  const pretty = local
+    .split(/[._-]+/g)
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return pretty || raw;
+}
+
+function getCityGlassTheme(cityInput) {
+  const city = resolveCanonicalCity(cityInput);
+  const c = String(city || "").toLowerCase();
+
+  const theme = (a, b, edge = "rgba(255,255,255,0.38)") => ({
+    overlay: `linear-gradient(135deg, ${a}, ${b})`,
+    edge,
+  });
+
+  if (c.includes("dubai") || c.includes("doha") || c.includes("abu dhabi")) {
+    return theme("rgba(249,115,22,0.44)", "rgba(15,23,42,0.32)");
+  }
+  if (c.includes("marrakech") || c.includes("le caire") || c.includes("tunis")) {
+    return theme("rgba(244,114,182,0.38)", "rgba(251,146,60,0.34)");
+  }
+  if (c.includes("san francisco") || c.includes("los angeles") || c.includes("miami")) {
+    return theme("rgba(250,204,21,0.34)", "rgba(14,165,233,0.30)");
+  }
+  if (c.includes("bali") || c.includes("sydney") || c.includes("auckland")) {
+    return theme("rgba(129,140,248,0.36)", "rgba(217,70,239,0.30)");
+  }
+  if (c.includes("paphos") || c.includes("athenes") || c.includes("lisbonne") || c.includes("porto")) {
+    return theme("rgba(16,185,129,0.34)", "rgba(14,165,233,0.30)");
+  }
+  if (c.includes("istanbul")) {
+    return theme("rgba(59,130,246,0.40)", "rgba(99,102,241,0.34)");
+  }
+  if (c.includes("lyon") || c.includes("paris") || c.includes("london") || c.includes("berlin")) {
+    return theme("rgba(71,85,105,0.42)", "rgba(30,41,59,0.30)");
+  }
+  return theme("rgba(15,23,42,0.34)", "rgba(15,23,42,0.26)");
 }
 
 function normalizeCityInput(value) {
@@ -562,16 +677,14 @@ async function fetchActivityImageFromUnsplash(activityLike) {
 
 function normalizeTrip(trip) {
   const normalizedTitle = formatCityName(trip?.title || trip?.destination || trip?.name || "Voyage");
+  const invites = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
   return {
     ...trip,
     title: String(normalizedTitle || "Voyage"),
     start_date: toYMD(trip?.start_date, getTodayStr()),
     end_date: toYMD(trip?.end_date, getTodayStr()),
-    participants:
-      Array.isArray(trip?.participants) && trip.participants.length > 0
-        ? trip.participants
-        : ["Moi"],
-    invited_emails: Array.isArray(trip?.invited_emails) ? trip.invited_emails : [],
+    participants: canonicalParticipants(trip?.participants, invites),
+    invited_emails: invites,
     fixed_url: String(trip?.fixed_url || ""),
   };
 }
@@ -905,6 +1018,40 @@ function AuthView() {
   const [profilePhotoPreview, setProfilePhotoPreview] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [invitePromptOpen, setInvitePromptOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteTripName, setInviteTripName] = useState("");
+  const [inviteFirstName, setInviteFirstName] = useState("");
+  const [inviteLastName, setInviteLastName] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const invite = params.get("invite");
+      const invitedEmail = String(params.get("email") || "").trim();
+      const invitedTrip = String(params.get("trip") || "").trim();
+      if (invite !== "1" || !invitedEmail) return;
+      setInviteEmail(invitedEmail);
+      setInviteTripName(invitedTrip);
+      setMode("signup");
+      setInvitePromptOpen(true);
+    } catch (_e) {
+      // ignore malformed URL params
+    }
+  }, []);
+
+  const clearInviteParams = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("invite");
+      url.searchParams.delete("email");
+      url.searchParams.delete("trip");
+      window.history.replaceState({}, "", url.toString());
+    } catch (_e) {
+      // ignore history issues
+    }
+  };
 
   const submit = async () => {
     const safeEmail = String(email || "").trim();
@@ -975,6 +1122,48 @@ function AuthView() {
       setMsg("Email de reinitialisation envoye. Verifie ta boite mail.");
     } catch (e) {
       setMsg(String(e?.message || "Erreur envoi email de reinitialisation."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const completeInviteSignup = async () => {
+    const safeFirst = String(inviteFirstName || "").trim();
+    const safeLast = String(inviteLastName || "").trim();
+    const safePassword = String(invitePassword || "");
+    const safeInviteEmail = String(inviteEmail || "").trim();
+    if (!safeInviteEmail || !safeFirst || !safeLast || !safePassword) {
+      setMsg("Prenom, nom et mot de passe sont requis pour rejoindre ce voyage.");
+      return;
+    }
+
+    setLoading(true);
+    setMsg("");
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: safeInviteEmail,
+        password: safePassword,
+        options: {
+          data: {
+            first_name: safeFirst,
+            last_name: safeLast,
+            full_name: `${safeFirst} ${safeLast}`.trim(),
+            invited_email: safeInviteEmail,
+            invited_trip: String(inviteTripName || "").trim(),
+          },
+        },
+      });
+      if (error) throw error;
+
+      setFirstName(safeFirst);
+      setLastName(safeLast);
+      setEmail(safeInviteEmail);
+      setPassword("");
+      setInvitePromptOpen(false);
+      clearInviteParams();
+      setMsg("Compte cree. Verifie ton email puis connecte-toi.");
+    } catch (e) {
+      setMsg(String(e?.message || "Impossible de creer le compte invitation."));
     } finally {
       setLoading(false);
     }
@@ -1067,6 +1256,7 @@ function AuthView() {
         <button
           onClick={() =>
             setMode((m) => {
+              if (invitePromptOpen) return "signup";
               const next = m === "signin" ? "signup" : "signin";
               if (next === "signin") {
                 setFirstName("");
@@ -1079,11 +1269,13 @@ function AuthView() {
           }
           className="mt-4 w-full text-sm text-slate-600 underline"
         >
-          {mode === "signin"
+          {invitePromptOpen
+            ? "Invitation en cours - creation de compte requise"
+            : mode === "signin"
             ? "Pas de compte ? Creer un compte"
             : "Deja un compte ? Se connecter"}
         </button>
-        {mode === "signin" ? (
+        {mode === "signin" && !invitePromptOpen ? (
           <button
             onClick={forgotPassword}
             disabled={loading}
@@ -1098,6 +1290,48 @@ function AuthView() {
           </div>
         ) : null}
       </div>
+      {invitePromptOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[3rem] bg-white/95 p-6 shadow-2xl ring-1 ring-slate-200/70">
+            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Invitation voyage</h3>
+            <p className="mt-2 text-sm text-slate-700">
+              {inviteTripName ? `Tu as ete invite(e) au voyage ${inviteTripName}.` : "Tu as ete invite(e) a un voyage."}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Email invite: {String(inviteEmail || "-")}</p>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <input
+                value={inviteFirstName}
+                onChange={(e) => setInviteFirstName(e.target.value)}
+                placeholder="Prenom"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              />
+              <input
+                value={inviteLastName}
+                onChange={(e) => setInviteLastName(e.target.value)}
+                placeholder="Nom"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              />
+            </div>
+            <input
+              type="password"
+              value={invitePassword}
+              onChange={(e) => setInvitePassword(e.target.value)}
+              placeholder="Mot de passe"
+              className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            />
+            <div className="mt-4">
+              <button
+                onClick={completeInviteSignup}
+                disabled={loading}
+                className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                {loading ? "Creation..." : "Creer mon compte pour rejoindre le voyage"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1406,6 +1640,7 @@ function ShareModal({ open, onClose, trip }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: invitedEmails,
+          invite_base_url: window.location.origin,
           trip: {
             title: String(trip?.title || "Voyage"),
             startDate: formatDate(trip?.start_date),
@@ -1521,7 +1756,7 @@ function TricountModal({ open, onClose, trip, onSave }) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Ajouter un nom"
+            placeholder="Ajouter un email participant"
             className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <button
@@ -2573,8 +2808,10 @@ function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, 
   const [editTime, setEditTime] = useState("");
   const safeActivities = Array.isArray(activities) ? activities : [];
   const total = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
-  const participants =
-    Array.isArray(trip.participants) && trip.participants.length > 0 ? trip.participants : ["Moi"];
+  const participants = canonicalParticipants(
+    Array.isArray(trip?.participants) ? trip.participants : [],
+    Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
+  );
   const share = participants.length > 0 ? total / participants.length : total;
 
   const sortedActivities = [...safeActivities].sort((a, b) => {
@@ -2766,6 +3003,8 @@ function ChatHubView({
   votes,
   onVote,
 }) {
+  const currentUserDisplayName = getCurrentUserDisplayName(session);
+  const messagesContainerRef = useRef(null);
   const sortedTrips = useMemo(() => {
     return [...(trips || [])].sort((a, b) => {
       const as = String(a?.start_date || "");
@@ -2798,6 +3037,13 @@ function ChatHubView({
 
   const currentUserId = String(session?.user?.id || "");
 
+  useEffect(() => {
+    if (!activeTrip) return;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages, activeTrip]);
+
   return (
     <section className="space-y-5">
       <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
@@ -2806,20 +3052,65 @@ function ChatHubView({
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
               const active = String(chatTripId) === String(trip.id);
+              const participantsRaw = canonicalParticipants(trip?.participants, trip?.invited_emails);
+              const participantLabels = participantsRaw.map((p) =>
+                String(p).toLowerCase() === "moi" ? currentUserDisplayName : String(p)
+              );
               return (
                 <button
                   key={String(trip.id)}
                   onClick={() => setChatTripId(String(trip.id))}
-                  className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                  className={`relative overflow-hidden rounded-2xl border px-4 py-3 text-left text-sm transition ${
                     active
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                      ? "border-white/55 text-white shadow-[0_16px_34px_rgba(2,6,23,0.24)]"
+                      : "border-white/42 text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)]"
                   }`}
                 >
-                  <p className="font-medium">{String(trip.title)}</p>
-                  <p className={`text-xs ${active ? "text-white/80" : "text-slate-500"}`}>
+                  <div
+                    className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
+                    style={{
+                      filter: active
+                        ? "blur(9px) saturate(1.2) brightness(0.95)"
+                        : "blur(10px) saturate(1.12) brightness(0.92)",
+                    }}
+                  >
+                    <CityImage title={String(trip?.title || "voyage")} />
+                  </div>
+                  <div
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      background:
+                        active
+                          ? "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))"
+                          : "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
+                    }}
+                  />
+                  <div
+                    className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
+                    style={{ backgroundColor: active ? "rgba(2,6,23,0.09)" : "rgba(2,6,23,0.075)" }}
+                  />
+                  <div className="relative">
+                    <p className="font-medium">{String(trip.title)}</p>
+                    <p className="text-xs text-white/85">
                     {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
-                  </p>
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {participantLabels.slice(0, 4).map((label) => (
+                        <span
+                          key={`${String(trip.id)}-${String(label)}`}
+                          title={String(label)}
+                          className="inline-grid h-6 w-6 place-items-center rounded-full bg-white/25 text-[10px] font-semibold text-white ring-1 ring-white/30"
+                        >
+                          {initialsFromLabel(label)}
+                        </span>
+                      ))}
+                      {participantLabels.length > 4 ? (
+                        <span className="text-[10px] text-white/85">
+                          +{participantLabels.length - 4}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
                 </button>
               );
             })
@@ -2830,19 +3121,64 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+          <div className="relative w-full max-w-6xl">
+            <button
+              onClick={() => setChatTripId("")}
+              className="absolute -top-2 right-0 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50"
+              title="Fermer la conversation"
+            >
+              <X size={16} />
+            </button>
+            <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+              <div className="rounded-[2rem] bg-white p-5 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200">
             <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Discussion - {String(activeTrip.title)}</h3>
-            <div className="mt-3 max-h-[320px] space-y-2 overflow-auto pr-1">
+            <div className="mt-2 flex flex-wrap gap-2">
+              {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
+                .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
+                .map((label) => (
+                  <span
+                    key={`active-${String(label)}`}
+                    title={String(label)}
+                    className="inline-grid h-7 w-7 place-items-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
+                  >
+                    {initialsFromLabel(label)}
+                  </span>
+                ))}
+            </div>
+            <div
+              ref={messagesContainerRef}
+              className="mt-3 h-[52vh] max-h-[560px] min-h-[260px] space-y-2 overflow-y-auto pr-1"
+            >
               {(chatMessages || []).length > 0 ? (
-                chatMessages.map((msg, idx) => (
-                  <div key={`${String(msg?.id || "m")}-${idx}`} className="rounded-2xl bg-slate-100 px-3 py-2">
-                    <p className="text-xs text-slate-500">
-                      {String(msg?.author_name || msg?.author_email || "Membre")}
-                    </p>
-                    <p className="text-sm text-slate-800">{String(msg?.content || "")}</p>
-                  </div>
-                ))
+                chatMessages.map((msg, idx) => {
+                  const mine =
+                    (currentUserId && String(msg?.author_id || "") === currentUserId) ||
+                    (!!session?.user?.email &&
+                      String(msg?.author_email || "").toLowerCase() === String(session?.user?.email || "").toLowerCase());
+                  const authorLabel = String(msg?.author_name || msg?.author_email || (mine ? "Moi" : "Membre"));
+                  return (
+                    <div
+                      key={`${String(msg?.id || "m")}-${idx}`}
+                      className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                    >
+                      <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
+                        <p className={`mb-1 px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}>
+                          {authorLabel}
+                        </p>
+                        <div
+                          className={`rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
+                            mine
+                              ? "rounded-br-md bg-[#0A84FF] text-white"
+                              : "rounded-bl-md bg-slate-200 text-slate-900"
+                          }`}
+                        >
+                          {String(msg?.content || "")}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500">Aucun message pour ce voyage.</p>
               )}
@@ -2851,6 +3187,12 @@ function ChatHubView({
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onSendMessage();
+                  }
+                }}
                 placeholder="Ecrire un message..."
                 className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
               />
@@ -2862,53 +3204,59 @@ function ChatHubView({
                 Envoyer
               </button>
             </div>
-          </div>
+              </div>
 
-          <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
-            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes activites</h3>
-            <div className="mt-3 space-y-2">
-              {tripActivities.length > 0 ? (
-                tripActivities.map((activity) => {
-                  const list = votesByActivity[String(activity.id)] || [];
-                  const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
-                  const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
-                  return (
-                    <div key={String(activity.id)} className="rounded-2xl bg-slate-100 px-3 py-3">
-                      <p className="text-sm font-medium text-slate-900">
-                        {String(activity?.title || activity?.name || "Activite")}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {String(activity?.date || "")} {String(activity?.time || "")}
-                      </p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <button
-                          onClick={() => onVote(String(activity.id), 1)}
-                          className={`rounded-xl px-3 py-1 text-xs ${
-                            Number(mine?.value || 0) === 1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
-                          }`}
-                        >
-                          +1
-                        </button>
-                        <button
-                          onClick={() => onVote(String(activity.id), -1)}
-                          className={`rounded-xl px-3 py-1 text-xs ${
-                            Number(mine?.value || 0) === -1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
-                          }`}
-                        >
-                          -1
-                        </button>
-                        <span className="text-xs font-medium text-slate-700">Score: {score}</span>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-sm text-slate-500">Aucune activite a voter.</p>
-              )}
+              <div className="rounded-[2rem] bg-white p-5 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200">
+                <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes activites</h3>
+                <div className="mt-3 max-h-[560px] overflow-y-auto space-y-2 pr-1">
+                  {tripActivities.length > 0 ? (
+                    tripActivities.map((activity) => {
+                      const list = votesByActivity[String(activity.id)] || [];
+                      const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
+                      const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
+                      return (
+                        <div key={String(activity.id)} className="rounded-2xl bg-slate-100 px-3 py-3">
+                          <p className="text-sm font-medium text-slate-900">
+                            {String(activity?.title || activity?.name || "Activite")}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {String(activity?.date || "")} {String(activity?.time || "")}
+                          </p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              onClick={() => onVote(String(activity.id), 1)}
+                              className={`rounded-xl px-3 py-1 text-xs ${
+                                Number(mine?.value || 0) === 1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                              }`}
+                            >
+                              +1
+                            </button>
+                            <button
+                              onClick={() => onVote(String(activity.id), -1)}
+                              className={`rounded-xl px-3 py-1 text-xs ${
+                                Number(mine?.value || 0) === -1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                              }`}
+                            >
+                              -1
+                            </button>
+                            <span className="text-xs font-medium text-slate-700">Score: {score}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-sm text-slate-500">Aucune activite a voter.</p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="rounded-[2rem] border border-slate-200/70 bg-white/92 px-5 py-6 text-sm text-slate-600 shadow-[0_10px_30px_rgba(2,6,23,0.06)]">
+          Selectionne un voyage dans la liste "Groupes voyages" pour ouvrir sa conversation.
+        </div>
+      )}
     </section>
   );
 }
@@ -2936,6 +3284,7 @@ export default function App() {
   const [selectedTripId, setSelectedTripId] = useState("");
   const [chatTripId, setChatTripId] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
+  const [chatMessagesByTrip, setChatMessagesByTrip] = useState(() => loadChatCacheFromStorage());
   const [chatInput, setChatInput] = useState("");
   const [activityVotes, setActivityVotes] = useState([]);
   const [chatMessagesLocal, setChatMessagesLocal] = useState({});
@@ -2943,6 +3292,8 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
   const [monthCursor, setMonthCursor] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
+  const [budgetUpcomingOpen, setBudgetUpcomingOpen] = useState(false);
+  const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
 
   const selectedTrip = trips.find((t) => String(t.id) === String(selectedTripId)) || null;
   const uiTitle =
@@ -3244,16 +3595,16 @@ export default function App() {
   }, [selectedTripId, selectedTrip]);
 
   useEffect(() => {
-    if (!chatTripId && trips.length > 0) {
-      const sorted = [...trips].sort((a, b) => String(a?.start_date || "").localeCompare(String(b?.start_date || "")));
-      if (sorted[0]?.id) setChatTripId(String(sorted[0].id));
-    }
     if (trips.length === 0) {
       setChatTripId("");
       setChatMessages([]);
       setActivityVotes([]);
     }
-  }, [trips, chatTripId]);
+  }, [trips]);
+
+  useEffect(() => {
+    saveChatCacheToStorage(chatMessagesByTrip);
+  }, [chatMessagesByTrip]);
 
   useEffect(() => {
     const loadChatData = async () => {
@@ -3262,6 +3613,11 @@ export default function App() {
         setActivityVotes([]);
         setChatActivities([]);
         return;
+      }
+
+      const cachedMessages = chatMessagesByTrip[chatTripId];
+      if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+        setChatMessages(cachedMessages);
       }
 
       try {
@@ -3282,9 +3638,19 @@ export default function App() {
           .eq("trip_id", chatTripId)
           .order("created_at", { ascending: true });
         if (error) throw error;
-        setChatMessages(data || []);
+        const sortedMessages = (data || []).slice().sort((a, b) =>
+          String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
+        );
+        setChatMessages(sortedMessages);
+        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sortedMessages }));
       } catch (_e) {
-        setChatMessages(chatMessagesLocal[chatTripId] || []);
+        // Keep durable cache first, then in-memory local fallback.
+        const cached = chatMessagesByTrip[chatTripId];
+        if (Array.isArray(cached) && cached.length > 0) {
+          setChatMessages(cached);
+        } else {
+          setChatMessages(chatMessagesLocal[chatTripId] || []);
+        }
       }
 
       try {
@@ -3329,7 +3695,11 @@ export default function App() {
             .select("*")
             .eq("trip_id", chatTripId)
             .order("created_at", { ascending: true });
-          setChatMessages(fresh || []);
+          const sortedMessages = (fresh || []).slice().sort((a, b) =>
+            String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
+          );
+          setChatMessages(sortedMessages);
+          setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sortedMessages }));
           return;
         }
         const msg = String(error?.message || "");
@@ -3353,6 +3723,10 @@ export default function App() {
         content,
       };
       setChatMessages((prev) => [...(prev || []), localMsg]);
+      setChatMessagesByTrip((prev) => ({
+        ...prev,
+        [chatTripId]: [...(prev[chatTripId] || []), localMsg],
+      }));
       setChatMessagesLocal((prev) => ({
         ...prev,
         [chatTripId]: [...(prev[chatTripId] || []), localMsg],
@@ -3416,16 +3790,21 @@ export default function App() {
       }
 
       let body = {
+        invited_emails:
+          Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
+            ? payload.invited_emails
+            : [],
         title: safeTitle,
         name: safeTitle,
         destination: formatCityName(payload?.destination || payload?.title || safeTitle),
         start_date: String(payload.start_date || getTodayStr()),
         end_date: String(payload.end_date || getTodayStr()),
-        participants: ["Moi"],
-        invited_emails:
+        participants: canonicalParticipants(
+          [],
           Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
             ? payload.invited_emails
-            : [],
+            : []
+        ),
         fixed_url: String(payload.fixed_url || ""),
         owner_id: ownerId,
       };
@@ -3659,14 +4038,65 @@ export default function App() {
   const saveParticipants = async (list) => {
     if (!tricountTrip) return;
     try {
-      const participants = list && list.length > 0 ? list : ["Moi"];
-      const { error } = await supabase.from("trips").update({ participants }).eq("id", tricountTrip.id);
+      const existingInvited = Array.isArray(tricountTrip?.invited_emails)
+        ? tricountTrip.invited_emails.map((m) => String(m || "").trim().toLowerCase()).filter((m) => isValidEmail(m))
+        : [];
+      const existingInvitedSet = new Set(existingInvited);
+      const rawList = Array.isArray(list) ? list : [];
+      const newlyAddedInviteEmails = [...new Set(
+        rawList
+          .map((p) => String(p || "").trim().toLowerCase())
+          .filter((p) => isValidEmail(p) && !existingInvitedSet.has(p))
+      )];
+      const nextInvitedEmails = [...new Set([...existingInvited, ...newlyAddedInviteEmails])];
+
+      const participants = canonicalParticipants(
+        list && list.length > 0 ? list : [],
+        nextInvitedEmails
+      );
+      const { error } = await supabase
+        .from("trips")
+        .update({ participants, invited_emails: nextInvitedEmails })
+        .eq("id", tricountTrip.id);
       if (error) throw error;
       setTrips((prev) =>
         (prev || []).map((trip) =>
-          String(trip?.id) === String(tricountTrip?.id) ? normalizeTrip({ ...trip, participants }) : trip
+          String(trip?.id) === String(tricountTrip?.id)
+            ? normalizeTrip({ ...trip, participants, invited_emails: nextInvitedEmails })
+            : trip
         )
       );
+      if (newlyAddedInviteEmails.length > 0) {
+        try {
+          const inviteResp = await fetch(getInviteApiUrl(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: newlyAddedInviteEmails,
+              invite_base_url: window.location.origin,
+              trip: {
+                title: String(tricountTrip?.title || "Voyage"),
+                startDate: formatDate(tricountTrip?.start_date),
+                endDate: formatDate(tricountTrip?.end_date),
+                link: String(tricountTrip?.fixed_url || ""),
+              },
+            }),
+          });
+          const inviteData = await inviteResp.json().catch(() => ({}));
+          if (!inviteResp.ok) {
+            throw new Error(String(inviteData?.error || "Erreur envoi invitations"));
+          }
+          setNotice(`${newlyAddedInviteEmails.length} participant(s) invite(s) par email.`);
+        } catch (inviteErr) {
+          setNotice(
+            `Participants enregistres, mais envoi mail impossible: ${String(
+              inviteErr?.message || "erreur inconnue"
+            )}`
+          );
+        }
+      } else {
+        setNotice("");
+      }
       setTricountTrip(null);
     } catch (e) {
       setNotice(String(e?.message || "Erreur participants"));
@@ -3689,15 +4119,21 @@ export default function App() {
       const previousInvitedSet = new Set(previousInvitedEmails.map((m) => String(m || "").toLowerCase().trim()).filter(Boolean));
 
       let payload = {
+        invited_emails:
+          Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
+            ? trip.invited_emails
+            : [],
         title: safeTitle,
         name: safeTitle,
         destination: safeTitle,
         start_date: String(trip.start_date || getTodayStr()),
         end_date: String(trip.end_date || getTodayStr()),
-        invited_emails:
+        participants: canonicalParticipants(
+          Array.isArray(currentTrip?.participants) ? currentTrip.participants : [],
           Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
             ? trip.invited_emails
-            : [],
+            : []
+        ),
         fixed_url: String(trip.fixed_url || ""),
       };
       for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -3713,6 +4149,13 @@ export default function App() {
                 ? trip.invited_emails
                 : [];
           const nextFixedUrl = String(payload?.fixed_url || trip?.fixed_url || "");
+          const nextParticipants =
+            Array.isArray(payload?.participants) && payload.participants.length > 0
+              ? payload.participants
+              : canonicalParticipants(
+                  Array.isArray(currentTrip?.participants) ? currentTrip.participants : [],
+                  nextInvited
+                );
           const newlyAddedInvites = nextInvited.filter((mail) => {
             const lower = String(mail || "").toLowerCase().trim();
             return !!lower && !previousInvitedSet.has(lower);
@@ -3728,6 +4171,7 @@ export default function App() {
                     destination: nextTitle,
                     start_date: nextStart,
                     end_date: nextEnd,
+                    participants: nextParticipants,
                     invited_emails: nextInvited,
                     fixed_url: nextFixedUrl,
                   })
@@ -3750,6 +4194,7 @@ export default function App() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   to: newlyAddedInvites,
+                  invite_base_url: window.location.origin,
                   trip: {
                     title: nextTitle,
                     startDate: formatDate(nextStart),
@@ -3890,11 +4335,37 @@ export default function App() {
           <div className="space-y-4">
             <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
               {selectedTrip ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="relative overflow-hidden rounded-2xl border border-white/50 px-4 py-3 shadow-[0_12px_28px_rgba(2,6,23,0.12)]">
+                  <div
+                    className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
+                    style={{ filter: "blur(10px) saturate(1.15) brightness(0.94)" }}
+                  >
+                    <CityImage title={String(selectedTrip?.title || "voyage")} />
+                  </div>
+                  <div
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      background:
+                        "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
+                    }}
+                  />
+                  <div
+                    className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
+                    style={{ backgroundColor: "rgba(2,6,23,0.11)" }}
+                  />
+                  <div className="relative flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Voyage actif</p>
-                    <h3 className="text-lg font-semibold text-slate-900">{String(selectedTrip.title || "Voyage")}</h3>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-[10px] uppercase tracking-[0.34em] text-slate-200">Voyage actif</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white" style={{ backgroundColor: ACCENT }}>
+                        <MapPin size={10} className="mr-1" />
+                        Destination
+                      </span>
+                    </div>
+                    <h3 className="mt-2 text-2xl font-extrabold uppercase leading-none tracking-[0.02em] text-white">
+                      {String(selectedTrip.title || "Voyage")}
+                    </h3>
+                    <p className="mt-1 text-xs text-white/85">
                       {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
                     </p>
                   </div>
@@ -3904,7 +4375,7 @@ export default function App() {
                         <div
                           key={String(mail)}
                           title={String(mail)}
-                          className="h-9 w-9 overflow-hidden rounded-full bg-white ring-2 ring-white shadow-sm"
+                          className="h-9 w-9 overflow-hidden rounded-full bg-white/85 ring-2 ring-white/85 shadow-sm"
                         >
                           <img
                             src={buildParticipantAvatarUrl(mail)}
@@ -3916,11 +4387,12 @@ export default function App() {
                     </div>
                     <button
                       onClick={() => setPlannerInviteOpen(true)}
-                      className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
+                      className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
                       title="Inviter par email"
                     >
                       <Mail size={16} />
                     </button>
+                  </div>
                   </div>
                 </div>
               ) : (
@@ -3973,22 +4445,46 @@ export default function App() {
                     </div>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
-                        <h3 className="mb-3 text-xs uppercase tracking-[0.3em] text-sky-700">Prochainement</h3>
-                        <div className="grid gap-4">
-                        {sections.upcoming.length > 0
-                          ? sections.upcoming.map(renderBudgetTrip)
-                          : <p className="text-sm text-slate-500">Aucun voyage a venir.</p>}
-                        </div>
+                        <button
+                          onClick={() => setBudgetUpcomingOpen((v) => !v)}
+                          className="mb-3 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
+                        >
+                          <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">Prochainement</h3>
+                          {budgetUpcomingOpen ? (
+                            <ChevronDown size={16} className="text-sky-700" />
+                          ) : (
+                            <ChevronRight size={16} className="text-sky-700" />
+                          )}
+                        </button>
+                        {budgetUpcomingOpen ? (
+                          <div className="grid gap-4">
+                            {sections.upcoming.length > 0
+                              ? sections.upcoming.map(renderBudgetTrip)
+                              : <p className="text-sm text-slate-500">Aucun voyage a venir.</p>}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                        <h3 className="mb-3 text-xs uppercase tracking-[0.3em] text-slate-600">Souvenirs</h3>
-                        <div className="grid gap-4">
-                        {sections.memories.length > 0
-                          ? sections.memories.map(renderBudgetTrip)
-                          : <p className="text-sm text-slate-500">Aucun souvenir.</p>}
-                        </div>
+                        <button
+                          onClick={() => setBudgetMemoriesOpen((v) => !v)}
+                          className="mb-3 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
+                        >
+                          <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">Souvenirs</h3>
+                          {budgetMemoriesOpen ? (
+                            <ChevronDown size={16} className="text-slate-600" />
+                          ) : (
+                            <ChevronRight size={16} className="text-slate-600" />
+                          )}
+                        </button>
+                        {budgetMemoriesOpen ? (
+                          <div className="grid gap-4">
+                            {sections.memories.length > 0
+                              ? sections.memories.map(renderBudgetTrip)
+                              : <p className="text-sm text-slate-500">Aucun souvenir.</p>}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </>
