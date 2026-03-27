@@ -16,6 +16,7 @@ import {
   Plane,
   Mail,
   MessageCircle,
+  UserRound,
 } from "lucide-react";
 
 const SUPABASE_URL =
@@ -41,6 +42,16 @@ function formatDate(value) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function getInviteApiUrl() {
+  const base = String(import.meta.env.VITE_INVITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+  return base ? `${base}/api/send-invite` : "/api/send-invite";
+}
+
+function buildParticipantAvatarUrl(seed) {
+  const safe = encodeURIComponent(String(seed || "participant"));
+  return `https://api.dicebear.com/9.x/initials/svg?seed=${safe}`;
 }
 
 function parseEmails(input) {
@@ -627,6 +638,44 @@ function toYMD(value, fallback) {
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
+async function fileToAvatarDataUrl(file) {
+  if (!file) return "";
+  if (!String(file.type || "").startsWith("image/")) throw new Error("Le fichier doit etre une image.");
+  if (Number(file.size || 0) > 5 * 1024 * 1024) throw new Error("Image trop lourde (max 5 Mo).");
+
+  const originalDataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Impossible de lire l'image."));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Image invalide."));
+    image.src = originalDataUrl;
+  });
+
+  const maxSize = 160;
+  const ratio = Math.max(1, Math.max(img.width, img.height) / maxSize);
+  const targetW = Math.max(1, Math.round(img.width / ratio));
+  const targetH = Math.max(1, Math.round(img.height / ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return originalDataUrl;
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  const compressed = canvas.toDataURL("image/jpeg", 0.82);
+  if (compressed.length > 220000) {
+    // Last-resort fallback to stronger compression to stay metadata-friendly.
+    return canvas.toDataURL("image/jpeg", 0.62);
+  }
+  return compressed;
+}
+
 function classifyTrips(list) {
   const now = [];
   const upcoming = [];
@@ -852,6 +901,8 @@ function AuthView() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [profilePhotoFile, setProfilePhotoFile] = useState(null);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -872,6 +923,10 @@ function AuthView() {
     setMsg("");
     try {
       if (mode === "signup") {
+        let avatarUrl = "";
+        if (profilePhotoFile) {
+          avatarUrl = await fileToAvatarDataUrl(profilePhotoFile);
+        }
         const { error } = await supabase.auth.signUp({
           email: safeEmail,
           password: safePassword,
@@ -880,6 +935,7 @@ function AuthView() {
               first_name: safeFirstName,
               last_name: safeLastName,
               full_name: `${safeFirstName} ${safeLastName}`.trim(),
+              avatar_url: avatarUrl || "",
             },
           },
         });
@@ -950,6 +1006,39 @@ function AuthView() {
                 placeholder="Nom"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Photo de profil (optionnel)</p>
+                <div className="flex items-center gap-3">
+                  <div className="h-11 w-11 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
+                    {profilePhotoPreview ? (
+                      <img src={profilePhotoPreview} alt="Apercu profil" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="grid h-full w-full place-items-center text-slate-500">
+                        <UserRound size={18} />
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      setProfilePhotoFile(f);
+                      if (!f) {
+                        setProfilePhotoPreview("");
+                        return;
+                      }
+                      try {
+                        const preview = URL.createObjectURL(f);
+                        setProfilePhotoPreview(preview);
+                      } catch (_e) {
+                        setProfilePhotoPreview("");
+                      }
+                    }}
+                    className="w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                  />
+                </div>
+              </div>
             </>
           ) : null}
           <input
@@ -982,6 +1071,8 @@ function AuthView() {
               if (next === "signin") {
                 setFirstName("");
                 setLastName("");
+                setProfilePhotoFile(null);
+                setProfilePhotoPreview("");
               }
               return next;
             })
@@ -1091,12 +1182,86 @@ function TripFormModal({ open, onClose, onCreate }) {
   );
 }
 
+function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
+  const [emailInput, setEmailInput] = useState("");
+  const [emails, setEmails] = useState([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setEmailInput("");
+    setEmails(Array.isArray(initialEmails) ? [...new Set(initialEmails.map((m) => String(m || "").trim()).filter(Boolean))] : []);
+  }, [open, initialEmails]);
+
+  if (!open) return null;
+
+  const addEmail = () => {
+    const parsed = parseEmails(emailInput);
+    const one = parsed[0];
+    if (!one) return;
+    setEmails((prev) => [...new Set([...(prev || []), one])]);
+    setEmailInput("");
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[3rem] bg-white/95 p-6 shadow-2xl ring-1 ring-slate-200/70">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-[0.32em] text-slate-500">{String(title || "Inviter des participants")}</h3>
+          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            type="email"
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            placeholder="email@exemple.com"
+            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+          />
+          <button
+            onClick={addEmail}
+            className={`rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+            style={GLASS_ACCENT_STYLE}
+          >
+            Ajouter
+          </button>
+        </div>
+
+        <div className="mt-4 flex min-h-12 flex-wrap gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+          {emails.length > 0 ? emails.map((mail) => (
+            <span key={mail} className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs text-slate-700 ring-1 ring-slate-200">
+              {String(mail)}
+              <button
+                onClick={() => setEmails((prev) => prev.filter((m) => String(m) !== String(mail)))}
+                className="rounded-full p-0.5 text-slate-500 hover:bg-slate-100"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          )) : <p className="text-xs text-slate-500">Aucun participant invite.</p>}
+        </div>
+
+        <button
+          onClick={() => onSave(Array.isArray(emails) ? emails : [])}
+          className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+          style={GLASS_ACCENT_STYLE}
+        >
+          Enregistrer les invitations
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EditTripModal({ open, onClose, trip, onSave }) {
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState(getTodayStr());
   const [endDate, setEndDate] = useState(getTodayStr());
   const [fixedUrl, setFixedUrl] = useState("");
-  const [inviteInput, setInviteInput] = useState("");
+  const [invitedEmails, setInvitedEmails] = useState([]);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
   useEffect(() => {
     if (!trip) return;
@@ -1104,11 +1269,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
     setStartDate(toYMD(trip?.start_date, getTodayStr()));
     setEndDate(toYMD(trip?.end_date, getTodayStr()));
     setFixedUrl(String(trip?.fixed_url || ""));
-    setInviteInput(
-      Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
-        ? trip.invited_emails.join(", ")
-        : ""
-    );
+    setInvitedEmails(Array.isArray(trip?.invited_emails) ? trip.invited_emails : []);
   }, [trip]);
 
   if (!open || !trip) return null;
@@ -1149,12 +1310,18 @@ function EditTripModal({ open, onClose, trip, onSave }) {
             placeholder="Lien partage (optionnel)"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <input
-            value={inviteInput}
-            onChange={(e) => setInviteInput(e.target.value)}
-            placeholder="Invites e-mail (ex: ami@mail.com, autre@mail.com)"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-          />
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <p className="text-sm text-slate-700">
+              Invites: <span className="font-semibold">{invitedEmails.length}</span>
+            </p>
+            <button
+              onClick={() => setInviteModalOpen(true)}
+              className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
+              title="Inviter par email"
+            >
+              <Mail size={14} />
+            </button>
+          </div>
           <button
             onClick={() =>
               onSave({
@@ -1163,7 +1330,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
                 start_date: startDate,
                 end_date: endDate,
                 fixed_url: String(fixedUrl || "").trim(),
-                invited_emails: parseEmails(inviteInput),
+                invited_emails: invitedEmails,
               })
             }
             className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
@@ -1173,16 +1340,29 @@ function EditTripModal({ open, onClose, trip, onSave }) {
           </button>
         </div>
       </div>
+      <InviteEmailsModal
+        open={inviteModalOpen}
+        onClose={() => setInviteModalOpen(false)}
+        title="Inviter des participants"
+        initialEmails={invitedEmails}
+        onSave={(emails) => {
+          setInvitedEmails(Array.isArray(emails) ? emails : []);
+          setInviteModalOpen(false);
+        }}
+      />
     </div>
   );
 }
 
 function ShareModal({ open, onClose, trip }) {
-  if (!open || !trip) return null;
   const [copyState, setCopyState] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendState, setSendState] = useState("");
+  if (!open || !trip) return null;
+
   const invitedEmails = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
-  const recap = `Voyage: ${String(trip.title)}\nDates: ${formatDate(trip.start_date)} - ${formatDate(
-    trip.end_date
+  const recap = `Voyage: ${String(trip?.title || "Voyage")}\nDates: ${formatDate(trip?.start_date)} - ${formatDate(
+    trip?.end_date
   )}\nLien: ${String(trip.fixed_url || "Aucun lien")}\nInvites: ${
     invitedEmails.length > 0 ? invitedEmails.join(", ") : "Aucun"
   }`;
@@ -1209,6 +1389,41 @@ function ShareModal({ open, onClose, trip }) {
       setCopyState(ok ? "copied" : "error");
     } catch (_err) {
       setCopyState("error");
+    }
+  };
+
+  const sendInvitesByEmail = async () => {
+    if (sending) return;
+    if (invitedEmails.length === 0) {
+      setSendState("Aucun email invite a envoyer.");
+      return;
+    }
+    setSending(true);
+    setSendState("");
+    try {
+      const resp = await fetch(getInviteApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: invitedEmails,
+          trip: {
+            title: String(trip?.title || "Voyage"),
+            startDate: formatDate(trip?.start_date),
+            endDate: formatDate(trip?.end_date),
+            link: String(trip?.fixed_url || ""),
+          },
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.status === 404) {
+        throw new Error("API mail introuvable. Configure VITE_INVITE_API_BASE_URL ou utilise vercel dev.");
+      }
+      if (!resp.ok) throw new Error(String(data?.error || "Erreur envoi invitation"));
+      setSendState("Invitations envoyees avec succes.");
+    } catch (e) {
+      setSendState(String(e?.message || "Impossible d'envoyer les invitations."));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -1246,21 +1461,36 @@ function ShareModal({ open, onClose, trip }) {
             })}
           </div>
         ) : null}
-        <button
-          onClick={copy}
-          className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-          style={
-            copyState === "copied"
-              ? { background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)" }
-              : GLASS_ACCENT_STYLE
-          }
-        >
-          {copyState === "copied"
-            ? "Copié"
-            : copyState === "error"
-              ? "Copie impossible"
-              : "Copier le recapitulatif"}
-        </button>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            onClick={copy}
+            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+            style={
+              copyState === "copied"
+                ? { background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)" }
+                : GLASS_ACCENT_STYLE
+            }
+          >
+            {copyState === "copied"
+              ? "Copie"
+              : copyState === "error"
+                ? "Copie impossible"
+                : "Copier recap"}
+          </button>
+          <button
+            onClick={sendInvitesByEmail}
+            disabled={sending}
+            className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
+            style={GLASS_ACCENT_STYLE}
+          >
+            {sending ? "Envoi en cours..." : "Envoyer invitations"}
+          </button>
+        </div>
+        {sendState ? (
+          <p className={`mt-3 text-sm ${sendState.includes("succes") ? "text-emerald-700" : "text-rose-700"}`}>
+            {sendState}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -2712,6 +2942,7 @@ export default function App() {
   const [activityVotesLocal, setActivityVotesLocal] = useState({});
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
   const [monthCursor, setMonthCursor] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
 
   const selectedTrip = trips.find((t) => String(t.id) === String(selectedTripId)) || null;
   const uiTitle =
@@ -3453,6 +3684,10 @@ export default function App() {
       return;
     }
     try {
+      const currentTrip = (trips || []).find((t) => String(t?.id) === String(trip?.id)) || trip || {};
+      const previousInvitedEmails = Array.isArray(currentTrip?.invited_emails) ? currentTrip.invited_emails : [];
+      const previousInvitedSet = new Set(previousInvitedEmails.map((m) => String(m || "").toLowerCase().trim()).filter(Boolean));
+
       let payload = {
         title: safeTitle,
         name: safeTitle,
@@ -3478,6 +3713,10 @@ export default function App() {
                 ? trip.invited_emails
                 : [];
           const nextFixedUrl = String(payload?.fixed_url || trip?.fixed_url || "");
+          const newlyAddedInvites = nextInvited.filter((mail) => {
+            const lower = String(mail || "").toLowerCase().trim();
+            return !!lower && !previousInvitedSet.has(lower);
+          });
 
           setTrips((prev) =>
             (prev || []).map((t) =>
@@ -3504,8 +3743,41 @@ export default function App() {
             }
           }
 
+          if (newlyAddedInvites.length > 0) {
+            try {
+              const inviteResp = await fetch(getInviteApiUrl(), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  to: newlyAddedInvites,
+                  trip: {
+                    title: nextTitle,
+                    startDate: formatDate(nextStart),
+                    endDate: formatDate(nextEnd),
+                    link: nextFixedUrl,
+                  },
+                }),
+              });
+              const inviteData = await inviteResp.json().catch(() => ({}));
+              if (inviteResp.status === 404) {
+                throw new Error("API mail introuvable. Configure VITE_INVITE_API_BASE_URL ou utilise vercel dev.");
+              }
+              if (!inviteResp.ok) {
+                throw new Error(String(inviteData?.error || "Erreur envoi invitations."));
+              }
+              setNotice(`Voyage modifie. ${newlyAddedInvites.length} invitation(s) envoyee(s).`);
+            } catch (inviteErr) {
+              setNotice(
+                `Voyage modifie, mais l'envoi mail a echoue: ${String(
+                  inviteErr?.message || "erreur inconnue"
+                )}`
+              );
+            }
+          } else {
+            setNotice("");
+          }
+
           setEditingTrip(null);
-          setNotice("");
           return;
         }
         const msg = String(error?.message || "");
@@ -3617,22 +3889,43 @@ export default function App() {
         {activeTab === "planner" ? (
           <div className="space-y-4">
             <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
-              <select
-                value={selectedTripId || ""}
-                onChange={(e) => setSelectedTripId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              >
-                <option value="" disabled hidden>
-                  Choisir un voyage
-                </option>
-                {trips && trips.length > 0
-                  ? trips.map((t) => (
-                      <option key={String(t.id)} value={String(t.id)}>
-                        {String(t.title)}
-                      </option>
-                    ))
-                  : null}
-              </select>
+              {selectedTrip ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Voyage actif</p>
+                    <h3 className="text-lg font-semibold text-slate-900">{String(selectedTrip.title || "Voyage")}</h3>
+                    <p className="text-xs text-slate-500">
+                      {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center -space-x-2">
+                      {(Array.isArray(selectedTrip?.invited_emails) ? selectedTrip.invited_emails : []).slice(0, 5).map((mail) => (
+                        <div
+                          key={String(mail)}
+                          title={String(mail)}
+                          className="h-9 w-9 overflow-hidden rounded-full bg-white ring-2 ring-white shadow-sm"
+                        >
+                          <img
+                            src={buildParticipantAvatarUrl(mail)}
+                            alt={String(mail)}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setPlannerInviteOpen(true)}
+                      className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
+                      title="Inviter par email"
+                    >
+                      <Mail size={16} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Aucun voyage selectionne.</p>
+              )}
             </div>
             <PlannerView
               selectedDate={selectedDate}
@@ -3742,13 +4035,14 @@ export default function App() {
                   }
                   setActiveTab(t.id);
                 }}
-                className={`flex flex-col items-center justify-center rounded-[2rem] px-2 py-3 text-xs ${
+                className={`flex items-center justify-center rounded-[2rem] px-2 py-3 text-xs ${
                   active ? "text-white" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}
+                title={String(t.label)}
+                aria-label={String(t.label)}
               >
-                <Icon size={18} />
-                <span className="mt-1">{t.label}</span>
+                <Icon size={20} />
               </button>
             );
           })}
@@ -3785,6 +4079,23 @@ export default function App() {
         onClose={() => setEditingTrip(null)}
         trip={editingTrip}
         onSave={updateTrip}
+      />
+      <InviteEmailsModal
+        open={plannerInviteOpen && !!selectedTrip}
+        onClose={() => setPlannerInviteOpen(false)}
+        title="Inviter des participants"
+        initialEmails={selectedTrip?.invited_emails || []}
+        onSave={async (emails) => {
+          if (!selectedTrip) {
+            setPlannerInviteOpen(false);
+            return;
+          }
+          await updateTrip({
+            ...selectedTrip,
+            invited_emails: Array.isArray(emails) ? emails : [],
+          });
+          setPlannerInviteOpen(false);
+        }}
       />
       <ShareModal open={!!shareTrip} onClose={() => setShareTrip(null)} trip={shareTrip} />
       <TricountModal open={!!tricountTrip} onClose={() => setTricountTrip(null)} trip={tricountTrip} onSave={saveParticipants} />
