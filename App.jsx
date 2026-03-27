@@ -3121,17 +3121,17 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
-          <div className="relative w-full max-w-6xl">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
+          <div className="relative h-[92vh] w-full max-w-6xl sm:h-auto">
             <button
               onClick={() => setChatTripId("")}
-              className="absolute -top-2 right-0 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50"
+              className="absolute right-1 top-1 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50 sm:-top-2 sm:right-0"
               title="Fermer la conversation"
             >
               <X size={16} />
             </button>
-            <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-              <div className="rounded-[2rem] bg-white p-5 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200">
+            <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[1.2fr_1fr] lg:gap-4">
+              <div className="flex min-h-0 flex-col rounded-[2rem] bg-white p-4 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:p-5">
             <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Discussion - {String(activeTrip.title)}</h3>
             <div className="mt-2 flex flex-wrap gap-2">
               {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
@@ -3148,7 +3148,7 @@ function ChatHubView({
             </div>
             <div
               ref={messagesContainerRef}
-              className="mt-3 h-[52vh] max-h-[560px] min-h-[260px] space-y-2 overflow-y-auto pr-1"
+              className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
             >
               {(chatMessages || []).length > 0 ? (
                 chatMessages.map((msg, idx) => {
@@ -3206,9 +3206,9 @@ function ChatHubView({
             </div>
               </div>
 
-              <div className="rounded-[2rem] bg-white p-5 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200">
+              <div className="flex min-h-0 flex-col rounded-[2rem] bg-white p-4 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:p-5">
                 <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes activites</h3>
-                <div className="mt-3 max-h-[560px] overflow-y-auto space-y-2 pr-1">
+                <div className="mt-3 min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
                   {tripActivities.length > 0 ? (
                     tripActivities.map((activity) => {
                       const list = votesByActivity[String(activity.id)] || [];
