@@ -3194,7 +3194,7 @@ function ChatHubView({
                   }
                 }}
                 placeholder="Ecrire un message..."
-                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[16px] md:text-sm"
               />
               <button
                 onClick={onSendMessage}
