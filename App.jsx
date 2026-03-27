@@ -19,6 +19,7 @@ import {
   UserRound,
   ChevronDown,
   ChevronRight,
+  Eye,
 } from "lucide-react";
 
 const SUPABASE_URL =
@@ -33,6 +34,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
 const cityImageMemoryCache = {};
 const CHAT_CACHE_KEY = "tp_chat_cache_v1";
+const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
 
 const TODAY_STR = new Date().toISOString().slice(0, 10);
 function getTodayStr() {
@@ -108,6 +110,50 @@ function saveChatCacheToStorage(cache) {
   }
 }
 
+function loadActivityDescriptionCache() {
+  try {
+    const raw = window.localStorage.getItem(ACTIVITY_DESC_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_e) {
+    return {};
+  }
+}
+
+function saveActivityDescriptionCache(cache) {
+  try {
+    window.localStorage.setItem(ACTIVITY_DESC_CACHE_KEY, JSON.stringify(cache || {}));
+  } catch (_e) {
+    // ignore storage errors
+  }
+}
+
+function getCachedActivityDescription(activityId) {
+  if (typeof window === "undefined") return "";
+  const id = String(activityId || "");
+  if (!id) return "";
+  const cache = loadActivityDescriptionCache();
+  return String(cache?.[id] || "");
+}
+
+function cacheActivityDescription(activityId, description) {
+  if (typeof window === "undefined") return;
+  const id = String(activityId || "");
+  if (!id) return;
+  const text = String(description || "").trim();
+  const cache = loadActivityDescriptionCache();
+  if (!text) {
+    if (Object.prototype.hasOwnProperty.call(cache, id)) {
+      delete cache[id];
+      saveActivityDescriptionCache(cache);
+    }
+    return;
+  }
+  cache[id] = text;
+  saveActivityDescriptionCache(cache);
+}
+
 function getCurrentUserDisplayName(session) {
   const first = String(session?.user?.user_metadata?.first_name || "").trim();
   const last = String(session?.user?.user_metadata?.last_name || "").trim();
@@ -145,6 +191,24 @@ function participantDisplayFromRaw(value, currentUserDisplayName) {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
   return pretty || raw;
+}
+
+function resolveVoterLabel(vote, session) {
+  const currentUserId = String(session?.user?.id || "");
+  if (String(vote?.voter_id || "") === currentUserId) return "Moi";
+  const named = String(vote?.voter_name || vote?.author_name || "").trim();
+  if (named) return named;
+  const mail = String(vote?.voter_email || vote?.author_email || "").trim();
+  if (mail) {
+    const local = mail.split("@")[0] || "";
+    return local
+      .split(/[._-]+/g)
+      .filter(Boolean)
+      .map((x) => x.charAt(0).toUpperCase() + x.slice(1))
+      .join(" ") || mail;
+  }
+  const id = String(vote?.voter_id || "");
+  return id ? `Membre ${id.slice(0, 6)}` : "Membre";
 }
 
 function getCityGlassTheme(cityInput) {
@@ -275,6 +339,44 @@ function getCitySuggestions(input) {
 
   // Fallback: always keep a few closest results, to avoid empty suggestion list.
   return [...new Set(ranked.filter((x) => x.score > 0).map((x) => x.city))].slice(0, 5);
+}
+
+const WORLD_CITY_SUGGESTIONS_CACHE = {};
+
+async function fetchWorldwideCitySuggestions(input, limit = 8) {
+  const q = normalizeCityInput(input);
+  if (q.length < 2) return [];
+  const cacheKey = `${normalizeTextForSearch(q)}::${Number(limit)}`;
+  if (WORLD_CITY_SUGGESTIONS_CACHE[cacheKey]) {
+    return WORLD_CITY_SUGGESTIONS_CACHE[cacheKey];
+  }
+
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+      q
+    )}&count=${Math.min(Math.max(Number(limit) || 8, 1), 12)}&language=fr&format=json`;
+    const resp = await fetch(url);
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    const rows = Array.isArray(json?.results) ? json.results : [];
+    const mapped = rows
+      .map((row) => {
+        const city = String(row?.name || "").trim();
+        if (!city) return "";
+        const admin = String(row?.admin1 || "").trim();
+        const country = String(row?.country || "").trim();
+        const parts = [city];
+        if (admin && normalizeTextForSearch(admin) !== normalizeTextForSearch(city)) parts.push(admin);
+        if (country) parts.push(country);
+        return parts.join(", ");
+      })
+      .filter(Boolean);
+    const unique = [...new Set(mapped)].slice(0, Math.max(1, Number(limit) || 8));
+    WORLD_CITY_SUGGESTIONS_CACHE[cacheKey] = unique;
+    return unique;
+  } catch (_e) {
+    return [];
+  }
 }
 
 const BG = "#F3F5F7";
@@ -425,7 +527,7 @@ async function persistCityImage(cityInput, urlInput) {
 }
 
 const WORLD_MAP_BASE_URL =
-  "https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg";
+  "https://upload.wikimedia.org/wikipedia/commons/9/9c/BlankMap-World-Continents-Coloured.PNG";
 
 function buildActivityImageQuery(activity) {
   const text = String(`${activity?.title || activity?.name || ""} ${activity?.location || ""}`).toLowerCase();
@@ -710,6 +812,7 @@ function normalizeActivity(activity) {
   const rawTime = String(activity?.time || "");
   const time = rawTime.length >= 5 ? rawTime.slice(0, 5) : rawTime;
   const normalizedDate = toYMD(activity?.date, "");
+  const cachedDescription = getCachedActivityDescription(activity?.id);
   return {
     ...activity,
     date: normalizedDate,
@@ -717,6 +820,7 @@ function normalizeActivity(activity) {
     time,
     title: String(activity?.title || activity?.name || "Activite"),
     name: String(activity?.name || activity?.title || "Activite"),
+    description: String(activity?.description || activity?.details || activity?.notes || cachedDescription || ""),
   };
 }
 
@@ -1342,6 +1446,7 @@ function TripFormModal({ open, onClose, onCreate }) {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [inviteInput, setInviteInput] = useState("");
+  const [invitedEmails, setInvitedEmails] = useState([]);
 
   useEffect(() => {
     if (!open) return;
@@ -1351,9 +1456,16 @@ function TripFormModal({ open, onClose, onCreate }) {
     setStartDate(now);
     setEndDate(now);
     setInviteInput("");
+    setInvitedEmails([]);
   }, [open]);
 
   if (!open) return null;
+  const addInvites = () => {
+    const parsed = parseEmails(inviteInput);
+    if (!parsed.length) return;
+    setInvitedEmails((prev) => [...new Set([...(prev || []), ...parsed])]);
+    setInviteInput("");
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
@@ -1390,19 +1502,63 @@ function TripFormModal({ open, onClose, onCreate }) {
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
             />
           </div>
-          <input
-            value={inviteInput}
-            onChange={(e) => setInviteInput(e.target.value)}
-            placeholder="Inviter par e-mail (ex: ami@mail.com, autre@mail.com)"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-          />
+          <div className="flex gap-2">
+            <input
+              value={inviteInput}
+              onChange={(e) => setInviteInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addInvites();
+                }
+              }}
+              placeholder="Ajouter un e-mail invite (ex: ami@mail.com)"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            />
+            <button
+              type="button"
+              onClick={addInvites}
+              className="rounded-2xl border border-slate-200 bg-white px-3 text-slate-700 shadow-sm transition hover:bg-slate-100"
+              title="Ajouter aux invites"
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+            <p className="text-xs text-slate-600">
+              Personnes invitees: <span className="font-semibold text-slate-800">{invitedEmails.length}</span>
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Ajoute chaque e-mail avec le bouton + (ou touche Entree).
+            </p>
+            {invitedEmails.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {invitedEmails.map((mail) => (
+                  <span
+                    key={mail}
+                    className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[11px] text-slate-700 ring-1 ring-slate-200"
+                  >
+                    {mail}
+                    <button
+                      type="button"
+                      onClick={() => setInvitedEmails((prev) => (prev || []).filter((m) => String(m) !== String(mail)))}
+                      className="rounded-full p-0.5 text-slate-500 hover:bg-slate-100"
+                      title="Retirer"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <button
             onClick={() =>
               onCreate({
                 title,
                 start_date: startDate,
                 end_date: endDate,
-                invited_emails: parseEmails(inviteInput),
+                invited_emails: invitedEmails,
               })
             }
             className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
@@ -1989,9 +2145,39 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
 
 function CitySearchBox({ value, onChange, onPick, placeholder, showSuggestions = true }) {
   const [focused, setFocused] = useState(false);
-  const suggestions = useMemo(() => getCitySuggestions(value), [value]);
+  const [remoteSuggestions, setRemoteSuggestions] = useState([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const fallbackSuggestions = useMemo(() => getCitySuggestions(value), [value]);
+  const suggestions = useMemo(
+    () => (remoteSuggestions.length > 0 ? remoteSuggestions : fallbackSuggestions),
+    [remoteSuggestions, fallbackSuggestions]
+  );
   const show = showSuggestions && focused && suggestions.length > 0;
   const dropdownReserve = show ? Math.min(suggestions.length, 6) * 42 + 16 : 0;
+
+  useEffect(() => {
+    const q = normalizeCityInput(value);
+    if (!showSuggestions || q.length < 2) {
+      setRemoteSuggestions([]);
+      setSuggestLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSuggestLoading(true);
+      const remote = await fetchWorldwideCitySuggestions(q, 8);
+      if (!cancelled) {
+        setRemoteSuggestions(remote);
+        setSuggestLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [value, showSuggestions]);
 
   return (
     <div className="relative" style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}>
@@ -2008,6 +2194,7 @@ function CitySearchBox({ value, onChange, onPick, placeholder, showSuggestions =
       </div>
       {show ? (
         <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 overflow-auto rounded-2xl bg-white/95 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.14)] backdrop-blur-xl ring-1 ring-slate-200/80">
+          {suggestLoading ? <p className="px-3 py-2 text-xs text-slate-500">Recherche des villes...</p> : null}
           {suggestions.map((city) => (
             <button
               key={city}
@@ -2172,12 +2359,6 @@ function DestinationGuideView({ query, onQuery, onPickDestination, onCreateTrip,
     <section className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Guide destination</h2>
-        <button
-          onClick={onBack}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm hover:bg-slate-100"
-        >
-          Retour voyages
-        </button>
       </div>
 
       <div className="rounded-[2.2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
@@ -2286,9 +2467,7 @@ function DestinationGuideView({ query, onQuery, onPickDestination, onCreateTrip,
               </div>
             </div>
           </>
-        ) : (
-          <div className="p-6 text-sm text-slate-500">Tape une destination pour afficher le guide.</div>
-        )}
+        ) : <div className="h-56 sm:h-72" />}
       </div>
 
       {addModalOpen && guide ? (
@@ -2440,9 +2619,12 @@ function PlannerView({
 }) {
   const [activityModalOpen, setActivityModalOpen] = useState(false);
   const [editActivityModalOpen, setEditActivityModalOpen] = useState(false);
+  const [activityDetailsOpen, setActivityDetailsOpen] = useState(false);
   const [activityToDelete, setActivityToDelete] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
+  const [viewingActivity, setViewingActivity] = useState(null);
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
   const [cost, setCost] = useState("");
   const [activityTime, setActivityTime] = useState("");
@@ -2598,8 +2780,19 @@ function PlannerView({
                 <div className="flex items-center justify-end gap-2 px-4 py-3">
                   <button
                     onClick={() => {
+                      setViewingActivity(a);
+                      setActivityDetailsOpen(true);
+                    }}
+                    className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    title="Voir les details"
+                  >
+                    <Eye size={14} />
+                  </button>
+                  <button
+                    onClick={() => {
                       setEditingActivity(a);
                       setTitle(String(a?.title || a?.name || ""));
+                      setDescription(String(a?.description || ""));
                       setLocation(String(a?.location || ""));
                       setCost(String(a?.cost ?? ""));
                       setActivityTime(String(a?.time || ""));
@@ -2646,6 +2839,13 @@ function PlannerView({
                 placeholder="Activite"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optionnel)"
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              />
               <input
                 type="time"
                 value={activityTime}
@@ -2675,8 +2875,9 @@ function PlannerView({
               </div>
               <button
                 onClick={() => {
-                  onAddActivity({ title, location, cost, time: activityTime });
+                  onAddActivity({ title, description, location, cost, time: activityTime });
                   setTitle("");
+                  setDescription("");
                   setLocation("");
                   setCost("");
                   setActivityTime("");
@@ -2687,6 +2888,63 @@ function PlannerView({
               >
                 Ajouter
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activityDetailsOpen && viewingActivity ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[2.5rem] bg-white/95 p-6 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:p-7">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-[11px] uppercase tracking-[0.38em] text-slate-500">Details activite</h2>
+              <button
+                onClick={() => {
+                  setActivityDetailsOpen(false);
+                  setViewingActivity(null);
+                }}
+                className="rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Activite</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {String(viewingActivity?.title || viewingActivity?.name || "Activite")}
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Date</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {String(viewingActivity?.date || "-")}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Heure</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {String(viewingActivity?.time || "--:--")}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Budget</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {Number(viewingActivity?.cost || 0).toFixed(2)} EUR
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:col-span-2">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Lieu</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {String(viewingActivity?.location || "-")}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:col-span-2">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Description</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                  {String(viewingActivity?.description || "").trim() || "Aucune description"}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -2713,6 +2971,13 @@ function PlannerView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Activite"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              />
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optionnel)"
+                rows={3}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <input
@@ -2747,6 +3012,7 @@ function PlannerView({
                   onUpdateActivity({
                     ...editingActivity,
                     title,
+                    description,
                     location,
                     cost,
                     time: activityTime,
@@ -2754,6 +3020,7 @@ function PlannerView({
                   setEditActivityModalOpen(false);
                   setEditingActivity(null);
                   setTitle("");
+                  setDescription("");
                   setLocation("");
                   setCost("");
                   setActivityTime("");
@@ -3122,7 +3389,7 @@ function ChatHubView({
 
       {activeTrip ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
-          <div className="relative h-[92vh] w-full max-w-6xl sm:h-auto">
+          <div className="relative h-[92vh] w-full max-w-6xl sm:h-[88vh]">
             <button
               onClick={() => setChatTripId("")}
               className="absolute right-1 top-1 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50 sm:-top-2 sm:right-0"
@@ -3214,32 +3481,77 @@ function ChatHubView({
                       const list = votesByActivity[String(activity.id)] || [];
                       const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
                       const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
+                      const mineValue = Number(mine?.value || 0);
+                      const votedFor = list.filter((v) => Number(v?.value || 0) === 1);
+                      const votedAgainst = list.filter((v) => Number(v?.value || 0) === -1);
                       return (
-                        <div key={String(activity.id)} className="rounded-2xl bg-slate-100 px-3 py-3">
-                          <p className="text-sm font-medium text-slate-900">
+                        <div key={String(activity.id)} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                          <p className="text-sm font-semibold text-slate-900">
                             {String(activity?.title || activity?.name || "Activite")}
                           </p>
                           <p className="text-xs text-slate-500">
                             {String(activity?.date || "")} {String(activity?.time || "")}
                           </p>
-                          <div className="mt-2 flex items-center gap-2">
-                            <button
-                              onClick={() => onVote(String(activity.id), 1)}
-                              className={`rounded-xl px-3 py-1 text-xs ${
-                                Number(mine?.value || 0) === 1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                          <p className="mt-0.5 text-xs font-medium text-slate-700">
+                            Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
+                          </p>
+                            </div>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                score > 0
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : score < 0
+                                    ? "bg-rose-100 text-rose-700"
+                                    : "bg-slate-200 text-slate-700"
                               }`}
                             >
-                              +1
+                              Score {score > 0 ? `+${score}` : score}
+                            </span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => onVote(String(activity.id), 1)}
+                              className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                                mineValue === 1
+                                  ? "bg-emerald-600 text-white shadow-sm"
+                                  : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              👍 Je vote pour
                             </button>
                             <button
                               onClick={() => onVote(String(activity.id), -1)}
-                              className={`rounded-xl px-3 py-1 text-xs ${
-                                Number(mine?.value || 0) === -1 ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                              className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                                mineValue === -1
+                                  ? "bg-rose-600 text-white shadow-sm"
+                                  : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
                               }`}
                             >
-                              -1
+                              👎 Je vote contre
                             </button>
-                            <span className="text-xs font-medium text-slate-700">Score: {score}</span>
+                          </div>
+                          <p className="mt-2 text-[11px] text-slate-500">
+                            {mineValue === 1
+                              ? "Ton vote: pour"
+                              : mineValue === -1
+                                ? "Ton vote: contre"
+                                : "Tu n'as pas encore vote"}
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            <p className="text-[11px] text-emerald-700">
+                              Pour:{" "}
+                              {votedFor.length > 0
+                                ? votedFor.map((v) => resolveVoterLabel(v, session)).join(", ")
+                                : "-"}
+                            </p>
+                            <p className="text-[11px] text-rose-700">
+                              Contre:{" "}
+                              {votedAgainst.length > 0
+                                ? votedAgainst.map((v) => resolveVoterLabel(v, session)).join(", ")
+                                : "-"}
+                            </p>
                           </div>
                         </div>
                       );
@@ -3738,19 +4050,38 @@ export default function App() {
   const voteActivity = async (activityId, value) => {
     if (!chatTripId || !activityId) return;
     const currentUserId = String(session?.user?.id || "");
+    const userEmail = String(session?.user?.email || "");
+    const voterName =
+      String(session?.user?.user_metadata?.first_name || "").trim() ||
+      String(userEmail).split("@")[0] ||
+      "Membre";
     const v = Number(value) >= 0 ? 1 : -1;
-    const payload = {
+    let payload = {
       trip_id: chatTripId,
       activity_id: activityId,
       voter_id: currentUserId,
       value: v,
+      voter_name: voterName,
+      voter_email: userEmail,
     };
 
     try {
-      const { error } = await supabase.from("activity_votes").upsert(payload, {
-        onConflict: "trip_id,activity_id,voter_id",
-      });
-      if (error) throw error;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const { error } = await supabase.from("activity_votes").upsert(payload, {
+          onConflict: "trip_id,activity_id,voter_id",
+        });
+        if (!error) break;
+        const msg = String(error?.message || "");
+        const m1 = msg.match(/Could not find the '([^']+)' column/i);
+        const m2 = msg.match(/column "([^"]+)" does not exist/i);
+        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+        if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
+          const { [missing]: _removed, ...rest } = payload;
+          payload = rest;
+          continue;
+        }
+        throw error;
+      }
       const { data: fresh } = await supabase
         .from("activity_votes")
         .select("*")
@@ -3911,12 +4242,9 @@ export default function App() {
       const activityPrompt = String(
         `${input.title || ""} ${input.location || ""} ${safeSelectedDate} ${assignedTime}`
       ).trim();
-      const autoPhoto =
-        (await fetchActivityImageFromUnsplash({
-          title: input.title,
-          name: input.name,
-          location: input.location,
-        })) ||
+      // Fast-first UX: insert immediately with deterministic fallback image,
+      // then improve photo in background if Unsplash returns a better match.
+      const fallbackPhoto =
         seededPicsumUrl(
           activityPrompt || `${input.title || input.name || "activity"} ${input.location || ""}`,
           1200,
@@ -3935,16 +4263,24 @@ export default function App() {
         time: assignedTime,
         title: String(input.title || input.name || "Activite"),
         name: String(input.title || input.name || "Activite"),
+        description: String(input.description || ""),
+        details: String(input.description || ""),
+        notes: String(input.description || ""),
         cost: Number(input.cost || 0),
         location: String(input.location || ""),
         owner_id: userId,
-        photo_url: String(autoPhoto || ""),
-        image_url: String(autoPhoto || ""),
+        photo_url: String(fallbackPhoto || ""),
+        image_url: String(fallbackPhoto || ""),
       };
 
       for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { error } = await supabase.from("activities").insert(payload);
+        const { data: inserted, error } = await supabase
+          .from("activities")
+          .insert(payload)
+          .select("id")
+          .limit(1);
         if (!error) {
+          const insertedId = String(inserted?.[0]?.id || "");
           // Immediate refresh to avoid waiting for realtime sync.
           try {
             const { data: fresh, error: freshErr } = await supabase
@@ -3957,6 +4293,40 @@ export default function App() {
           } catch (_e) {
             // ignore refresh error
           }
+              cacheActivityDescription(insertedId, input?.description || "");
+
+          // Background upgrade: fetch better visual and patch only this row.
+          if (insertedId) {
+            (async () => {
+              try {
+                const betterPhoto = await fetchActivityImageFromUnsplash({
+                  title: input.title,
+                  name: input.name,
+                  location: input.location,
+                });
+                if (!betterPhoto || String(betterPhoto) === String(fallbackPhoto)) return;
+                await supabase
+                  .from("activities")
+                  .update({ photo_url: String(betterPhoto), image_url: String(betterPhoto) })
+                  .eq("id", insertedId);
+                // Silent local refresh for visual improvement.
+                try {
+                  const { data: fresh2, error: freshErr2 } = await supabase
+                    .from("activities")
+                    .select("*")
+                    .eq("trip_id", selectedTripId)
+                    .order("date", { ascending: true })
+                    .order("time", { ascending: true });
+                  if (!freshErr2) replaceTripActivitiesInState(selectedTripId, fresh2 || []);
+                } catch (_refreshErr) {
+                  // ignore refresh error
+                }
+              } catch (_bgErr) {
+                // ignore background photo failures
+              }
+            })();
+          }
+
           setNotice("");
           return;
         }
@@ -3980,6 +4350,7 @@ export default function App() {
   const updateActivity = async (activity) => {
     if (!activity?.id) return;
     try {
+      const desiredDescription = String(activity?.description || "");
       const refreshedPhoto =
         (await fetchActivityImageFromUnsplash({
           title: activity?.title,
@@ -3990,6 +4361,9 @@ export default function App() {
       let payload = {
         title: String(activity?.title || activity?.name || "Activite"),
         name: String(activity?.title || activity?.name || "Activite"),
+        description: String(activity?.description || ""),
+        details: String(activity?.description || ""),
+        notes: String(activity?.description || ""),
         location: String(activity?.location || ""),
         cost: Number(activity?.cost || 0),
         time: String(activity?.time || ""),
@@ -3999,9 +4373,12 @@ export default function App() {
       for (let attempt = 0; attempt < 6; attempt += 1) {
         const { error } = await supabase.from("activities").update(payload).eq("id", activity.id);
         if (!error) {
+          cacheActivityDescription(activity.id, desiredDescription);
           setActivities((prev) =>
             (prev || []).map((a) =>
-              String(a.id) === String(activity.id) ? normalizeActivity({ ...a, ...payload }) : a
+              String(a.id) === String(activity.id)
+                ? normalizeActivity({ ...a, ...payload, description: desiredDescription })
+                : a
             )
           );
           setNotice("");
@@ -4028,6 +4405,7 @@ export default function App() {
     try {
       const { error } = await supabase.from("activities").delete().eq("id", activity.id);
       if (error) throw error;
+      cacheActivityDescription(activity.id, "");
       setActivities((prev) => (prev || []).filter((a) => String(a.id) !== String(activity.id)));
       setNotice("");
     } catch (e) {
