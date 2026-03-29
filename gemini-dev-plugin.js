@@ -1,6 +1,7 @@
 /**
  * En dev / preview Vite uniquement :
- * - POST /api/gemini/suggestions — lieux, conseils, activités (sans programme jour par jour)
+ * - POST /api/gemini/suggested-activities — uniquement activités proposées (appel par défaut sans enrichissement complet)
+ * - POST /api/gemini/suggestions — lieux + conseils + activités (si VITE_GEMINI_DESTINATION_ENRICH=true)
  * - POST /api/gemini/itinerary — programme sur demande (dates début / fin)
  * Lit GEMINI_API_KEY depuis .env.local (sans préfixe VITE_).
  */
@@ -148,8 +149,9 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     if (req.method !== "POST") return next();
 
     const isSuggestions = pathname === "/api/gemini/suggestions";
+    const isSuggestedActivities = pathname === "/api/gemini/suggested-activities";
     const isItinerary = pathname === "/api/gemini/itinerary";
-    if (!isSuggestions && !isItinerary) return next();
+    if (!isSuggestions && !isSuggestedActivities && !isItinerary) return next();
 
     const { key, env } = resolveGeminiApiKey(mode, envDir);
     if (!key) {
@@ -223,7 +225,48 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       return;
     }
 
-    // suggestions
+    if (isSuggestedActivities) {
+      const destination = String(parsed.destination || "").trim();
+      if (!destination || destination.length > 120) {
+        sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
+        return;
+      }
+      const prompt =
+        `Tu es conseiller voyage. Destination : « ${destination} ».\n` +
+        `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, de la forme exacte :\n` +
+        `{"suggestedActivities":[...]}\n` +
+        `\n` +
+        `Tableau "suggestedActivities" : au moins 6 objets (pas de simples chaînes), chacun avec :\n` +
+        `- "title" : titre court en français.\n` +
+        `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, repère réel).\n` +
+        `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), estimation en euros ; 0 si gratuit avéré.\n` +
+        `- "costNote" : courte précision (ex. billet adulte, gratuit, déjeuner moyen).\n` +
+        `- "description" : une phrase utile (durée, horaire type, conseil).\n` +
+        `Activités réalistes et visitables sur place. Texte en français.`;
+      const systemInstruction =
+        "Tu réponds uniquement par un objet JSON valide UTF-8. Le tableau suggestedActivities contient des activités touristiques concrètes dans la ville indiquée.";
+      try {
+        const data = await runGeminiJson({
+          key,
+          modelId,
+          prompt,
+          systemInstruction,
+          generationConfigExtra: {
+            temperature: 0.25,
+            topP: 0.85,
+            maxOutputTokens: 2048,
+          },
+        });
+        const list = Array.isArray(data?.suggestedActivities) ? data.suggestedActivities : [];
+        sendJson(res, 200, { ok: true, data: { suggestedActivities: list } });
+      } catch (e) {
+        const msg = formatError(e);
+        sendJson(res, /429|Too Many Requests/i.test(msg) ? 429 : 502, { error: msg });
+      }
+      return;
+    }
+
+    // suggestions (lieux + conseils + activités)
     const destination = String(parsed.destination || "").trim();
     if (!destination || destination.length > 120) {
       sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
@@ -239,7 +282,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `titres de films ou de livres, équipes sportives, marques, polices, événements datés.\n` +
       `\n` +
       `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown ni texte hors JSON, exactement cette structure :\n` +
-      `{"summary":"2 phrases en français sur la destination","places":[...],"tips":{"do":[...],"dont":[...]},"suggestedActivities":[...]}\n` +
+      `{"places":[...],"tips":{"do":[...],"dont":[...]},"suggestedActivities":[...]}\n` +
+      `(Pas de champ "summary" : la description affichée vient de Wikipédia côté app.)\n` +
       `\n` +
       `Tableau "places" — lieux incontournables (OBLIGATOIRE) :\n` +
       `- Entre 5 et 7 entrées : minimum 5, maximum 7.\n` +
@@ -247,8 +291,14 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `- Noms courts (2 à 8 mots), comme sur Google Maps ou un guide Lonely Planet pour CETTE ville.\n` +
       `\n` +
       `"tips.do" : au moins 4 conseils pratiques. "tips.dont" : au moins 3 pièges à éviter.\n` +
-      `"suggestedActivities" : au moins 6 activités concrètes (visite, balade, quartier…), sans dates inventées.\n` +
-      `Tout le texte libre en français.`;
+      `\n` +
+      `Tableau "suggestedActivities" — au moins 6 objets (pas de simples chaînes), chaque objet avec :\n` +
+      `- "title" : titre court de l’activité en français.\n` +
+      `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, adresse approximative ou point de repère réel, ex. "Alfama, Lisbonne" ou "Miradouro da Senhora do Monte").\n` +
+      `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), entier ou une décimale, estimation réaliste en euros pour un visiteur type (billets, repas, transport local si pertinent) ; 0 seulement si gratuit avéré.\n` +
+      `- "costNote" : courte précision en français (ex. "billet adulte site officiel", "gratuit — vue panoramique", "déjeuner moyen").\n` +
+      `- "description" : une phrase utile (horaires types, durée, conseil pratique).\n` +
+      `Pas de dates inventées pour le séjour. Tout le texte en français.`;
 
     const systemInstruction =
       "Tu réponds uniquement par un objet JSON valide UTF-8. " +
@@ -260,7 +310,11 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         modelId,
         prompt,
         systemInstruction,
-        generationConfigExtra: { temperature: 0.25, topP: 0.85 },
+        generationConfigExtra: {
+          temperature: 0.2,
+          topP: 0.8,
+          maxOutputTokens: 4096,
+        },
       });
       if (data && typeof data === "object" && Array.isArray(data.places)) {
         data.places = sanitizeMustSeePlaces(data.places, destination);

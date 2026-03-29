@@ -25,10 +25,18 @@ import {
   AlertTriangle,
   Sparkles,
   Lock,
+  Wallet,
+  Receipt,
+  ArrowRight,
 } from "lucide-react";
-import { fetchGeminiTripSuggestions, fetchGeminiItinerary } from "./geminiClient.js";
+import {
+  fetchGeminiTripSuggestions,
+  fetchGeminiSuggestedActivities,
+  fetchGeminiItinerary,
+} from "./geminiClient.js";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
+import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 
 /** Si true : bouton programme masqué sauf créateur (VITE_CREATOR_ITINERARY=true). Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const SHOW_DESTINATION_ITINERARY_CTA =
@@ -39,6 +47,20 @@ const SHOW_DESTINATION_ITINERARY_CTA =
 const SHOW_GEMINI_DEV_UI =
   import.meta.env.VITE_SHOW_GEMINI_DEV_ERRORS === "true" ||
   import.meta.env.VITE_SHOW_GEMINI_DEV_ERRORS === "1";
+
+/**
+ * Si true : appelle Gemini pour lieux / conseils / activités sur l’écran recherche destination (coûte des tokens à chaque ville).
+ * Par défaut : false — le guide utilise Wikipédia + données locales (répertoire emblématique, activités & conseils génériques).
+ * Le programme jour par jour (« Générer un programme ») reste séparé et n’est pas affecté.
+ */
+const GEMINI_DESTINATION_ENRICH =
+  import.meta.env.VITE_GEMINI_DESTINATION_ENRICH === "true" ||
+  import.meta.env.VITE_GEMINI_DESTINATION_ENRICH === "1";
+
+/** Si false : pas d’appel Gemini pour les seules activités proposées (économie max ; lieux/conseils déjà locaux). */
+const GEMINI_SUGGESTED_ACTIVITIES =
+  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES !== "false" &&
+  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES !== "0";
 
 const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -56,9 +78,13 @@ const cityImageMemoryCache = {};
 const CHAT_CACHE_KEY = "tp_chat_cache_v1";
 const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
 
-const TODAY_STR = new Date().toISOString().slice(0, 10);
+/** Date locale du jour (AAAA-MM-JJ). Toujours recalculée — évite une date « figée » au chargement du bundle. */
 function getTodayStr() {
-  return TODAY_STR;
+  const n = new Date();
+  const y = n.getFullYear();
+  const mo = String(n.getMonth() + 1).padStart(2, "0");
+  const da = String(n.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
 }
 
 function formatDate(value) {
@@ -490,6 +516,7 @@ const WIKI_FR_PAGE_TITLE = Object.freeze({
   beijing: "Pékin",
   pekin: "Pékin",
   canton: "Guangzhou",
+  barcelona: "Barcelone",
 });
 
 const wikiHeroUrlInflight = Object.create(null);
@@ -549,8 +576,9 @@ async function fetchWikipediaHeroImageUrls(safeCity) {
 
 async function fetchFrenchWikiSummaryThumb(safeCity) {
   try {
+    const frTitle = WIKI_FR_PAGE_TITLE[normalizeTextForSearch(safeCity)] || safeCity;
     const r = await fetch(
-      `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(safeCity)}`
+      `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(frTitle)}`
     );
     if (!r.ok) return "";
     const j = await r.json();
@@ -815,16 +843,54 @@ function buildTravelTips(city) {
 
 function buildSuggestedActivitiesForCity(city) {
   const c = String(city || "").toLowerCase();
+  const label = String(city || "").trim() || "la destination";
+  /** Suggestion locale avec coût indicatif (repli sans Gemini). */
+  const act = (title, estimatedCostEur, costNote = "", location = "") => {
+    const o = { title, estimatedCostEur: clampActivityCostEUR(estimatedCostEur) };
+    const note = String(costNote || "").trim();
+    if (note) o.costNote = note;
+    const loc = String(location || "").trim();
+    if (loc) o.location = loc;
+    return o;
+  };
   const base = [
-    "Visite des quartiers historiques",
-    "Tour culinaire local",
-    "Point de vue au coucher du soleil",
-    "Musee ou galerie incontournable",
+    act("Visite des quartiers historiques", 0, "Variable (gratuit ou billets sur place)", label),
+    act("Tour culinaire local", 35, "", label),
+    act("Point de vue au coucher du soleil", 0, "Souvent gratuit", label),
+    act("Musee ou galerie incontournable", 18, "Entrée type — selon lieu", label),
   ];
-  if (c.includes("tokyo")) return ["Shibuya & Shinjuku", "Temple Senso-ji", "Sushi local", "Vue depuis Shibuya Sky"];
-  if (c.includes("paris")) return ["Tour Eiffel", "Musee du Louvre", "Croisiere sur la Seine", "Montmartre"];
-  if (c.includes("bali")) return ["Temple Uluwatu", "Rizieres de Tegallalang", "Plage de Canggu", "Session surf"];
-  if (c.includes("new york")) return ["Central Park", "Brooklyn Bridge", "Top of the Rock", "SoHo & Greenwich"];
+  if (c.includes("tokyo")) {
+    return [
+      act("Shibuya & Shinjuku", 0, "Gratuit (déplacements en sus)", "Tokyo"),
+      act("Temple Senso-ji", 0, "Gratuit (temple)", "Tokyo"),
+      act("Sushi local", 45, "Repas type", "Tokyo"),
+      act("Vue depuis Shibuya Sky", 24, "", "Tokyo"),
+    ];
+  }
+  if (c.includes("paris")) {
+    return [
+      act("Tour Eiffel", 29, "", "Paris"),
+      act("Musée du Louvre", 22, "", "Paris"),
+      act("Croisière sur la Seine", 16, "", "Paris"),
+      act("Montmartre", 0, "Gratuit (balade — musées / funiculaire en sus)", "Paris"),
+    ];
+  }
+  if (c.includes("bali")) {
+    return [
+      act("Temple Uluwatu", 5, "Entrée indicative", "Bali"),
+      act("Rizières de Tegallalang", 3, "Don / parking selon accès", "Bali"),
+      act("Plage de Canggu", 0, "Gratuit", "Bali"),
+      act("Session surf", 25, "Cours / location board — ordre de grandeur", "Bali"),
+    ];
+  }
+  if (c.includes("new york")) {
+    return [
+      act("Central Park", 0, "Gratuit", "New York"),
+      act("Brooklyn Bridge", 0, "Gratuit", "New York"),
+      act("Top of the Rock", 44, "", "New York"),
+      act("SoHo & Greenwich", 0, "Gratuit (shopping / repas en sus)", "New York"),
+    ];
+  }
   return base;
 }
 
@@ -900,7 +966,7 @@ function buildInstantDestinationGuide(rawQuery) {
   ]);
   return {
     city: safeCity,
-    description: `Chargement des infos sur ${safeCity}…`,
+    description: `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`,
     places:
       getIconicPlacesFallback(safeCity) ||
       buildExplorationPlacesFallback(safeCity) ||
@@ -1119,8 +1185,10 @@ async function fetchDestinationGuide(city) {
 
   const wikiSummaryP = (async () => {
     try {
+      const frWikiTitle =
+        WIKI_FR_PAGE_TITLE[normalizeTextForSearch(safeCity)] || safeCity;
       const summaryResp = await fetch(
-        `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(safeCity)}`
+        `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(frWikiTitle)}`
       );
       if (!summaryResp.ok) return { summaryText: "", thumb: "", lat: NaN, lon: NaN };
       const summaryJson = await summaryResp.json();
@@ -1135,7 +1203,7 @@ async function fetchDestinationGuide(city) {
     }
   })();
 
-  /** Ne pas utiliser les titres d’articles Wikipédia comme « lieux » : la recherche renvoie souvent films, homonymes, pages sans lien (ex. New York → titres français). Les pastilles viennent de Gemini. */
+  /** Pas de titres Wikipédia bruts comme « lieux » (homonymes / hors sujet). Lieux = répertoire emblématique + repli exploration ; enrichissement IA optionnel via VITE_GEMINI_DESTINATION_ENRICH. */
   const wikiPlaceTitlesP = Promise.resolve([]);
 
   const nominatimP = (async () => {
@@ -1290,6 +1358,81 @@ async function fetchDestinationGuide(city) {
   };
 }
 
+/** Coût activité en EUR : borne et arrondi pour la base. */
+function clampActivityCostEUR(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x < 0) return 0;
+  return Math.min(99999, Math.round(x * 100) / 100);
+}
+
+/** Extrait un nombre depuis nombre, chaîne "15", "15,5", "15 €", etc. */
+function parseFlexibleCostEUR(v) {
+  if (v == null || v === "") return NaN;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "object" && v) {
+    const nested = v.eur ?? v.EUR ?? v.amount ?? v.value;
+    if (nested != null && nested !== v) return parseFlexibleCostEUR(nested);
+  }
+  const s = String(v)
+    .trim()
+    .replace(/€/gi, "")
+    .replace(/\s+/g, "")
+    .replace(/(\d),(\d)/g, "$1.$2");
+  const m = s.match(/-?\d+(?:[.,]\d+)?/);
+  if (!m) return NaN;
+  const n = parseFloat(m[0].replace(",", "."));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/**
+ * Activité proposée : chaîne (ancien format) ou objet Gemini { title, location, estimatedCostEur, … }.
+ */
+function normalizeSuggestedActivityShape(raw, destinationHint = "") {
+  const dest = String(destinationHint || "").trim();
+  if (raw == null) return { title: "", location: "", cost: 0, description: "", costNote: "" };
+  if (typeof raw === "string") {
+    const title = String(raw).trim();
+    return { title, location: dest || "", cost: 0, description: "", costNote: "" };
+  }
+  if (typeof raw !== "object") return { title: "", location: "", cost: 0, description: "", costNote: "" };
+  const o = raw;
+  const title = String(o.title ?? o.name ?? o.label ?? o.activity ?? "").trim();
+  let location = String(o.location ?? o.lieu ?? o.place ?? o.where ?? o.address ?? "").trim();
+  if (!location && dest) location = dest;
+  let rawCost =
+    o.estimatedCostEur ??
+    o.estimated_cost_eur ??
+    o.estimatedCost ??
+    o.estimated_cost ??
+    o.costEur ??
+    o.cost_eur ??
+    o.price_eur ??
+    o.budget ??
+    o.budgetEur ??
+    o.montant ??
+    o.prix;
+  if ((rawCost == null || rawCost === "") && typeof o.price === "number") rawCost = o.price;
+  if (rawCost == null || rawCost === "") rawCost = o.cost;
+  if ((rawCost == null || rawCost === "") && o.price && typeof o.price === "object") {
+    rawCost = o.price.eur ?? o.price.EUR ?? o.price.amount;
+  }
+  const parsed = parseFlexibleCostEUR(rawCost);
+  let cost = 0;
+  if (Number.isFinite(parsed)) cost = clampActivityCostEUR(parsed);
+  else {
+    const n = Number(rawCost);
+    if (Number.isFinite(n)) cost = clampActivityCostEUR(n);
+  }
+  const description = String(o.description ?? o.summary ?? "").trim();
+  const costNote = String(o.costNote ?? o.cost_note ?? o.priceNote ?? o.price_note ?? "").trim();
+  return { title, location, cost, description, costNote };
+}
+
+function normalizeSuggestedActivitiesList(list, destinationHint = "") {
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => normalizeSuggestedActivityShape(x, destinationHint)).filter((x) => x.title);
+}
+
 function normalizeGeminiGuidePayload(data, destinationHint = "") {
   if (!data || typeof data !== "object") return null;
   const rawPlaces = Array.isArray(data.places)
@@ -1301,7 +1444,7 @@ function normalizeGeminiGuidePayload(data, destinationHint = "") {
     : Array.isArray(data.activities)
       ? data.activities
       : [];
-  const suggestedActivities = fromActs.map((x) => String(x || "").trim()).filter(Boolean);
+  const suggestedActivities = normalizeSuggestedActivitiesList(fromActs, destinationHint);
   const tipsRaw = data.tips && typeof data.tips === "object" ? data.tips : {};
   const tipsDo = Array.isArray(tipsRaw.do)
     ? tipsRaw.do.map((x) => String(x || "").trim()).filter(Boolean)
@@ -1317,6 +1460,17 @@ function normalizeGeminiGuidePayload(data, destinationHint = "") {
   };
 }
 
+/** Payload route /api/gemini/suggested-activities → liste normalisée pour l’UI. */
+function normalizeGeminiSuggestedActivitiesPayload(data, destinationHint = "") {
+  if (!data || typeof data !== "object") return [];
+  const fromActs = Array.isArray(data.suggestedActivities)
+    ? data.suggestedActivities
+    : Array.isArray(data.activities)
+      ? data.activities
+      : [];
+  return normalizeSuggestedActivitiesList(fromActs, destinationHint);
+}
+
 function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
   if (!baseGuide) return null;
   const city = String(baseGuide.city || "");
@@ -1324,13 +1478,15 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
     return {
       ...baseGuide,
       places: clampPlacesList(baseGuide.places, city),
+      suggestedActivities: normalizeSuggestedActivitiesList(baseGuide.suggestedActivities, city),
     };
   }
   const mergedPlaces =
     geminiNorm.places.length > 0 ? geminiNorm.places : baseGuide.places;
   return {
     ...baseGuide,
-    description: geminiNorm.summary || baseGuide.description,
+    // Description = Wikipédia / repli local uniquement (pas de résumé Gemini : économie de tokens).
+    description: baseGuide.description,
     places: clampPlacesList(mergedPlaces, city),
     tips: {
       do: geminiNorm.tips.do.length > 0 ? geminiNorm.tips.do : baseGuide.tips?.do || [],
@@ -1339,7 +1495,7 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
     suggestedActivities:
       geminiNorm.suggestedActivities.length > 0
         ? geminiNorm.suggestedActivities
-        : baseGuide.suggestedActivities,
+        : normalizeSuggestedActivitiesList(baseGuide.suggestedActivities, city),
   };
 }
 
@@ -1467,12 +1623,17 @@ function normalizeTrip(trip) {
   };
 }
 
+/** Id voyage / FK activité — toujours comparer avec ça (évite activités « invisibles » si selectedTrip est null). */
+function normTripId(id) {
+  return String(id ?? "").trim();
+}
+
 /** Évite les doublons si la liste brute contient deux fois le même id (course requêtes / état). */
 function dedupeTripsById(trips) {
   const seen = new Set();
   const out = [];
   for (const t of trips || []) {
-    const id = String(t?.id ?? "").trim();
+    const id = normTripId(t?.id);
     if (!id || seen.has(id)) continue;
     seen.add(id);
     out.push(t);
@@ -1497,10 +1658,10 @@ function formatCityName(value) {
     .join(" ");
 }
 
-/** HH:MM pour champs activité (select ou saisie). */
+/** HH:MM pour champs activité (select, saisie ou input type="time" navigateur → souvent HH:MM:SS). */
 function normalizeActivityTimeHHMM(value) {
   const s = String(value || "").trim();
-  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
   if (!m) return "";
   let h = parseInt(m[1], 10);
   let min = parseInt(m[2], 10);
@@ -1593,10 +1754,26 @@ function toYMDLoose(value) {
 /** Évite qu'un refetch juste après insertion écrase les activités (latence lecture / temps réel). */
 const ACTIVITY_INSERT_GRACE_MS = 90000;
 
+/** Colonne absente du cache schéma PostgREST (ex. PGRST204) — lit message, details et hint. */
+function parseMissingSchemaColumnName(err) {
+  const blob = [err?.message, err?.details, err?.hint].filter(Boolean).map(String).join("\n");
+  const patterns = [
+    /Could not find the '([^']+)' column/i,
+    /Could not find the "([^"]+)" column/i,
+    /column "([^"]+)" does not exist/i,
+    /column '([^']+)' does not exist/i,
+  ];
+  for (const re of patterns) {
+    const m = blob.match(re);
+    if (m?.[1]) return String(m[1]).trim();
+  }
+  return "";
+}
+
 function mergeActivitiesFromServer(prev, fetched, tripIds, graceRef) {
-  const tripIdList = [...new Set((tripIds || []).map((id) => String(id)).filter(Boolean))];
+  const tripIdList = [...new Set((tripIds || []).map((id) => normTripId(id)).filter(Boolean))];
   const tripIdSet = new Set(tripIdList);
-  const prevOutside = (prev || []).filter((a) => !tripIdSet.has(String(a.trip_id)));
+  const prevOutside = (prev || []).filter((a) => !tripIdSet.has(normTripId(a.trip_id)));
   const now = Date.now();
   const fetchedIds = new Set((fetched || []).map((a) => String(a.id)).filter(Boolean));
   const g = graceRef?.current;
@@ -1607,9 +1784,9 @@ function mergeActivitiesFromServer(prev, fetched, tripIds, graceRef) {
   }
   const merged = [];
   for (const tid of tripIdList) {
-    const serverRows = (fetched || []).filter((a) => String(a.trip_id) === tid);
+    const serverRows = (fetched || []).filter((a) => normTripId(a.trip_id) === tid);
     const serverIdSet = new Set(serverRows.map((a) => String(a.id)).filter(Boolean));
-    const prevRows = (prev || []).filter((a) => String(a.trip_id) === tid);
+    const prevRows = (prev || []).filter((a) => normTripId(a.trip_id) === tid);
     const lagRows = prevRows.filter((a) => {
       const id = String(a.id || "");
       if (!id || serverIdSet.has(id)) return false;
@@ -1623,7 +1800,7 @@ function mergeActivitiesFromServer(prev, fetched, tripIds, graceRef) {
 
 /** Sélection des activités d'un voyage ; replie sans `.order` si la colonne `date` n'existe pas côté Supabase. */
 async function fetchActivitiesRowsForTrip(tripId) {
-  const tid = String(tripId || "").trim();
+  const tid = normTripId(tripId);
   if (!tid) return [];
   const ordered = await supabase
     .from("activities")
@@ -1693,8 +1870,9 @@ function classifyTrips(list) {
   (list || []).forEach((trip) => {
     const start = toYMD(trip?.start_date, "");
     const end = toYMD(trip?.end_date, "");
-    if (start && end && start <= TODAY_STR && end >= TODAY_STR) now.push(trip);
-    else if (start && start > TODAY_STR) upcoming.push(trip);
+    const today = getTodayStr();
+    if (start && end && start <= today && end >= today) now.push(trip);
+    else if (start && start > today) upcoming.push(trip);
     else memories.push(trip);
   });
   now.sort(sortByChronology);
@@ -1836,19 +2014,57 @@ function CityImage({ title }) {
   );
 }
 
+/** Fond photo ville + flou / verre (même recette que l’onglet Chat). */
+function TripLiquidGlassShell({ imageTitle, active = false, className = "", children }) {
+  return (
+    <div className={`relative overflow-hidden ${className}`.trim()}>
+      <div
+        className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
+        style={{
+          filter: active
+            ? "blur(9px) saturate(1.2) brightness(0.95)"
+            : "blur(10px) saturate(1.12) brightness(0.92)",
+        }}
+      >
+        <CityImage title={String(imageTitle || "voyage")} />
+      </div>
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: active
+            ? "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))"
+            : "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
+        style={{ backgroundColor: active ? "rgba(2,6,23,0.09)" : "rgba(2,6,23,0.075)" }}
+      />
+      <div className="relative">{children}</div>
+    </div>
+  );
+}
+
 function TopNav({ onMenu, onAdd, title }) {
   return (
-    <header className="sticky top-0 z-30 px-5 pt-4">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between rounded-[2.25rem] bg-white/90 px-6 py-4 shadow-[0_16px_44px_rgba(30,58,95,0.09)] backdrop-blur-xl ring-1 ring-sky-100/55">
-        <button onClick={onMenu} className="rounded-full p-3 text-slate-700 hover:bg-slate-100">
+    <header className="sticky top-0 z-30 min-w-0 px-3 pt-4 sm:px-5">
+      <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(30,58,95,0.09)] backdrop-blur-xl ring-1 ring-sky-100/55 sm:px-6 sm:py-4">
+        <button
+          type="button"
+          onClick={onMenu}
+          className="shrink-0 rounded-full p-2.5 text-slate-700 hover:bg-slate-100 sm:p-3"
+        >
           <Menu size={20} />
         </button>
-        <div className="text-center">
-          <h1 className="text-base font-semibold tracking-[0.08em] text-slate-900">{String(title || "Mes Voyages")}</h1>
+        <div className="min-w-0 flex-1 px-1 text-center">
+          <h1 className="truncate text-sm font-semibold tracking-[0.06em] text-slate-900 sm:text-base sm:tracking-[0.08em]">
+            {String(title || "Mes Voyages")}
+          </h1>
         </div>
         <button
+          type="button"
           onClick={onAdd}
-          className={`rounded-full p-3 text-white transition hover:opacity-90 ${GLASS_BUTTON_CLASS}`}
+          className={`shrink-0 rounded-full p-2.5 text-white transition hover:opacity-90 sm:p-3 ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
           <Plus size={20} />
@@ -1864,7 +2080,7 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
     <div className={`fixed inset-0 z-40 transition ${open ? "pointer-events-auto" : "pointer-events-none"}`}>
       <div className={`absolute inset-0 bg-black/20 transition ${open ? "opacity-100" : "opacity-0"}`} onClick={onClose} />
       <aside
-        className={`absolute left-0 top-0 h-full w-80 bg-white/80 p-6 shadow-2xl backdrop-blur-xl transition ${
+        className={`absolute left-0 top-0 h-full w-[min(20rem,calc(100vw-1rem))] max-w-[100vw] bg-white/80 p-5 shadow-2xl backdrop-blur-xl transition sm:w-80 sm:p-6 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -2704,7 +2920,7 @@ function ShareModal({ open, onClose, trip }) {
   );
 }
 
-function TricountModal({ open, onClose, trip, onSave }) {
+function TripParticipantsModal({ open, onClose, trip, onSave }) {
   const [name, setName] = useState("");
   const [list, setList] = useState(["Moi"]);
   useEffect(() => {
@@ -2719,9 +2935,15 @@ function TricountModal({ open, onClose, trip, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-[3.5rem] bg-white/85 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Participants</h2>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Participants</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              Ils servent au <span className="font-medium text-slate-800">partage des dépenses</span> et aux{' '}
+              <span className="font-medium text-slate-800">soldes</span> affichés dans le budget de ce voyage.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
             <X size={18} />
           </button>
         </div>
@@ -2729,7 +2951,7 @@ function TricountModal({ open, onClose, trip, onSave }) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Ajouter un email participant"
+            placeholder="E-mail du participant"
             className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <button
@@ -2896,28 +3118,31 @@ function AccountModal({
 
 // Vues de listes
 function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
+  const imageTitle = String(trip?.destination || trip?.title || "voyage");
   return (
     <article
       className={`group ${muted ? "opacity-60 grayscale-[0.4]" : ""}`}
     >
-      <div className="relative aspect-square w-full min-w-0 overflow-hidden rounded-[3rem] shadow-2xl ring-1 ring-slate-200/40">
+      <div className="relative aspect-square w-full min-w-0 overflow-hidden rounded-[3rem] shadow-2xl ring-1 ring-white/35">
         <button onClick={() => onOpen(trip)} className="block h-full w-full text-left">
-          <div className="h-full w-full overflow-hidden rounded-[3rem] [&_img]:transition-transform [&_img]:duration-500 [&_img]:ease-out group-hover:[&_img]:scale-[1.04]">
-            <CityImage title={trip.title} />
-          </div>
-          <div className="pointer-events-none absolute inset-0 rounded-[3rem] bg-gradient-to-t from-black/58 via-black/14 to-transparent" />
-          <div className="pointer-events-none absolute bottom-4 left-4 right-4 text-white">
-            <div className="flex w-full flex-col items-start">
-              <div className="inline-flex max-w-full items-center rounded-2xl border border-white/35 bg-black/28 px-2.5 py-1 backdrop-blur-md">
-              <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white">
-                {String(trip.title)}
-              </h3>
+          <TripLiquidGlassShell
+            imageTitle={imageTitle}
+            active={!!isNow}
+            className="h-full min-h-0 rounded-[3rem] border border-white/40 shadow-inner transition group-hover:border-white/55"
+          >
+            <div className="flex h-full min-h-[11rem] flex-col justify-end bg-gradient-to-t from-black/45 via-transparent to-transparent px-4 pb-5 pt-16">
+              <div className="flex w-full flex-col items-start">
+                <div className="inline-flex max-w-full items-center rounded-2xl border border-white/40 bg-white/10 px-2.5 py-1 backdrop-blur-md">
+                  <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white drop-shadow-sm">
+                    {String(trip.title)}
+                  </h3>
+                </div>
+                <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
+                  {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
+                </p>
               </div>
-              <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
-                {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
-              </p>
             </div>
-          </div>
+          </TripLiquidGlassShell>
         </button>
         <button
           onClick={(e) => {
@@ -3037,9 +3262,6 @@ function CitySearchBox({
       </div>
       {show ? (
         <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 overflow-auto rounded-2xl bg-white/95 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.14)] backdrop-blur-xl ring-1 ring-slate-200/80">
-          {suggestLoading && suggestions.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-slate-500">Recherche des villes...</p>
-          ) : null}
           {suggestions.map((city) => (
             <button
               key={city}
@@ -3252,11 +3474,6 @@ function userFacingItineraryErrorMessage(raw) {
   return "Impossible de générer le programme. Réessaie plus tard.";
 }
 
-/** Message court pour le guide destination (hors mode dev). */
-function userFacingGeminiGuideError() {
-  return "Les suggestions personnalisées ne sont pas disponibles pour le moment. Tu vois tout de même un guide général pour cette destination.";
-}
-
 /** Heures proposées dans le modal « Ajouter le voyage » (planning par activité). */
 const TRIP_SCHEDULE_TIME_OPTIONS = [
   "09:00",
@@ -3302,7 +3519,6 @@ function DestinationGuideView({
   onCreateTrip,
   onBack,
 }) {
-  const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState("");
   const [guide, setGuide] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -3312,9 +3528,10 @@ function DestinationGuideView({
   const [pickedActivityIndices, setPickedActivityIndices] = useState(() => new Set());
   /** Par indice d'activité : { date?: 'YYYY-MM-DD', time?: 'HH:MM' } (optionnel ; défaut = répartition sur le séjour). */
   const [activitySchedule, setActivitySchedule] = useState(() => ({}));
-  const [geminiLoading, setGeminiLoading] = useState(false);
   const [geminiError, setGeminiError] = useState("");
   const [geminiContent, setGeminiContent] = useState(null);
+  /** Activités issues de /suggested-activities quand enrichissement complet désactivé. */
+  const [geminiAiSuggestedActivities, setGeminiAiSuggestedActivities] = useState(null);
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [programStartDate, setProgramStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [programEndDate, setProgramEndDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -3323,10 +3540,22 @@ function DestinationGuideView({
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
 
-  const displayGuide = useMemo(
-    () => mergeDestinationGuideWithGemini(guide, geminiContent),
-    [guide, geminiContent]
-  );
+  const displayGuide = useMemo(() => {
+    if (!guide) return null;
+    if (GEMINI_DESTINATION_ENRICH) {
+      return mergeDestinationGuideWithGemini(guide, geminiContent);
+    }
+    if (geminiAiSuggestedActivities && geminiAiSuggestedActivities.length > 0) {
+      const city = String(guide.city || "");
+      return {
+        ...guide,
+        places: clampPlacesList(guide.places, city),
+        suggestedActivities: geminiAiSuggestedActivities,
+        tips: guide.tips,
+      };
+    }
+    return mergeDestinationGuideWithGemini(guide, null);
+  }, [guide, geminiContent, geminiAiSuggestedActivities]);
 
   const tripDatesForModal = useMemo(() => listTripDatesInclusive(startDate, endDate), [startDate, endDate]);
 
@@ -3337,6 +3566,7 @@ function DestinationGuideView({
 
   useEffect(() => {
     setGeminiContent(null);
+    setGeminiAiSuggestedActivities(null);
     setGeminiError("");
     setGeneratedDayIdeas(null);
     setItineraryError("");
@@ -3367,7 +3597,6 @@ function DestinationGuideView({
     if (cityStem.length < 2) {
       setGuide(null);
       setGuideError("");
-      setGuideLoading(false);
       return;
     }
 
@@ -3375,11 +3604,10 @@ function DestinationGuideView({
     if (instant) {
       setGuide(instant);
       setGuideError("");
-      setGuideLoading(false);
     }
 
     let cancelled = false;
-    const timer = setTimeout(async () => {
+    (async () => {
       try {
         const result = await fetchDestinationGuide(confirmedDestination);
         if (!cancelled && result) setGuide(result);
@@ -3389,11 +3617,10 @@ function DestinationGuideView({
           setGuideError("Impossible de charger le guide destination.");
         }
       }
-    }, 60);
+    })();
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
   }, [confirmedDestination]);
 
@@ -3403,15 +3630,42 @@ function DestinationGuideView({
     ).trim();
     if (dest.length < 2) return undefined;
     let cancelled = false;
-    setGeminiLoading(true);
     setGeminiError("");
     setGeminiContent(null);
-    fetchGeminiTripSuggestions({ destination: dest })
+    setGeminiAiSuggestedActivities(null);
+
+    if (GEMINI_DESTINATION_ENRICH) {
+      fetchGeminiTripSuggestions({ destination: dest })
+        .then((res) => {
+          if (cancelled) return;
+          if (res?.ok && res.data) {
+            const norm = normalizeGeminiGuidePayload(res.data, dest);
+            setGeminiContent(norm);
+            setGeminiError("");
+          } else {
+            setGeminiError("Réponse vide du serveur.");
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) setGeminiError(String(e?.message || e));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!GEMINI_SUGGESTED_ACTIVITIES) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchGeminiSuggestedActivities({ destination: dest })
       .then((res) => {
         if (cancelled) return;
         if (res?.ok && res.data) {
-          const norm = normalizeGeminiGuidePayload(res.data, dest);
-          setGeminiContent(norm);
+          const norm = normalizeGeminiSuggestedActivitiesPayload(res.data, dest);
+          setGeminiAiSuggestedActivities(norm.length > 0 ? norm : null);
           setGeminiError("");
         } else {
           setGeminiError("Réponse vide du serveur.");
@@ -3419,9 +3673,6 @@ function DestinationGuideView({
       })
       .catch((e) => {
         if (!cancelled) setGeminiError(String(e?.message || e));
-      })
-      .finally(() => {
-        if (!cancelled) setGeminiLoading(false);
       });
     return () => {
       cancelled = true;
@@ -3474,18 +3725,7 @@ function DestinationGuideView({
       </div>
 
       <div className="overflow-hidden rounded-[2.2rem] bg-white/93 shadow-[0_18px_48px_rgba(30,58,95,0.1)] ring-1 ring-sky-100/50">
-        {guideLoading && !guide ? (
-          <div className="space-y-4 p-4">
-            <div className="h-56 w-full animate-pulse rounded-[2.5rem] bg-slate-100/90" />
-            <div className="space-y-3 p-2">
-              <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100/90" />
-              <div className="h-7 w-44 animate-pulse rounded-xl bg-slate-100/90" />
-              <div className="h-3 w-full animate-pulse rounded-full bg-slate-100/90" />
-              <div className="h-3 w-5/6 animate-pulse rounded-full bg-slate-100/90" />
-              <div className="h-3 w-4/6 animate-pulse rounded-full bg-slate-100/90" />
-            </div>
-          </div>
-        ) : guideError ? (
+        {guideError ? (
           <div className="p-6 text-sm text-rose-600">{String(guideError)}</div>
         ) : guide && displayGuide ? (
           <>
@@ -3543,15 +3783,7 @@ function DestinationGuideView({
                   {String(displayGuide.city)}
                 </h3>
                 <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">{String(displayGuide.description)}</p>
-                {geminiLoading ? (
-                  <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800 ring-1 ring-violet-200/80">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500" aria-hidden />
-                    {SHOW_GEMINI_DEV_UI
-                      ? "Génération des lieux et activités (Gemini)…"
-                      : "Personnalisation du guide en cours…"}
-                  </p>
-                ) : null}
-                {geminiError && !geminiLoading ? (
+                {geminiError ? (
                   SHOW_GEMINI_DEV_UI ? (
                     (() => {
                       const ui = getGeminiErrorUi(geminiError);
@@ -3605,11 +3837,7 @@ function DestinationGuideView({
                         </div>
                       );
                     })()
-                  ) : (
-                    <div className="mt-3 rounded-xl border border-slate-200/90 bg-slate-50/95 px-3 py-2.5 text-xs leading-relaxed text-slate-600">
-                      {userFacingGeminiGuideError()}
-                    </div>
-                  )
+                  ) : null
                 ) : null}
                 <button
                   type="button"
@@ -3702,14 +3930,17 @@ function DestinationGuideView({
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  {(displayGuide.suggestedActivities || []).map((a, i) => (
-                    <span
-                      key={`act-${i}-${String(a).slice(0, 20)}`}
-                      className="inline-flex max-w-full items-center rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
-                    >
-                      {String(a)}
-                    </span>
-                  ))}
+                  {(displayGuide.suggestedActivities || []).map((a, i) => {
+                    const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
+                    return (
+                      <span
+                        key={`act-${i}-${cell.title.slice(0, 20)}`}
+                        className="inline-flex max-w-full rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
+                      >
+                        {cell.title}
+                      </span>
+                    );
+                  })}
                 </div>
               </section>
 
@@ -3735,7 +3966,7 @@ function DestinationGuideView({
                         setItineraryError("");
                         setItineraryModalOpen(true);
                       }}
-                      disabled={itineraryLoading || geminiLoading}
+                      disabled={itineraryLoading}
                       className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
                     >
                       {itineraryLoading ? "Génération…" : "Générer un programme"}
@@ -3948,6 +4179,10 @@ function DestinationGuideView({
                 séjour et l’<span className="font-medium text-slate-600">heure</span> — elles apparaissent ainsi dans le
                 calendrier.
               </p>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                Lieu et budget (ordres de grandeur) : une fois le voyage créé, ouvre le détail d’une activité dans le
+                calendrier via le bouton œil.
+              </p>
               <div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3">
                 {(displayGuide.suggestedActivities || []).length === 0 ? (
                   <p className="text-xs text-slate-500">
@@ -3955,7 +4190,8 @@ function DestinationGuideView({
                   </p>
                 ) : (
                   (displayGuide.suggestedActivities || []).map((a, i) => {
-                    const label = String(a);
+                    const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
+                    const label = cell.title;
                     const checked = pickedActivityIndices.has(i);
                     return (
                       <label
@@ -3980,7 +4216,7 @@ function DestinationGuideView({
                           }}
                           className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
-                        <span className="text-sm leading-snug text-slate-800">{label}</span>
+                        <span className="min-w-0 text-sm font-medium leading-snug text-slate-900">{label}</span>
                       </label>
                     );
                   })
@@ -3996,10 +4232,12 @@ function DestinationGuideView({
                   ) : (
                     <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
                       {sortedPickedIndices.map((actIndex, j) => {
+                        const cell = normalizeSuggestedActivityShape(
+                          (displayGuide.suggestedActivities || [])[actIndex],
+                          displayGuide.city
+                        );
                         const label = String(
-                          pickedActivityLabelsRef.current.get(actIndex) ||
-                            (displayGuide.suggestedActivities || [])[actIndex] ||
-                            ""
+                          pickedActivityLabelsRef.current.get(actIndex) || cell.title || ""
                         );
                         const defDate =
                           tripDatesForModal[j % tripDatesForModal.length] || startDate;
@@ -4089,12 +4327,18 @@ function DestinationGuideView({
                   let date = sched.date || defDate;
                   if (tripDatesForModal.length > 0 && !tripDatesForModal.includes(date)) date = defDate;
                   const time = normalizeActivityTimeHHMM(sched.time) || defTime;
-                  const rawTitle =
-                    pickedActivityLabelsRef.current.get(actIndex) ||
-                    suggested[actIndex] ||
-                    `Activite ${j + 1}`;
+                  const cell = normalizeSuggestedActivityShape(suggested[actIndex], displayGuide.city);
+                  const rawTitle = pickedActivityLabelsRef.current.get(actIndex) || cell.title;
                   const title = String(rawTitle).trim() || `Activite ${j + 1}`;
-                  return { title, date, time };
+                  const description = [cell.description, cell.costNote].filter(Boolean).join("\n\n");
+                  return {
+                    title,
+                    date,
+                    time,
+                    location: cell.location,
+                    cost: cell.cost,
+                    description,
+                  };
                 });
                 try {
                   const ok = await onCreateTrip({
@@ -4209,6 +4453,8 @@ function PlannerView({
   setSelectedDate,
   onSelectDate,
   selectedTrip,
+  /** Id voyage côté App (indispensable si selectedTrip est null — sinon filtre trip_id vide et aucune activité). */
+  selectedTripId: selectedTripIdProp,
   trips,
   activities,
   onAddActivity,
@@ -4228,6 +4474,8 @@ function PlannerView({
   const [location, setLocation] = useState("");
   const [cost, setCost] = useState("");
   const [activityTime, setActivityTime] = useState("");
+  const [savingNewActivity, setSavingNewActivity] = useState(false);
+  const [activityFormError, setActivityFormError] = useState("");
   const selectedDateKey = toYMD(selectedDate, "");
 
   const days = useMemo(() => {
@@ -4242,11 +4490,15 @@ function PlannerView({
     return rows;
   }, [monthCursor]);
 
-  const selectedTripIdSafe = String(selectedTrip?.id || "").trim();
+  const resolvedTrip =
+    selectedTrip ||
+    (trips || []).find((t) => normTripId(t?.id) === normTripId(selectedTripIdProp)) ||
+    null;
+  const selectedTripIdSafe = normTripId(resolvedTrip?.id || selectedTripIdProp || "");
   const dayActivities = (activities || [])
     .filter(
       (a) =>
-        String(a?.trip_id || "").trim() === selectedTripIdSafe &&
+        normTripId(a?.trip_id) === selectedTripIdSafe &&
         toYMDLoose(a?.date_key || a?.date) === selectedDateKey
     )
     .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
@@ -4254,7 +4506,7 @@ function PlannerView({
   const activityCountByDay = useMemo(() => {
     const map = {};
     (activities || []).forEach((a) => {
-      if (String(a?.trip_id || "").trim() !== selectedTripIdSafe) return;
+      if (normTripId(a?.trip_id) !== selectedTripIdSafe) return;
       const key = toYMDLoose(a?.date_key || a?.date);
       if (!key) return;
       map[key] = (map[key] || 0) + 1;
@@ -4262,14 +4514,9 @@ function PlannerView({
     return map;
   }, [activities, selectedTripIdSafe]);
 
-  const tripActivityTotal = useMemo(() => {
-    if (!selectedTripIdSafe) return 0;
-    return (activities || []).filter((a) => String(a?.trip_id || "").trim() === selectedTripIdSafe).length;
-  }, [activities, selectedTripIdSafe]);
-
   const inTrip = (dateStr) => {
-    if (!selectedTrip) return false;
-    return dateStr >= String(selectedTrip.start_date) && dateStr <= String(selectedTrip.end_date);
+    if (!resolvedTrip) return false;
+    return dateStr >= String(resolvedTrip.start_date) && dateStr <= String(resolvedTrip.end_date);
   };
 
   const inAnyTrip = (dateStr) => {
@@ -4283,25 +4530,25 @@ function PlannerView({
 
   return (
     <section className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[minmax(320px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
-        <div className="order-1 rounded-[4.5rem] bg-white/70 p-6 shadow-2xl backdrop-blur-xl lg:order-1 lg:justify-self-start lg:w-full">
-          <div className="mb-4 flex items-center justify-between">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
+        <div className="order-1 min-w-0 rounded-[2rem] bg-white/70 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3rem] sm:p-5 md:rounded-[4.5rem] md:p-6 lg:order-1 lg:justify-self-start lg:w-full">
+          <div className="mb-4 flex min-w-0 items-center justify-between gap-1">
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
               {"<"}
             </button>
-            <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">
+            <h2 className="min-w-0 truncate px-1 text-center text-[10px] uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.4em]">
               {monthCursor.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
             </h2>
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
               {">"}
             </button>
           </div>
-          <div className="grid grid-cols-7 gap-2 text-center text-xs text-slate-500">
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 sm:gap-2 sm:text-xs">
             {["L", "M", "M", "J", "V", "S", "D"].map((x, i) => (
               <div key={`${x}-${i}`} className="py-2">{x}</div>
             ))}
             {days.map((d, i) => {
-              if (!d) return <div key={`empty-${i}`} className="h-12 rounded-xl bg-slate-50" />;
+              if (!d) return <div key={`empty-${i}`} className="h-10 rounded-lg bg-slate-50 sm:h-12 sm:rounded-xl" />;
               const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
                 d.getDate()
               ).padStart(2, "0")}`;
@@ -4323,7 +4570,7 @@ function PlannerView({
                     if (onSelectDate) onSelectDate(dateStr);
                     else setSelectedDate(dateStr);
                   }}
-                  className={`relative h-12 rounded-xl border text-sm transition-all duration-150 ${dayClass}`}
+                  className={`relative h-10 rounded-lg border text-xs transition-all duration-150 sm:h-12 sm:rounded-xl sm:text-sm ${dayClass}`}
                   style={selected ? { backgroundColor: ACCENT } : undefined}
                 >
                   {d.getDate()}
@@ -4352,10 +4599,11 @@ function PlannerView({
           </p>
         </div>
 
-        <div className="order-2 px-1 py-1 lg:order-2">
-          <h3 className="mb-3 text-xs uppercase tracking-[0.4em] text-slate-500">{selectedDate}</h3>
+        <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
+          <h3 className="mb-3 break-all text-xs uppercase tracking-[0.4em] text-slate-500">{selectedDate}</h3>
           <button
             onClick={() => {
+              setActivityFormError("");
               const index = (activities || []).filter(
                 (a) => toYMDLoose(a?.date_key || a?.date) === selectedDateKey
               ).length;
@@ -4379,13 +4627,6 @@ function PlannerView({
                       {String(a.time || "--:--")}
                     </p>
                     <p className="truncate font-medium text-slate-900">{String(a?.title || a?.name || "Activite")}</p>
-                    <p className="text-xs text-slate-600">
-                      <MapPin size={12} className="mr-1 inline" />
-                      {String(a?.location || "-")}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm">
-                    <p className="text-slate-600">{Number(a.cost || 0).toFixed(2)} EUR</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2 px-4 py-3">
@@ -4424,19 +4665,8 @@ function PlannerView({
                 </div>
               </div>
             )) : (
-              <div className="space-y-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
                 <p className="font-medium text-slate-700">Aucune activité à cette date.</p>
-                {tripActivityTotal === 0 ? (
-                  <p>
-                    Aucune activité n&apos;est enregistrée pour ce voyage. Après création depuis la recherche, regarde s&apos;il
-                    y a un message d&apos;erreur en haut de l&apos;écran (droits Supabase sur la table des activités, etc.).
-                  </p>
-                ) : (
-                  <p>
-                    Ce jour n&apos;a pas d&apos;activité, mais le voyage en a sur d&apos;autres dates : clique les jours du
-                    séjour où tu vois un <span className="font-medium text-slate-800">chiffre</span> sur la case.
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -4452,12 +4682,18 @@ function PlannerView({
                 onClick={() => {
                   setActivityModalOpen(false);
                   setActivityTime("");
+                  setActivityFormError("");
                 }}
                 className="rounded-full p-2 hover:bg-slate-100"
               >
                 <X size={18} />
               </button>
             </div>
+            {activityFormError ? (
+              <p className="mb-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-800 ring-1 ring-rose-100">
+                {activityFormError}
+              </p>
+            ) : null}
             <div className="space-y-3">
               <input
                 value={title}
@@ -4500,19 +4736,46 @@ function PlannerView({
                 </span>
               </div>
               <button
-                onClick={() => {
-                  onAddActivity({ title, description, location, cost, time: activityTime });
-                  setTitle("");
-                  setDescription("");
-                  setLocation("");
-                  setCost("");
-                  setActivityTime("");
-                  setActivityModalOpen(false);
+                type="button"
+                disabled={savingNewActivity}
+                onClick={async () => {
+                  if (savingNewActivity) return;
+                  setActivityFormError("");
+                  setSavingNewActivity(true);
+                  try {
+                    const result = await onAddActivity({
+                      title,
+                      description,
+                      location,
+                      cost,
+                      time: activityTime,
+                    });
+                    const added = result === true || result?.ok === true;
+                    if (added) {
+                      setTitle("");
+                      setDescription("");
+                      setLocation("");
+                      setCost("");
+                      setActivityTime("");
+                      setActivityModalOpen(false);
+                    } else {
+                      const detail =
+                        result && typeof result === "object" && String(result.error || "").trim()
+                          ? String(result.error).trim()
+                          : "";
+                      setActivityFormError(
+                        detail ||
+                          "Enregistrement refuse. Verifie aussi le bandeau en haut de la page (message rouge), l'URL / la cle Supabase dans l'app, et les contraintes (FK trip_id → trips.id)."
+                      );
+                    }
+                  } finally {
+                    setSavingNewActivity(false);
+                  }
                 }}
-                className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+                className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
                 style={GLASS_ACCENT_STYLE}
               >
-                Ajouter
+                {savingNewActivity ? "Enregistrement…" : "Ajouter"}
               </button>
             </div>
           </div>
@@ -4693,19 +4956,328 @@ function PlannerView({
   );
 }
 
-function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, onDeleteExpense }) {
-  const [editingExpense, setEditingExpense] = useState(null);
+function formatEuroFR(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function normalizeTripExpenseRow(row) {
+  if (!row || typeof row !== "object") return null;
+  return {
+    id: String(row.id || ""),
+    trip_id: String(row.trip_id || ""),
+    title: String(row.title || "").trim() || "Dépense",
+    amount: Math.max(0, Number(row.amount) || 0),
+    paid_by: String(row.paid_by || "Moi"),
+    split_between: Array.isArray(row.split_between) ? row.split_between.map(String) : [],
+    expense_date: row.expense_date ? String(row.expense_date).slice(0, 10) : null,
+  };
+}
+
+function GroupExpenseModal({ open, onClose, trip, participants, displayForParticipant, initial, onSave, saving }) {
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paidBy, setPaidBy] = useState("Moi");
+  const [splitSet, setSplitSet] = useState(() => new Set());
+  const [expenseDate, setExpenseDate] = useState("");
+
+  const participantsKey = (Array.isArray(participants) ? participants : []).join("|");
+  useEffect(() => {
+    if (!open) return;
+    const parts = Array.isArray(participants) && participants.length > 0 ? participants : ["Moi"];
+    if (initial && initial.id) {
+      setTitle(String(initial.title || ""));
+      setAmount(String(initial.amount ?? ""));
+      setPaidBy(String(initial.paid_by || "Moi"));
+      const sb = Array.isArray(initial.split_between) && initial.split_between.length > 0 ? initial.split_between : parts;
+      setSplitSet(new Set(sb.map(String)));
+      setExpenseDate(initial.expense_date ? String(initial.expense_date).slice(0, 10) : "");
+    } else {
+      setTitle("");
+      setAmount("");
+      setPaidBy(parts.includes("Moi") ? "Moi" : parts[0]);
+      setSplitSet(new Set(parts));
+      setExpenseDate("");
+    }
+  }, [open, initial?.id, participantsKey]);
+
+  if (!open || !trip) return null;
+
+  const parts = Array.isArray(participants) && participants.length > 0 ? participants : ["Moi"];
+  const toggleSplit = (p) => {
+    setSplitSet((prev) => {
+      const n = new Set(prev);
+      if (n.has(p)) {
+        if (n.size <= 1) return n;
+        n.delete(p);
+      } else {
+        n.add(p);
+      }
+      return n;
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-slate-200/80 sm:p-7">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">
+            {initial?.id ? "Modifier la dépense" : "Nouvelle dépense"}
+          </h3>
+          <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Libellé (ex. Courses, Taxi, Hôtel)"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="relative">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="Montant"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-sm"
+              />
+              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">€</span>
+            </div>
+            <input
+              type="date"
+              value={expenseDate}
+              onChange={(e) => setExpenseDate(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Payé par</p>
+            <select
+              value={paidBy}
+              onChange={(e) => setPaidBy(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+            >
+              {parts.map((p) => (
+                <option key={p} value={p}>
+                  {displayForParticipant(p)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Partagé entre</p>
+            <p className="mb-2 text-[11px] text-slate-500">Coche les personnes concernées par cette dépense (équitable).</p>
+            <div className="flex flex-wrap gap-2">
+              {parts.map((p) => (
+                <label
+                  key={p}
+                  className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                    splitSet.has(p)
+                      ? "border-indigo-300 bg-indigo-50 text-indigo-950"
+                      : "border-slate-200 bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={splitSet.has(p)}
+                    onChange={() => toggleSplit(p)}
+                  />
+                  {displayForParticipant(p)}
+                </label>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              const splitArr = [...splitSet];
+              if (splitArr.length === 0) return;
+              const amt = Number(String(amount).replace(",", "."));
+              if (!Number.isFinite(amt) || amt <= 0) return;
+              onSave({
+                id: initial?.id,
+                trip_id: trip.id,
+                title: String(title || "").trim() || "Dépense",
+                amount: amt,
+                paid_by: paidBy,
+                split_between: splitArr.length === parts.length ? [] : splitArr,
+                expense_date: expenseDate.trim() || null,
+              });
+            }}
+            className={`w-full rounded-2xl px-4 py-3 text-sm font-medium text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
+            style={GLASS_ACCENT_STYLE}
+          >
+            {saving ? "Enregistrement…" : "Enregistrer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesEnabled, onOpenDetail }) {
+  const acts = (activities || []).filter((a) => String(a.trip_id) === String(trip.id));
+  const exps = (groupExpenses || []).filter((e) => String(e.trip_id) === String(trip.id));
+  const totalPlanner = acts.reduce((s, a) => s + Number(a.cost || 0), 0);
+  const totalGroup = exps.reduce((s, e) => s + Number(e.amount || 0), 0);
+  const label = String(trip?.destination || trip?.title || "Voyage").trim();
+  const imageTitle = String(trip?.destination || trip?.title || "voyage");
+  const dr =
+    trip?.start_date && trip?.end_date
+      ? `${String(trip.start_date)} — ${String(trip.end_date)}`
+      : "";
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenDetail}
+      className="group w-full rounded-[2rem] p-0 text-left shadow-[0_12px_26px_rgba(15,23,42,0.16)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-200"
+    >
+      <TripLiquidGlassShell
+        imageTitle={imageTitle}
+        active={false}
+        className="rounded-[2rem] border border-white/42 text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] transition group-hover:border-white/55"
+      >
+        <div className="flex items-start justify-between gap-2 px-3 py-3.5 sm:gap-3 sm:px-4 sm:py-4">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words font-semibold tracking-tight text-white drop-shadow-sm">{label}</h3>
+            {dr ? <p className="mt-0.5 break-all text-xs text-white/85">{dr}</p> : null}
+            {groupExpensesEnabled ? (
+              <div className="mt-2.5 flex flex-col gap-1 text-xs text-white/88 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
+                <span className="min-w-0">
+                  <span className="text-white/75">Dépenses partagées</span>{" "}
+                  <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
+                </span>
+                <span className="hidden text-white/40 sm:inline" aria-hidden>
+                  ·
+                </span>
+                <span className="min-w-0">
+                  <span className="text-white/75">Réf. planning</span>{" "}
+                  <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
+                </span>
+              </div>
+            ) : (
+              <p className="mt-2.5 text-xs text-white/88">
+                <span className="text-white/75">Réf. planning</span>{" "}
+                <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
+              </p>
+            )}
+            <p className="mt-2 text-[11px] font-medium text-white/95 underline decoration-white/35 underline-offset-2">
+              Ouvrir le budget du voyage
+            </p>
+          </div>
+          <ChevronRight className="mt-0.5 h-5 w-5 shrink-0 text-white/75" strokeWidth={2} aria-hidden />
+        </div>
+      </TripLiquidGlassShell>
+    </button>
+  );
+}
+
+function BudgetTripDetailShell({ trip, onClose, children }) {
+  if (!trip) return null;
+  const label = String(trip?.destination || trip?.title || "Voyage").trim();
+  const dr =
+    trip?.start_date && trip?.end_date
+      ? `${String(trip.start_date)} — ${String(trip.end_date)}`
+      : "";
+  return (
+    <div
+      className="fixed inset-0 z-[45] flex items-end justify-center bg-black/40 p-0 backdrop-blur-md sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="budget-trip-detail-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-xl flex-col overflow-hidden rounded-t-[2.25rem] bg-white shadow-[0_-12px_48px_rgba(2,6,23,0.2)] sm:max-h-[90vh] sm:rounded-[2rem] sm:shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-slate-100 px-4 pb-3 pt-4 sm:gap-3 sm:px-6">
+          <div className="min-w-0 flex-1 pr-1">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Budget du voyage</p>
+            <h2
+              id="budget-trip-detail-title"
+              className="mt-1 line-clamp-2 break-words text-lg font-semibold leading-snug text-slate-900"
+            >
+              {label}
+            </h2>
+            {dr ? <p className="mt-0.5 break-all text-xs text-slate-500">{dr}</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-100"
+            aria-label="Fermer"
+          >
+            <X size={22} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-5 sm:py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function TripExpenseDetail({
+  trip,
+  session,
+  activities,
+  groupExpenses,
+  groupExpensesEnabled,
+  onOpenParticipants,
+  onUpdateActivity,
+  onDeleteActivity,
+  onAddGroupExpense,
+  onUpdateGroupExpense,
+  onDeleteGroupExpense,
+}) {
+  const [editingActivity, setEditingActivity] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editLocation, setEditLocation] = useState("");
   const [editCost, setEditCost] = useState("");
   const [editTime, setEditTime] = useState("");
+  const [groupModal, setGroupModal] = useState(null);
+  const [groupSaving, setGroupSaving] = useState(false);
+  const [importingPlanner, setImportingPlanner] = useState(false);
+
   const safeActivities = Array.isArray(activities) ? activities : [];
-  const total = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
+  const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
   const participants = canonicalParticipants(
     Array.isArray(trip?.participants) ? trip.participants : [],
     Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
   );
-  const share = participants.length > 0 ? total / participants.length : total;
+  const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+
+  const totalPlanner = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
+  const totalGroup = safeGroup.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const balances = useMemo(
+    () => computeTricountBalances(participants, groupExpensesEnabled ? safeGroup : []),
+    [participants, safeGroup, groupExpensesEnabled]
+  );
+  const settlements = useMemo(() => simplifyTricountDebts(balances), [balances]);
+  const balanceEntries = useMemo(() => Object.entries(balances).sort((a, b) => a[0].localeCompare(b[0])), [balances]);
+
+  const tripLabel = String(trip?.destination || trip?.title || "Voyage").trim();
+  const dateRange =
+    trip?.start_date && trip?.end_date
+      ? `${String(trip.start_date)} → ${String(trip.end_date)}`
+      : "";
 
   const sortedActivities = [...safeActivities].sort((a, b) => {
     const ad = String(a?.date || "");
@@ -4714,112 +5286,311 @@ function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, 
     return String(a?.time || "").localeCompare(String(b?.time || ""));
   });
 
+  const sortedGroup = [...safeGroup].sort((a, b) => {
+    const da = String(a?.expense_date || "");
+    const db = String(b?.expense_date || "");
+    if (da !== db) return db.localeCompare(da);
+    return String(b?.id || "").localeCompare(String(a?.id || ""));
+  });
+
+  const plannerWithCost = sortedActivities.filter((a) => Number(a.cost || 0) > 0);
+
   return (
     <>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpenTricount(trip)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onOpenTricount(trip);
-          }
-        }}
-        className="cursor-pointer rounded-[3.5rem] bg-white/70 p-5 shadow-2xl backdrop-blur-xl transition hover:bg-white/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
-        title="Cliquer pour gerer les participants"
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold uppercase tracking-[0.08em]">{String(trip.title)}</h3>
+      <div className="max-w-full overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words text-lg font-semibold tracking-tight text-slate-900">{tripLabel}</h3>
+            {dateRange ? (
+              <p className="mt-0.5 text-xs font-medium uppercase tracking-wider text-slate-400">{dateRange}</p>
+            ) : null}
+          </div>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenTricount(trip);
-            }}
-            className="rounded-full p-2 hover:bg-slate-100"
-            title="Gerer les participants"
+            type="button"
+            onClick={() => onOpenParticipants(trip)}
+            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
           >
-            <Users size={18} />
+            <Users size={18} className="text-slate-600" strokeWidth={2} />
+            Participants
           </button>
         </div>
-        <div className="space-y-1 text-sm">
-          <p>
-            Total: <span className="font-medium">{total.toFixed(2)} EUR</span>
-          </p>
-          <p>Participants: {participants.length}</p>
-          <p>
-            Ratio (Total / pers.): <span className="font-medium">{share.toFixed(2)} EUR</span>
-          </p>
-        </div>
 
-        <div className="mt-4 space-y-2">
-          <p className="text-xs text-slate-500">Clique sur la carte pour modifier les participants de ce voyage.</p>
-          {sortedActivities && sortedActivities.length > 0 ? (
-            sortedActivities.map((a, idx) => (
-              <div
-                key={`${String(a?.id || "a")}-${idx}`}
-                className="flex items-start justify-between rounded-2xl bg-slate-100 px-4 py-3"
-              >
-                <div className="min-w-0 pr-3">
-                  <p className="truncate font-medium text-slate-900">
-                    {String(a?.title || a?.name || "Depense")}
-                  </p>
-                  <p className="truncate text-xs text-slate-600">
-                    {String(a?.location || "-")}
-                  </p>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="text-right">
-                    <p className="text-sm text-slate-900">{String(a?.time || "--:--")}</p>
-                    <p className="text-xs text-slate-600">{Number(a?.cost || 0).toFixed(2)} EUR</p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingExpense(a);
-                        setEditTitle(String(a?.title || a?.name || "Depense"));
-                        setEditLocation(String(a?.location || ""));
-                        setEditCost(String(a?.cost ?? 0));
-                        setEditTime(String(a?.time || ""));
-                      }}
-                      className="rounded-full p-1.5 text-slate-600 transition hover:bg-slate-200"
-                      title="Modifier la depense"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteExpense(a);
-                      }}
-                      className="rounded-full p-1.5 text-rose-700 transition hover:bg-rose-100"
-                      title="Supprimer la depense"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
+        {!groupExpensesEnabled ? (
+          <div className="mb-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
+            <p className="font-medium">Dépenses partagées non disponibles</p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-900/85">
+              Pour activer les dépenses de groupe (qui a payé, partage entre participants, soldes, remboursements), exécute le script SQL{' '}
+              <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">supabase/sql/trip_expenses.sql</code> dans Supabase → SQL Editor,
+              puis recharge l’app.
+            </p>
+          </div>
+        ) : null}
+
+        {groupExpensesEnabled ? (
+          <>
+            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50/80 px-4 py-3.5 ring-1 ring-indigo-200/50">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-800/80">Total dépenses partagées</p>
+                <p className="mt-1.5 text-2xl font-semibold tabular-nums text-indigo-950">{formatEuroFR(totalGroup)}</p>
+                <p className="mt-1 text-[11px] leading-snug text-indigo-900/70">
+                  Somme des dépenses enregistrées ici avec payeur et répartition.
+                </p>
               </div>
-            ))
+              <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-3.5 ring-1 ring-slate-200/60">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Réf. planning</p>
+                <p className="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{formatEuroFR(totalPlanner)}</p>
+                <p className="mt-1 text-[11px] leading-snug text-slate-500">
+                  Coûts des activités du calendrier (indépendant des lignes ci‑dessus).
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Soldes</p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Positif = on vous doit de l’argent ; négatif = vous devez rembourser.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {balanceEntries.map(([person, bal]) => {
+                  const b = Number(bal) || 0;
+                  const pos = b > 0.01;
+                  const neg = b < -0.01;
+                  return (
+                    <li
+                      key={person}
+                      className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-100"
+                    >
+                      <span className="min-w-0 truncate font-medium text-slate-800">{displayName(person)}</span>
+                      <span
+                        className={`shrink-0 tabular-nums font-semibold ${
+                          pos ? "text-emerald-700" : neg ? "text-rose-700" : "text-slate-500"
+                        }`}
+                      >
+                        {pos ? "+" : ""}
+                        {formatEuroFR(b)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {settlements.length > 0 ? (
+              <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/50 px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800">Remboursements suggérés</p>
+                <p className="mt-1 text-[11px] text-emerald-900/70">Pour équilibrer tout le monde avec un minimum de virements.</p>
+                <ul className="mt-3 space-y-2">
+                  {settlements.map((s, i) => (
+                    <li
+                      key={`${s.from}-${s.to}-${i}`}
+                      className="flex flex-col gap-2 rounded-xl bg-white px-3 py-2.5 text-sm text-slate-800 ring-1 ring-emerald-100/80 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+                    >
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="break-words font-medium">{displayName(s.from)}</span>
+                        <ArrowRight size={14} className="shrink-0 text-emerald-600" aria-hidden />
+                        <span className="break-words font-medium">{displayName(s.to)}</span>
+                      </div>
+                      <span className="shrink-0 font-semibold tabular-nums text-emerald-800">{formatEuroFR(s.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="mb-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setGroupModal({ mode: "add" })}
+                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium text-white ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                <Plus size={18} />
+                Nouvelle dépense
+              </button>
+              <button
+                type="button"
+                disabled={importingPlanner || plannerWithCost.length === 0}
+                onClick={async () => {
+                  if (plannerWithCost.length === 0) return;
+                  setImportingPlanner(true);
+                  try {
+                    for (const a of plannerWithCost) {
+                      const ymd = toYMDLoose(a?.date_key || a?.date);
+                      await onAddGroupExpense({
+                        trip_id: trip.id,
+                        title: `Planning : ${String(a?.title || a?.name || "Activité")}`,
+                        amount: Number(a.cost || 0),
+                        paid_by: "Moi",
+                        split_between: [],
+                        expense_date: ymd || null,
+                      });
+                    }
+                  } finally {
+                    setImportingPlanner(false);
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {importingPlanner ? "Import…" : `Importer le planning (${plannerWithCost.length})`}
+              </button>
+            </div>
+
+            <div className="mb-6 border-t border-slate-100 pt-4">
+              <div className="mb-3 flex items-center gap-2">
+                <Receipt size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Liste des dépenses</p>
+              </div>
+              {sortedGroup.length > 0 ? (
+                <ul className="space-y-2">
+                  {sortedGroup.map((e) => {
+                    const splitLabel =
+                      Array.isArray(e.split_between) && e.split_between.length > 0
+                        ? e.split_between.map(displayName).join(", ")
+                        : participants.map(displayName).join(", ");
+                    return (
+                      <li
+                        key={String(e.id)}
+                        className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words font-medium text-slate-900">{e.title}</p>
+                          <p className="mt-0.5 break-words text-xs text-slate-500">
+                            Payé par <span className="font-medium text-slate-700">{displayName(e.paid_by)}</span>
+                            {" · "}
+                            Part : {splitLabel}
+                          </p>
+                          {e.expense_date ? (
+                            <p className="mt-1 text-[10px] text-slate-400">{e.expense_date}</p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-start gap-2">
+                          <p className="pt-0.5 text-sm font-semibold tabular-nums text-slate-800">{formatEuroFR(e.amount)}</p>
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setGroupModal({ mode: "edit", expense: e })}
+                              className="rounded-full p-1.5 text-slate-600 transition hover:bg-slate-200"
+                              title="Modifier"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteGroupExpense(e)}
+                              className="rounded-full p-1.5 text-rose-700 transition hover:bg-rose-100"
+                              title="Supprimer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
+                  Aucune dépense groupe. Utilise « Nouvelle dépense » ou importe depuis le planning.
+                </p>
+              )}
+            </div>
+          </>
+        ) : null}
+
+        <div className={groupExpensesEnabled ? "border-t border-slate-100 pt-4" : ""}>
+          <div className="mb-3 flex items-center gap-2">
+            <Calendar size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Activités du planning</p>
+          </div>
+          {sortedActivities && sortedActivities.length > 0 ? (
+            <ul className="space-y-2">
+              {sortedActivities.map((a, idx) => (
+                <li
+                  key={`${String(a?.id || "a")}-${idx}`}
+                  className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-slate-900">{String(a?.title || a?.name || "Activité")}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{String(a?.location || "Lieu non renseigné")}</p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                      {a?.date ? (
+                        <span className="rounded-md bg-white px-2 py-0.5 font-medium ring-1 ring-slate-200/80">
+                          {String(a.date)}
+                        </span>
+                      ) : null}
+                      {a?.time ? <span>{String(a.time)}</span> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-start gap-2">
+                    <p className="pt-0.5 text-sm font-semibold tabular-nums text-slate-800">{formatEuroFR(a?.cost)}</p>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingActivity(a);
+                          setEditTitle(String(a?.title || a?.name || "Activité"));
+                          setEditLocation(String(a?.location || ""));
+                          setEditCost(String(a?.cost ?? 0));
+                          setEditTime(String(a?.time || ""));
+                        }}
+                        className="rounded-full p-1.5 text-slate-600 transition hover:bg-slate-200"
+                        title="Modifier le montant ou les infos"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteActivity(a)}
+                        className="rounded-full p-1.5 text-rose-700 transition hover:bg-rose-100"
+                        title="Retirer du planning"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p className="text-sm text-slate-500">Aucune depense.</p>
+            <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
+              Aucune activité. Ajoute-en dans l’onglet <span className="font-medium text-slate-700">Planning</span>.
+            </p>
           )}
         </div>
       </div>
 
-      {editingExpense ? (
+      <GroupExpenseModal
+        open={!!groupModal}
+        onClose={() => !groupSaving && setGroupModal(null)}
+        trip={trip}
+        participants={participants}
+        displayForParticipant={displayName}
+        initial={groupModal?.mode === "edit" ? groupModal.expense : null}
+        saving={groupSaving}
+        onSave={async (payload) => {
+          setGroupSaving(true);
+          try {
+            if (payload.id) await onUpdateGroupExpense(payload);
+            else await onAddGroupExpense(payload);
+            setGroupModal(null);
+          } finally {
+            setGroupSaving(false);
+          }
+        }}
+      />
+
+      {editingActivity ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
-          onClick={() => setEditingExpense(null)}
+          onClick={() => setEditingActivity(null)}
         >
           <div
             className="w-full max-w-lg rounded-[3rem] bg-white/90 p-6 shadow-2xl backdrop-blur-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Modifier depense</h3>
-              <button onClick={() => setEditingExpense(null)} className="rounded-full p-2 hover:bg-slate-100">
+              <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Modifier l&apos;activité</h3>
+              <button type="button" onClick={() => setEditingActivity(null)} className="rounded-full p-2 hover:bg-slate-100">
                 <X size={16} />
               </button>
             </div>
@@ -4827,13 +5598,13 @@ function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, 
               <input
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="Activite"
+                placeholder="Nom de l&apos;activité"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <input
                 value={editLocation}
                 onChange={(e) => setEditLocation(e.target.value)}
-                placeholder="Lieu"
+                placeholder="Lieu (optionnel)"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <div className="grid grid-cols-2 gap-3">
@@ -4851,7 +5622,7 @@ function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, 
                     inputMode="decimal"
                     value={editCost}
                     onChange={(e) => setEditCost(e.target.value)}
-                    placeholder="Cout"
+                    placeholder="Coût"
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
                   />
                   <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
@@ -4860,20 +5631,21 @@ function TripExpenseDetail({ trip, activities, onOpenTricount, onUpdateExpense, 
                 </div>
               </div>
               <button
+                type="button"
                 onClick={async () => {
-                  await onUpdateExpense({
-                    ...editingExpense,
-                    title: String(editTitle || "Depense"),
+                  await onUpdateActivity({
+                    ...editingActivity,
+                    title: String(editTitle || "Activité"),
                     location: String(editLocation || ""),
                     cost: Number(editCost || 0),
                     time: String(editTime || ""),
                   });
-                  setEditingExpense(null);
+                  setEditingActivity(null);
                 }}
                 className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
-                Enregistrer la depense
+                Enregistrer
               </button>
             </div>
           </div>
@@ -4939,9 +5711,9 @@ function ChatHubView({
 
   return (
     <section className="space-y-5">
-      <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
+      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70 sm:p-5">
         <h2 className="text-xs uppercase tracking-[0.35em] text-slate-500">Groupes voyages</h2>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="mt-3 grid min-w-0 gap-2 md:grid-cols-2">
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
               const active = String(chatTripId) === String(trip.id);
@@ -4953,39 +5725,22 @@ function ChatHubView({
                 <button
                   key={String(trip.id)}
                   onClick={() => setChatTripId(String(trip.id))}
-                  className={`relative overflow-hidden rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                  className={`w-full text-left text-sm transition ${
                     active
-                      ? "border-white/55 text-white shadow-[0_16px_34px_rgba(2,6,23,0.24)]"
-                      : "border-white/42 text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)]"
+                      ? "text-white shadow-[0_16px_34px_rgba(2,6,23,0.24)]"
+                      : "text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)]"
                   }`}
                 >
-                  <div
-                    className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
-                    style={{
-                      filter: active
-                        ? "blur(9px) saturate(1.2) brightness(0.95)"
-                        : "blur(10px) saturate(1.12) brightness(0.92)",
-                    }}
+                  <TripLiquidGlassShell
+                    imageTitle={String(trip?.destination || trip?.title || "voyage")}
+                    active={active}
+                    className={`rounded-2xl border px-4 py-3 ${
+                      active ? "border-white/55" : "border-white/42"
+                    }`}
                   >
-                    <CityImage title={String(trip?.title || "voyage")} />
-                  </div>
-                  <div
-                    className="pointer-events-none absolute inset-0"
-                    style={{
-                      background:
-                        active
-                          ? "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))"
-                          : "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
-                    }}
-                  />
-                  <div
-                    className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
-                    style={{ backgroundColor: active ? "rgba(2,6,23,0.09)" : "rgba(2,6,23,0.075)" }}
-                  />
-                  <div className="relative">
                     <p className="font-medium">{String(trip.title)}</p>
                     <p className="text-xs text-white/85">
-                    {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
+                      {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
                     </p>
                     <div className="mt-2 flex items-center gap-1.5">
                       {participantLabels.slice(0, 4).map((label) => (
@@ -4998,12 +5753,10 @@ function ChatHubView({
                         </span>
                       ))}
                       {participantLabels.length > 4 ? (
-                        <span className="text-[10px] text-white/85">
-                          +{participantLabels.length - 4}
-                        </span>
+                        <span className="text-[10px] text-white/85">+{participantLabels.length - 4}</span>
                       ) : null}
                     </div>
-                  </div>
+                  </TripLiquidGlassShell>
                 </button>
               );
             })
@@ -5015,17 +5768,20 @@ function ChatHubView({
 
       {activeTrip ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
-          <div className="relative h-[92vh] w-full max-w-6xl sm:h-[88vh]">
+          <div className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-6xl flex-col overflow-hidden sm:max-h-[88vh]">
             <button
+              type="button"
               onClick={() => setChatTripId("")}
               className="absolute right-1 top-1 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50 sm:-top-2 sm:right-0"
               title="Fermer la conversation"
             >
               <X size={16} />
             </button>
-            <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[1.2fr_1fr] lg:gap-4">
-              <div className="flex min-h-0 flex-col rounded-[2rem] bg-white p-4 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:p-5">
-            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Discussion - {String(activeTrip.title)}</h3>
+            <div className="mt-10 grid min-h-0 min-w-0 flex-1 gap-3 overflow-y-auto overscroll-contain pb-2 lg:mt-0 lg:h-full lg:grid-cols-[1.2fr_1fr] lg:gap-4 lg:overflow-hidden lg:pb-0">
+              <div className="flex min-h-[min(40vh,22rem)] min-w-0 flex-col rounded-[2rem] bg-white p-3 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:min-h-0 sm:p-5 lg:h-full lg:min-h-0 lg:max-h-none">
+            <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">
+              Discussion - {String(activeTrip.title)}
+            </h3>
             <div className="mt-2 flex flex-wrap gap-2">
               {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
                 .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
@@ -5055,12 +5811,14 @@ function ChatHubView({
                       key={`${String(msg?.id || "m")}-${idx}`}
                       className={`flex ${mine ? "justify-end" : "justify-start"}`}
                     >
-                      <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
-                        <p className={`mb-1 px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}>
+                      <div
+                        className={`min-w-0 max-w-[min(78%,100%)] ${mine ? "items-end" : "items-start"} flex flex-col`}
+                      >
+                        <p className={`mb-1 max-w-full truncate px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}>
                           {authorLabel}
                         </p>
                         <div
-                          className={`rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
+                          className={`max-w-full break-words rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
                             mine
                               ? "rounded-br-md bg-[#0A84FF] text-white"
                               : "rounded-bl-md bg-slate-200 text-slate-900"
@@ -5076,7 +5834,7 @@ function ChatHubView({
                 <p className="text-sm text-slate-500">Aucun message pour ce voyage.</p>
               )}
             </div>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex min-w-0 gap-2">
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
@@ -5087,11 +5845,12 @@ function ChatHubView({
                   }
                 }}
                 placeholder="Ecrire un message..."
-                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[16px] md:text-sm"
+                className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[16px] md:px-4 md:text-sm"
               />
               <button
+                type="button"
                 onClick={onSendMessage}
-                className={`rounded-2xl px-4 py-3 text-sm text-white ${GLASS_BUTTON_CLASS}`}
+                className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 Envoyer
@@ -5099,9 +5858,9 @@ function ChatHubView({
             </div>
               </div>
 
-              <div className="flex min-h-0 flex-col rounded-[2rem] bg-white p-4 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:p-5">
+              <div className="flex min-h-[min(36vh,20rem)] min-w-0 flex-col rounded-[2rem] bg-white p-3 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:min-h-0 sm:p-5 lg:h-full lg:min-h-0 lg:max-h-none">
                 <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes activites</h3>
-                <div className="mt-3 min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
+                <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden space-y-2 pr-1">
                   {tripActivities.length > 0 ? (
                     tripActivities.map((activity) => {
                       const list = votesByActivity[String(activity.id)] || [];
@@ -5113,19 +5872,19 @@ function ChatHubView({
                       return (
                         <div key={String(activity.id)} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
                           <div className="flex items-start justify-between gap-2">
-                            <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {String(activity?.title || activity?.name || "Activite")}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {String(activity?.date || "")} {String(activity?.time || "")}
-                          </p>
-                          <p className="mt-0.5 text-xs font-medium text-slate-700">
-                            Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
-                          </p>
+                            <div className="min-w-0 flex-1">
+                              <p className="break-words text-sm font-semibold text-slate-900">
+                                {String(activity?.title || activity?.name || "Activite")}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {String(activity?.date || "")} {String(activity?.time || "")}
+                              </p>
+                              <p className="mt-0.5 text-xs font-medium text-slate-700">
+                                Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
+                              </p>
                             </div>
                             <span
-                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                                 score > 0
                                   ? "bg-emerald-100 text-emerald-700"
                                   : score < 0
@@ -5136,10 +5895,11 @@ function ChatHubView({
                               Score {score > 0 ? `+${score}` : score}
                             </span>
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2">
+                          <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
                             <button
+                              type="button"
                               onClick={() => onVote(String(activity.id), 1)}
-                              className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                              className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
                                 mineValue === 1
                                   ? "bg-emerald-600 text-white shadow-sm"
                                   : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
@@ -5148,8 +5908,9 @@ function ChatHubView({
                               👍 Je vote pour
                             </button>
                             <button
+                              type="button"
                               onClick={() => onVote(String(activity.id), -1)}
-                              className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                              className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
                                 mineValue === -1
                                   ? "bg-rose-600 text-white shadow-sm"
                                   : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
@@ -5165,7 +5926,7 @@ function ChatHubView({
                                 ? "Ton vote: contre"
                                 : "Tu n'as pas encore vote"}
                           </p>
-                          <div className="mt-2 space-y-1">
+                          <div className="mt-2 space-y-1 break-words">
                             <p className="text-[11px] text-emerald-700">
                               Pour:{" "}
                               {votedFor.length > 0
@@ -5226,6 +5987,51 @@ function readStoredDestinationQuery() {
   }
 }
 
+/** Dernier voyage choisi pour le planning (sinon au F5 `selectedTripId` est vide → 1er voyage de la liste, ex. Istanbul). */
+const SELECTED_TRIP_STORAGE_KEY = "tp_selected_trip_v1";
+
+function readStoredSelectedTripId() {
+  try {
+    return normTripId(window.localStorage.getItem(SELECTED_TRIP_STORAGE_KEY));
+  } catch (_e) {
+    return "";
+  }
+}
+
+const PLANNER_DATE_STORAGE_KEY = "tp_planner_date_v1";
+const PLANNER_MONTH_STORAGE_KEY = "tp_planner_month_v1";
+
+function readStoredPlannerDate() {
+  try {
+    const s = String(window.localStorage.getItem(PLANNER_DATE_STORAGE_KEY) || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  } catch (_e) {
+    // ignore
+  }
+  return "";
+}
+
+function readStoredPlannerMonthCursor() {
+  try {
+    const raw = String(window.localStorage.getItem(PLANNER_MONTH_STORAGE_KEY) || "").trim();
+    const m = raw.match(/^(\d{4})-(\d{2})$/);
+    if (!m) return null;
+    const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, 1);
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function monthCursorFromPlannerDate(ymd) {
+  const d = new Date(`${ymd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), 1);
+  }
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
 // Main App
 export default function App() {
   const [session, setSession] = useState(null);
@@ -5235,6 +6041,8 @@ export default function App() {
   const [tripModalOpen, setTripModalOpen] = useState(false);
   const [shareTrip, setShareTrip] = useState(null);
   const [tricountTrip, setTricountTrip] = useState(null);
+  /** Voyage dont le panneau budget détaillé est ouvert (onglet Budget). */
+  const [budgetDetailTrip, setBudgetDetailTrip] = useState(null);
   const [editingTrip, setEditingTrip] = useState(null);
   const [tripToDelete, setTripToDelete] = useState(null);
   const [deletingTrip, setDeletingTrip] = useState(false);
@@ -5248,7 +6056,7 @@ export default function App() {
   const [trips, setTrips] = useState([]);
   const [activities, setActivities] = useState([]);
   const [chatActivities, setChatActivities] = useState([]);
-  const [selectedTripId, setSelectedTripId] = useState("");
+  const [selectedTripId, setSelectedTripId] = useState(() => readStoredSelectedTripId());
   const [chatTripId, setChatTripId] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatMessagesByTrip, setChatMessagesByTrip] = useState(() => loadChatCacheFromStorage());
@@ -5256,20 +6064,36 @@ export default function App() {
   const [activityVotes, setActivityVotes] = useState([]);
   const [chatMessagesLocal, setChatMessagesLocal] = useState({});
   const [activityVotesLocal, setActivityVotesLocal] = useState({});
-  const [selectedDate, setSelectedDate] = useState(getTodayStr());
-  const [monthCursor, setMonthCursor] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [selectedDate, setSelectedDate] = useState(() => readStoredPlannerDate() || getTodayStr());
+  const [monthCursor, setMonthCursor] = useState(() => {
+    const sm = readStoredPlannerMonthCursor();
+    if (sm) return sm;
+    return monthCursorFromPlannerDate(readStoredPlannerDate() || getTodayStr());
+  });
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
   const [budgetUpcomingOpen, setBudgetUpcomingOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
 
-  /** Évite de réinitialiser le jour du planning à chaque refetch de `trips` (même voyage, nouvelle référence d'objet). */
-  const plannerSyncedTripIdRef = useRef("");
   /** Ids d'activités insérées récemment — fusion avec loadActivities pour éviter l'écrasement par une lecture vide / en retard. */
   const activityInsertGraceRef = useRef(new Map());
   /** Évite double insertion voyage (double clic, double appel concurrent). */
   const createTripInFlightRef = useRef(false);
+  /** Dernière liste voyages — lectures async (temps réel, fetch) toujours alignées sur l’état actuel. */
+  const tripsRef = useRef(trips);
+  tripsRef.current = trips;
+  /** Date du calendrier au moment d’un refetch voyages (évite Paris « sélectionné » le 29 alors que le séjour commence le 30). */
+  const selectedDateRef = useRef(selectedDate);
+  selectedDateRef.current = selectedDate;
+  /** Ignore les réponses `activities` arrivées après un chargement plus récent (courses requêtes). */
+  const loadActivitiesGenRef = useRef(0);
+  const loadTripExpensesGenRef = useRef(0);
 
-  const selectedTrip = trips.find((t) => String(t.id) === String(selectedTripId)) || null;
+  const [tripExpenses, setTripExpenses] = useState([]);
+  /** False si la table `trip_expenses` n’existe pas encore (script SQL non exécuté). */
+  const [tripExpensesTableReady, setTripExpensesTableReady] = useState(true);
+
+  const selectedTrip =
+    trips.find((t) => normTripId(t.id) === normTripId(selectedTripId)) || null;
   const uiTitle =
     activeTab === "trips"
       ? "Mes Voyages"
@@ -5288,11 +6112,11 @@ export default function App() {
     // If user opened planner from a specific trip card, always prioritize that trip.
     if (preferredTripId) {
       const preferredTrip = (trips || []).find((t) => String(t?.id || "") === preferredTripId) || tripToOpen;
-      const tripStart = String(preferredTrip?.start_date || "");
-      const tripEnd = String(preferredTrip?.end_date || "");
-      const inPreferredTripRange = !!tripStart && !!tripEnd && today >= tripStart && today <= tripEnd;
-      const targetDate = inPreferredTripRange ? today : toYMD(tripStart, today);
-      const d = new Date(`${targetDate}T00:00:00`);
+      const tripStart = toYMD(preferredTrip?.start_date, today);
+      const tripEnd = toYMD(preferredTrip?.end_date, tripStart);
+      const inPreferredTripRange = tripStart && tripEnd && today >= tripStart && today <= tripEnd;
+      const targetDate = inPreferredTripRange ? today : tripStart;
+      const d = new Date(`${targetDate}T12:00:00`);
 
       setSelectedTripId(preferredTripId);
       setSelectedDate(targetDate);
@@ -5307,20 +6131,20 @@ export default function App() {
     setSelectedDate(today);
     setMonthCursor(new Date(now.getFullYear(), now.getMonth(), 1));
     // If a trip is already selected and it matches today, keep it.
+    const selStart = selectedTrip ? toYMD(selectedTrip.start_date, today) : "";
+    const selEnd = selectedTrip ? toYMD(selectedTrip.end_date, selStart || today) : "";
     const selectedMatchesToday =
-      selectedTrip &&
-      String(selectedTrip.start_date || "") <= today &&
-      String(selectedTrip.end_date || "") >= today;
+      !!selectedTrip && !!selStart && !!selEnd && today >= selStart && today <= selEnd;
 
     if (!selectedMatchesToday) {
-      // Otherwise select the trip that matches today (so the orange dots are visible).
       const sections = classifyTrips(trips);
-      const bestTrip =
-        (sections.now && sections.now[0]) ||
-        (sections.upcoming && sections.upcoming[0]) ||
-        (trips && trips[0]) ||
-        null;
-      if (bestTrip?.id) setSelectedTripId(String(bestTrip.id));
+      const inProgress = sections.now && sections.now[0];
+      if (inProgress?.id) {
+        setSelectedTripId(String(inProgress.id));
+      } else {
+        // Aujourd’hui ne tombe dans aucun séjour : ne pas prendre le prochain (ex. Paris à partir de demain).
+        setSelectedTripId("");
+      }
     }
     setActiveTab("planner");
   };
@@ -5329,24 +6153,33 @@ export default function App() {
     const safeDate = toYMD(dateStr, getTodayStr());
     setSelectedDate(safeDate);
     const matchingTrip = (trips || []).find((trip) => {
-      const start = String(trip?.start_date || "");
-      const end = String(trip?.end_date || "");
-      return !!start && !!end && safeDate >= start && safeDate <= end;
+      const start = toYMD(trip?.start_date, "");
+      const end = toYMD(trip?.end_date, "");
+      return start && end && safeDate >= start && safeDate <= end;
     });
-    if (matchingTrip?.id && String(matchingTrip.id) !== String(selectedTripId)) {
-      setSelectedTripId(String(matchingTrip.id));
+    if (matchingTrip?.id) {
+      if (String(matchingTrip.id) !== String(selectedTripId)) {
+        setSelectedTripId(String(matchingTrip.id));
+      }
+      return;
+    }
+    const cur = (trips || []).find((t) => normTripId(t?.id) === normTripId(selectedTripId));
+    if (cur) {
+      const s = toYMD(cur.start_date, "");
+      const e = toYMD(cur.end_date, "");
+      if (s && e && (safeDate < s || safeDate > e)) setSelectedTripId("");
     }
   };
 
   const replaceTripActivitiesInState = (tripId, freshTripActivities) => {
-    const targetTripId = String(tripId || "");
+    const targetTripId = normTripId(tripId);
     const fresh = (freshTripActivities || []).map(normalizeActivity);
     setActivities((prev) => {
-      const keep = (prev || []).filter((a) => String(a?.trip_id || "") !== targetTripId);
+      const keep = (prev || []).filter((a) => normTripId(a?.trip_id) !== targetTripId);
       if (fresh.length === 0) {
         const now = Date.now();
         const lagOnly = (prev || []).filter((a) => {
-          if (String(a?.trip_id || "") !== targetTripId) return false;
+          if (normTripId(a?.trip_id) !== targetTripId) return false;
           const id = String(a.id || "");
           const t0 = activityInsertGraceRef.current.get(id);
           return id && t0 != null && now - t0 < ACTIVITY_INSERT_GRACE_MS;
@@ -5390,6 +6223,10 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab !== "budget") setBudgetDetailTrip(null);
+  }, [activeTab]);
+
+  useEffect(() => {
     try {
       const q = String(destinationConfirmed || "").trim();
       if (q) {
@@ -5403,6 +6240,38 @@ export default function App() {
     }
   }, [destinationConfirmed]);
 
+  useEffect(() => {
+    try {
+      const id = normTripId(selectedTripId);
+      if (id) window.localStorage.setItem(SELECTED_TRIP_STORAGE_KEY, id);
+      else window.localStorage.removeItem(SELECTED_TRIP_STORAGE_KEY);
+    } catch (_e) {
+      // ignore
+    }
+  }, [selectedTripId]);
+
+  useEffect(() => {
+    try {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(selectedDate || ""))) {
+        window.localStorage.setItem(PLANNER_DATE_STORAGE_KEY, String(selectedDate).trim());
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }, [selectedDate]);
+
+  useEffect(() => {
+    try {
+      if (monthCursor instanceof Date && !Number.isNaN(monthCursor.getTime())) {
+        const y = monthCursor.getFullYear();
+        const mo = String(monthCursor.getMonth() + 1).padStart(2, "0");
+        window.localStorage.setItem(PLANNER_MONTH_STORAGE_KEY, `${y}-${mo}`);
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }, [monthCursor]);
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -5411,9 +6280,15 @@ export default function App() {
       setDestinationConfirmed("");
       try {
         window.localStorage.removeItem(DESTINATION_QUERY_STORAGE_KEY);
+        window.localStorage.removeItem(SELECTED_TRIP_STORAGE_KEY);
+        window.localStorage.removeItem(PLANNER_DATE_STORAGE_KEY);
+        window.localStorage.removeItem(PLANNER_MONTH_STORAGE_KEY);
       } catch {
         // ignore
       }
+      setSelectedTripId("");
+      setSelectedDate(getTodayStr());
+      setMonthCursor(monthCursorFromPlannerDate(getTodayStr()));
     } catch (e) {
       setNotice(String(e?.message || "Erreur deconnexion"));
     }
@@ -5476,6 +6351,14 @@ export default function App() {
 
       await supabase.auth.signOut();
       setSession(null);
+      setSelectedTripId("");
+      try {
+        window.localStorage.removeItem(SELECTED_TRIP_STORAGE_KEY);
+        window.localStorage.removeItem(PLANNER_DATE_STORAGE_KEY);
+        window.localStorage.removeItem(PLANNER_MONTH_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
       setActiveTab("trips");
       setAccountOpen(false);
       if (authDeleted) {
@@ -5533,6 +6416,10 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Tant que la session n’est pas résolue, ne pas toucher aux voyages ni à la sélection : sinon
+    // `visibleTrips` est vide → on effaçait `selectedTripId` puis au 2e fetch on prenait le 1er voyage (ex. Istanbul).
+    if (authLoading) return undefined;
+
     const loadTrips = async () => {
       try {
         let data = null;
@@ -5552,8 +6439,27 @@ export default function App() {
 
         const visibleTrips = visibleTripsForSession(data, session);
         setTrips(visibleTrips);
-        if (visibleTrips.length > 0 && !selectedTripId) setSelectedTripId(String(visibleTrips[0].id));
-        if (visibleTrips.length === 0) setSelectedTripId("");
+        setSelectedTripId((prev) => {
+          const prevNorm = normTripId(prev);
+          const anchor = toYMD(selectedDateRef.current, getTodayStr());
+          const tripCoversAnchor = (t) => {
+            const s = toYMD(t?.start_date, "");
+            const e = toYMD(t?.end_date, "");
+            return s && e && anchor >= s && anchor <= e;
+          };
+          if (!session) return "";
+          if (visibleTrips.length === 0) {
+            if (!data || data.length === 0) return "";
+            return prevNorm;
+          }
+          if (prevNorm && visibleTrips.some((t) => normTripId(t?.id) === prevNorm)) {
+            const cur = visibleTrips.find((t) => normTripId(t?.id) === prevNorm);
+            if (cur && tripCoversAnchor(cur)) return prevNorm;
+          }
+          const covering = visibleTrips.find(tripCoversAnchor);
+          if (covering?.id) return String(covering.id);
+          return "";
+        });
       } catch (e) {
         setNotice(String(e?.message || "Erreur chargement voyages"));
       }
@@ -5565,14 +6471,15 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, loadTrips)
       .subscribe();
     return () => supabase.removeChannel(tripChannel);
-  }, [session]);
+  }, [session, authLoading]);
 
   useEffect(() => {
+    const myGen = ++loadActivitiesGenRef.current;
     const loadActivities = async () => {
       try {
-        const tripIds = (trips || []).map((t) => String(t?.id || "")).filter(Boolean);
+        const tripIds = (tripsRef.current || []).map((t) => normTripId(t?.id)).filter(Boolean);
         if (tripIds.length === 0) {
-          setActivities([]);
+          if (myGen === loadActivitiesGenRef.current) setActivities([]);
           return;
         }
         const { data, error } = await supabase
@@ -5580,9 +6487,11 @@ export default function App() {
           .select("*")
           .in("trip_id", tripIds);
         if (error) throw error;
+        if (myGen !== loadActivitiesGenRef.current) return;
         const fetched = (data || []).map(normalizeActivity);
         setActivities((prev) => mergeActivitiesFromServer(prev, fetched, tripIds, activityInsertGraceRef));
       } catch (e) {
+        if (myGen !== loadActivitiesGenRef.current) return;
         setNotice(String(e?.message || "Erreur chargement activites"));
       }
     };
@@ -5596,20 +6505,45 @@ export default function App() {
   }, [trips, session]);
 
   useEffect(() => {
-    if (!selectedTripId || !selectedTrip) {
-      if (!selectedTripId) plannerSyncedTripIdRef.current = "";
-      return;
+    if (authLoading || !session) {
+      setTripExpenses([]);
+      return undefined;
     }
-    const id = String(selectedTripId);
-    if (plannerSyncedTripIdRef.current === id) return;
-    plannerSyncedTripIdRef.current = id;
-    const tripStart = toYMD(selectedTrip.start_date, getTodayStr());
-    setSelectedDate(tripStart);
-    const d = new Date(`${tripStart}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) {
-      setMonthCursor(new Date(d.getFullYear(), d.getMonth(), 1));
-    }
-  }, [selectedTripId, selectedTrip]);
+    const myGen = ++loadTripExpensesGenRef.current;
+    const loadTripExpenses = async () => {
+      const tripIds = (tripsRef.current || []).map((t) => normTripId(t?.id)).filter(Boolean);
+      if (tripIds.length === 0) {
+        if (myGen === loadTripExpensesGenRef.current) setTripExpenses([]);
+        return;
+      }
+      try {
+        const { data, error } = await supabase.from("trip_expenses").select("*").in("trip_id", tripIds);
+        if (error) {
+          const msg = String(error.message || "");
+          if (/trip_expenses|relation|does not exist|Could not find the table|schema cache/i.test(msg)) {
+            if (myGen === loadTripExpensesGenRef.current) {
+              setTripExpensesTableReady(false);
+              setTripExpenses([]);
+            }
+            return;
+          }
+          throw error;
+        }
+        if (myGen !== loadTripExpensesGenRef.current) return;
+        setTripExpensesTableReady(true);
+        setTripExpenses((data || []).map(normalizeTripExpenseRow).filter(Boolean));
+      } catch (e) {
+        if (myGen !== loadTripExpensesGenRef.current) return;
+        setNotice(String(e?.message || "Erreur chargement depenses groupe"));
+      }
+    };
+    loadTripExpenses();
+    const exChannel = supabase
+      .channel("trip-expenses-watch")
+      .on("postgres_changes", { event: "*", schema: "public", table: "trip_expenses" }, loadTripExpenses)
+      .subscribe();
+    return () => supabase.removeChannel(exChannel);
+  }, [trips, session, authLoading]);
 
   useEffect(() => {
     if (trips.length === 0) {
@@ -5809,7 +6743,14 @@ export default function App() {
     const normalizedItems = raw
       .map((item) => {
         if (typeof item === "string") {
-          return { title: String(item || "").trim(), date: "", time: "" };
+          return {
+            title: String(item || "").trim(),
+            date: "",
+            time: "",
+            location: "",
+            cost: 0,
+            description: "",
+          };
         }
         return {
           title: String(item?.title || "").trim(),
@@ -5818,6 +6759,9 @@ export default function App() {
               ? toYMDLoose(item.date) || toYMD(item.date, "")
               : "",
           time: String(item?.time || "").trim(),
+          location: String(item?.location || "").trim(),
+          cost: clampActivityCostEUR(item?.cost),
+          description: String(item?.description || "").trim(),
         };
       })
       .filter((x) => x.title);
@@ -5827,7 +6771,7 @@ export default function App() {
     const fallbackDates = assignActivityDatesRoundRobin(startYmd, endYmd, normalizedItems.length);
     const insertErrorMsgs = [];
     for (let i = 0; i < normalizedItems.length; i += 1) {
-      const { title, date: inDate, time: inTime } = normalizedItems[i];
+      const { title, date: inDate, time: inTime, location, cost, description } = normalizedItems[i];
       const safeDate =
         inDate && tripDaySet.has(inDate)
           ? inDate
@@ -5838,69 +6782,49 @@ export default function App() {
       const fallbackPhoto =
         seededPicsumUrl(activityPrompt, 1200, 800) || seededPicsumUrl(`${title}|${tripId}`, 1200, 800);
       let actPayload = {
-        trip_id: String(tripId),
+        trip_id: normTripId(tripId),
         date: safeDate,
         date_key: safeDate,
         activity_date: safeDate,
         time: assignedTime,
         title,
         name: title,
-        description: "",
-        details: "",
-        notes: "",
-        cost: 0,
-        location: "",
-        owner_id: String(userId || ""),
+        description: String(description || ""),
+        cost: clampActivityCostEUR(cost),
+        location: String(location || ""),
         photo_url: String(fallbackPhoto || ""),
         image_url: String(fallbackPhoto || ""),
       };
+      if (String(userId || "").trim()) {
+        actPayload.owner_id = String(userId).trim();
+      }
       let insertFailed = true;
       let lastInsertErr = null;
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { data: insRow, error: actErr } = await supabase
-          .from("activities")
-          .insert(actPayload)
-          .select("id")
-          .limit(1);
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const { error: actErr } = await supabase.from("activities").insert(actPayload);
         if (!actErr) {
           insertFailed = false;
-          const newId = String(insRow?.[0]?.id || "");
-          if (newId) activityInsertGraceRef.current.set(newId, Date.now());
-          setActivities((prev) => [
-            ...(prev || []).filter((a) => String(a.id) !== newId),
-            normalizeActivity({
-              id: newId,
-              trip_id: String(tripId),
-              date: safeDate,
-              date_key: safeDate,
-              time: assignedTime,
-              title,
-              name: title,
-              cost: 0,
-              location: "",
-              description: "",
-              details: "",
-              notes: "",
-              photo_url: String(actPayload.photo_url || ""),
-              image_url: String(actPayload.image_url || ""),
-            }),
-          ]);
           break;
         }
         lastInsertErr = actErr;
         const msg = String(actErr?.message || "");
-        const m1 = msg.match(/Could not find the '([^']+)' column/i);
-        const m2 = msg.match(/column "([^"]+)" does not exist/i);
-        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+        const missing = parseMissingSchemaColumnName(actErr);
         if (missing && Object.prototype.hasOwnProperty.call(actPayload, missing)) {
           const { [missing]: _removed, ...rest } = actPayload;
+          actPayload = rest;
+          continue;
+        }
+        if (/uuid|22P02|invalid input syntax/i.test(msg) && Object.prototype.hasOwnProperty.call(actPayload, "owner_id")) {
+          const { owner_id: _o, ...rest } = actPayload;
           actPayload = rest;
           continue;
         }
         break;
       }
       if (insertFailed && lastInsertErr) {
-        insertErrorMsgs.push(String(lastInsertErr.message || "Impossible d'enregistrer une activite."));
+        const em = lastInsertErr;
+        const parts = [em?.message, em?.details, em?.hint].filter(Boolean).map(String);
+        insertErrorMsgs.push(parts.length ? parts.join(" — ") : "Impossible d'enregistrer une activite.");
       }
     }
     if (insertErrorMsgs.length > 0) {
@@ -5912,7 +6836,7 @@ export default function App() {
     }
     try {
       const fresh = await fetchActivitiesRowsForTrip(tripId);
-      replaceTripActivitiesInState(String(tripId), fresh);
+      replaceTripActivitiesInState(normTripId(tripId), fresh);
     } catch (_e) {
       /* ignore */
     }
@@ -5980,7 +6904,14 @@ export default function App() {
                     dateRaw != null && String(dateRaw).trim() !== ""
                       ? toYMDLoose(dateRaw) || toYMD(dateRaw, "")
                       : "";
-                  return { title, date: dateYmd, time: String(row?.time || "").trim() };
+                  return {
+                    title,
+                    date: dateYmd,
+                    time: String(row?.time || "").trim(),
+                    location: String(row?.location || "").trim(),
+                    cost: clampActivityCostEUR(row?.cost),
+                    description: String(row?.description || "").trim(),
+                  };
                 })
                 .filter((r) => r.title)
             : [];
@@ -6024,28 +6955,33 @@ export default function App() {
 
             const visibleAfterCreate = visibleTripsForSession(data, session);
             setTrips(visibleAfterCreate);
-            // Select the newly created trip so the Calendar marks appear immediately.
+            // Priorité à l’id renvoyé par l’insert (fiable) ; repli si absent du jeu visible (RLS / latence).
             try {
+              const tripStart = toYMD(body.start_date, getTodayStr());
               const wantedStart = toYMD(body.start_date, "");
               const wantedEnd = toYMD(body.end_date, "");
               const wantedTitle = String(body.destination || body.title || safeTitle || "");
-              const match =
-                visibleAfterCreate.find((t) => {
-                  const tStart = String(t.start_date || "");
-                  const tEnd = String(t.end_date || "");
-                  const tTitle = String(t.title || "");
-                  return (
-                    tStart === wantedStart &&
-                    tEnd === wantedEnd &&
-                    (tTitle === wantedTitle || tTitle.toLowerCase() === wantedTitle.toLowerCase())
-                  );
-                }) ||
-                visibleAfterCreate.find((t) => String(t.start_date || "") === wantedStart && String(t.end_date || "") === wantedEnd) ||
-                visibleAfterCreate[0];
-
-              if (match?.id) {
-                setSelectedTripId(String(match.id));
-                const tripStart = toYMD(body.start_date, getTodayStr());
+              let pickId = normTripId(newTripId);
+              if (!pickId || !visibleAfterCreate.some((t) => normTripId(t?.id) === pickId)) {
+                const fallback =
+                  visibleAfterCreate.find((t) => {
+                    const tStart = String(t.start_date || "");
+                    const tEnd = String(t.end_date || "");
+                    const tTitle = String(t.title || "");
+                    return (
+                      tStart === wantedStart &&
+                      tEnd === wantedEnd &&
+                      (tTitle === wantedTitle || tTitle.toLowerCase() === wantedTitle.toLowerCase())
+                    );
+                  }) ||
+                  visibleAfterCreate.find(
+                    (t) => String(t.start_date || "") === wantedStart && String(t.end_date || "") === wantedEnd
+                  ) ||
+                  visibleAfterCreate[0];
+                pickId = normTripId(fallback?.id);
+              }
+              if (pickId) {
+                setSelectedTripId(pickId);
                 setSelectedDate(tripStart);
                 const md = new Date(`${tripStart}T12:00:00`);
                 if (!Number.isNaN(md.getTime())) {
@@ -6053,7 +6989,9 @@ export default function App() {
                 }
               }
             } catch (_matchErr) {
-              if (visibleAfterCreate.length > 0) setSelectedTripId(String(visibleAfterCreate[0].id));
+              const pid = normTripId(newTripId);
+              if (pid) setSelectedTripId(pid);
+              else if (visibleAfterCreate.length > 0) setSelectedTripId(String(visibleAfterCreate[0].id));
             }
 
             if (newTripId && itemsToInsert.length > 0) {
@@ -6101,20 +7039,39 @@ export default function App() {
     return false;
   };
 
+  const formatSupabaseClientError = (e) => {
+    const parts = [e?.message, e?.details, e?.hint, e?.code].filter(Boolean).map(String);
+    return parts.length ? parts.join(" — ") : "Erreur inconnue";
+  };
+
   const addActivity = async (input) => {
-    if (!selectedTripId) {
-      setNotice("Selectionne un voyage.");
-      return;
+    const tid = normTripId(selectedTripId);
+    if (!tid) {
+      const msg = "Selectionne un voyage.";
+      setNotice(msg);
+      return { ok: false, error: msg };
     }
     try {
-      const userId = String(session?.user?.id || "");
+      let userId = String(session?.user?.id || "");
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        const g = String(userData?.user?.id || "");
+        if (g) userId = g;
+      } catch (_e) {
+        /* keep session fallback */
+      }
       const safeSelectedDate = toYMD(selectedDate, getTodayStr());
       const index = (activities || []).filter((a) => toYMDLoose(a?.date_key || a?.date) === safeSelectedDate).length;
       const manualTime = String(input?.time || "").trim();
-      const assignedTime = manualTime || slots[index % slots.length];
+      const assignedTime =
+        normalizeActivityTimeHHMM(manualTime) ||
+        normalizeActivityTimeHHMM(slots[index % slots.length]) ||
+        String(slots[index % slots.length]).slice(0, 5);
       const activityPrompt = String(
         `${input.title || ""} ${input.location || ""} ${safeSelectedDate} ${assignedTime}`
       ).trim();
+      const rawCost = Number(input?.cost);
+      const safeCost = Number.isFinite(rawCost) ? rawCost : 0;
       // Fast-first UX: insert immediately with deterministic fallback image,
       // then improve photo in background if Unsplash returns a better match.
       const fallbackPhoto =
@@ -6131,46 +7088,48 @@ export default function App() {
           time: assignedTime,
         });
       let payload = {
-        trip_id: selectedTripId,
+        trip_id: tid,
         date: safeSelectedDate,
+        date_key: safeSelectedDate,
+        activity_date: safeSelectedDate,
         time: assignedTime,
         title: String(input.title || input.name || "Activite"),
         name: String(input.title || input.name || "Activite"),
         description: String(input.description || ""),
-        details: String(input.description || ""),
-        notes: String(input.description || ""),
-        cost: Number(input.cost || 0),
+        cost: safeCost,
         location: String(input.location || ""),
-        owner_id: userId,
         photo_url: String(fallbackPhoto || ""),
         image_url: String(fallbackPhoto || ""),
       };
+      if (String(userId || "").trim()) {
+        payload.owner_id = String(userId).trim();
+      }
 
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { data: inserted, error } = await supabase
-          .from("activities")
-          .insert(payload)
-          .select("id")
-          .limit(1);
+      let lastInsertError = null;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        // INSERT sans .select("id") : si RLS autorise l'insertion mais pas le RETURNING / lecture de la ligne,
+        // l'ancien flux échouait alors que la ligne existait — le modal restait ouvert.
+        const { error } = await supabase.from("activities").insert(payload);
         if (!error) {
-          const insertedId = String(inserted?.[0]?.id || "");
-          if (insertedId) activityInsertGraceRef.current.set(insertedId, Date.now());
-          // Immediate refresh to avoid waiting for realtime sync.
+          let fresh = [];
           try {
-            const { data: fresh, error: freshErr } = await supabase
-              .from("activities")
-              .select("*")
-              .eq("trip_id", selectedTripId)
-              .order("date", { ascending: true })
-              .order("time", { ascending: true });
-            if (!freshErr) replaceTripActivitiesInState(selectedTripId, fresh || []);
+            fresh = await fetchActivitiesRowsForTrip(tid);
+            replaceTripActivitiesInState(tid, fresh);
           } catch (_e) {
-            // ignore refresh error
+            /* ignore */
           }
-              cacheActivityDescription(insertedId, input?.description || "");
-
-          // Background upgrade: fetch better visual and patch only this row.
+          const titleMatch = String(payload.title || "");
+          const match = (fresh || []).find(
+            (r) =>
+              normTripId(r.trip_id) === tid &&
+              toYMDLoose(r?.date_key || r?.date) === safeSelectedDate &&
+              String(r.time || "").slice(0, 5) === assignedTime &&
+              String(r.title || r.name || "") === titleMatch
+          );
+          const insertedId = String(match?.id || "");
           if (insertedId) {
+            activityInsertGraceRef.current.set(insertedId, Date.now());
+            cacheActivityDescription(insertedId, input?.description || "");
             (async () => {
               try {
                 const betterPhoto = await fetchActivityImageFromUnsplash({
@@ -6183,41 +7142,53 @@ export default function App() {
                   .from("activities")
                   .update({ photo_url: String(betterPhoto), image_url: String(betterPhoto) })
                   .eq("id", insertedId);
-                // Silent local refresh for visual improvement.
                 try {
-                  const { data: fresh2, error: freshErr2 } = await supabase
-                    .from("activities")
-                    .select("*")
-                    .eq("trip_id", selectedTripId)
-                    .order("date", { ascending: true })
-                    .order("time", { ascending: true });
-                  if (!freshErr2) replaceTripActivitiesInState(selectedTripId, fresh2 || []);
+                  const fresh2 = await fetchActivitiesRowsForTrip(tid);
+                  replaceTripActivitiesInState(tid, fresh2);
                 } catch (_refreshErr) {
-                  // ignore refresh error
+                  /* ignore */
                 }
               } catch (_bgErr) {
-                // ignore background photo failures
+                /* ignore */
               }
             })();
           }
 
           setNotice("");
-          return;
+          return { ok: true };
         }
 
+        lastInsertError = error;
         const msg = String(error?.message || "");
-        const m1 = msg.match(/Could not find the '([^']+)' column/i);
-        const m2 = msg.match(/column "([^"]+)" does not exist/i);
-        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+        const missing = parseMissingSchemaColumnName(error);
         if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
           const { [missing]: _removed, ...rest } = payload;
           payload = rest;
           continue;
         }
+        if (/uuid|22P02|invalid input syntax/i.test(msg) && Object.prototype.hasOwnProperty.call(payload, "owner_id")) {
+          const { owner_id: _o, ...rest } = payload;
+          payload = rest;
+          continue;
+        }
         throw error;
       }
+      const fallbackMsg = lastInsertError
+        ? formatSupabaseClientError(lastInsertError)
+        : "Echec apres plusieurs essais (colonnes / contraintes). Verifie le schema de la table activities.";
+      setNotice(fallbackMsg);
+      return { ok: false, error: fallbackMsg };
     } catch (e) {
-      setNotice(String(e?.message || "Erreur ajout activite"));
+      const m = formatSupabaseClientError(e) || "Erreur ajout activite";
+      const rlsHint = /row-level security|RLS|permission denied|42501/i.test(m)
+        ? " Ouvre Supabase → Table activities → Policies : autorise INSERT/SELECT pour les utilisateurs concernes."
+        : "";
+      const fkHint = /foreign key|violates foreign key|23503/i.test(m)
+        ? " Verifie que le voyage existe bien dans trips (meme projet Supabase) et que trip_id correspond a trips.id."
+        : "";
+      const full = m + rlsHint + fkHint;
+      setNotice(full);
+      return { ok: false, error: full };
     }
   };
 
@@ -6236,15 +7207,13 @@ export default function App() {
         title: String(activity?.title || activity?.name || "Activite"),
         name: String(activity?.title || activity?.name || "Activite"),
         description: String(activity?.description || ""),
-        details: String(activity?.description || ""),
-        notes: String(activity?.description || ""),
         location: String(activity?.location || ""),
         cost: Number(activity?.cost || 0),
         time: String(activity?.time || ""),
         photo_url: String(refreshedPhoto || ""),
         image_url: String(refreshedPhoto || ""),
       };
-      for (let attempt = 0; attempt < 6; attempt += 1) {
+      for (let attempt = 0; attempt < 12; attempt += 1) {
         const { error } = await supabase.from("activities").update(payload).eq("id", activity.id);
         if (!error) {
           cacheActivityDescription(activity.id, desiredDescription);
@@ -6258,10 +7227,7 @@ export default function App() {
           setNotice("");
           return;
         }
-        const msg = String(error?.message || "");
-        const m1 = msg.match(/Could not find the '([^']+)' column/i);
-        const m2 = msg.match(/column "([^"]+)" does not exist/i);
-        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+        const missing = parseMissingSchemaColumnName(error);
         if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
           const { [missing]: _removed, ...rest } = payload;
           payload = rest;
@@ -6284,6 +7250,96 @@ export default function App() {
       setNotice("");
     } catch (e) {
       setNotice(String(e?.message || "Erreur suppression activite"));
+    }
+  };
+
+  const addGroupExpense = async (row) => {
+    if (!tripExpensesTableReady) return;
+    const tid = normTripId(row?.trip_id);
+    if (!tid) return;
+    let body = {
+      trip_id: tid,
+      title: String(row?.title || "Dépense").trim(),
+      amount: Math.max(0, Number(row?.amount) || 0),
+      paid_by: String(row?.paid_by || "Moi"),
+      split_between: Array.isArray(row?.split_between) ? row.split_between : [],
+      expense_date: row?.expense_date || null,
+    };
+    if (session?.user?.id) body.owner_id = session.user.id;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const { data, error } = await supabase.from("trip_expenses").insert(body).select("*");
+      if (!error && data?.[0]) {
+        const norm = normalizeTripExpenseRow(data[0]);
+        if (norm) setTripExpenses((prev) => [...(prev || []), norm]);
+        setNotice("");
+        return;
+      }
+      if (error) {
+        const msg = String(error.message || "");
+        if (/trip_expenses|relation|does not exist|Could not find the table/i.test(msg)) {
+          setTripExpensesTableReady(false);
+          return;
+        }
+        const missing = parseMissingSchemaColumnName(error);
+        if (missing && Object.prototype.hasOwnProperty.call(body, missing)) {
+          const { [missing]: _r, ...rest } = body;
+          body = rest;
+          continue;
+        }
+        if (/uuid|22P02|invalid input syntax/i.test(msg) && Object.prototype.hasOwnProperty.call(body, "owner_id")) {
+          const { owner_id: _o, ...rest } = body;
+          body = rest;
+          continue;
+        }
+        setNotice(msg);
+        return;
+      }
+    }
+  };
+
+  const updateGroupExpense = async (row) => {
+    const id = String(row?.id || "");
+    if (!id) return;
+    let body = {
+      title: String(row?.title || "").trim(),
+      amount: Math.max(0, Number(row?.amount) || 0),
+      paid_by: String(row?.paid_by || "Moi"),
+      split_between: Array.isArray(row?.split_between) ? row.split_between : [],
+      expense_date: row?.expense_date || null,
+    };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const { data, error } = await supabase.from("trip_expenses").update(body).eq("id", id).select("*");
+      if (!error && data?.[0]) {
+        const norm = normalizeTripExpenseRow(data[0]);
+        if (norm) {
+          setTripExpenses((prev) => (prev || []).map((e) => (String(e.id) === id ? norm : e)));
+        }
+        setNotice("");
+        return;
+      }
+      if (error) {
+        const missing = parseMissingSchemaColumnName(error);
+        if (missing && Object.prototype.hasOwnProperty.call(body, missing)) {
+          const { [missing]: _r, ...rest } = body;
+          body = rest;
+          continue;
+        }
+        setNotice(String(error.message || "Erreur mise a jour depense"));
+        return;
+      }
+    }
+  };
+
+  const deleteGroupExpense = async (row) => {
+    const id = String(row?.id || "");
+    if (!id) return;
+    try {
+      const { error } = await supabase.from("trip_expenses").delete().eq("id", id);
+      if (error) throw error;
+      setTripExpenses((prev) => (prev || []).filter((e) => String(e.id) !== id));
+      setNotice("");
+    } catch (e) {
+      setNotice(String(e?.message || "Erreur suppression depense"));
     }
   };
 
@@ -6532,6 +7588,7 @@ export default function App() {
       setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
       setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
       setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
 
       setNotice("");
       setTripToDelete(null);
@@ -6593,7 +7650,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen pb-28"
+      className="min-h-screen max-w-[100vw] overflow-x-clip pb-[calc(7rem+env(safe-area-inset-bottom,0px))]"
       style={{
         color: TEXT,
         background:
@@ -6602,9 +7659,9 @@ export default function App() {
     >
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
-      <main className="mx-auto mt-5 w-full max-w-6xl px-5">
+      <main className="mx-auto mt-5 w-full min-w-0 max-w-6xl px-3 sm:px-5">
         {notice ? (
-          <div className="mb-4 rounded-[1.25rem] bg-white/90 px-4 py-3 text-sm shadow-[0_10px_28px_rgba(2,6,23,0.08)] ring-1 ring-slate-200/70">
+          <div className="mb-4 break-words rounded-[1.25rem] bg-white/90 px-4 py-3 text-sm shadow-[0_10px_28px_rgba(2,6,23,0.08)] ring-1 ring-slate-200/70">
             {String(notice)}
           </div>
         ) : null}
@@ -6638,70 +7695,62 @@ export default function App() {
 
         {activeTab === "planner" ? (
           <div className="space-y-4">
-            <div className="rounded-[2rem] bg-white/92 p-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
+            <div className="rounded-[2rem] bg-white/92 p-3 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70 sm:p-5">
               {selectedTrip ? (
-                <div className="relative overflow-hidden rounded-2xl border border-white/50 px-4 py-3 shadow-[0_12px_28px_rgba(2,6,23,0.12)]">
-                  <div
-                    className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
-                    style={{ filter: "blur(10px) saturate(1.15) brightness(0.94)" }}
-                  >
-                    <CityImage title={String(selectedTrip?.title || "voyage")} />
-                  </div>
-                  <div
-                    className="pointer-events-none absolute inset-0"
-                    style={{
-                      background:
-                        "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
-                    }}
-                  />
-                  <div
-                    className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
-                    style={{ backgroundColor: "rgba(2,6,23,0.11)" }}
-                  />
-                  <div className="relative flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.34em] text-slate-200">Voyage actif</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white" style={{ backgroundColor: ACCENT }}>
-                        <MapPin size={10} className="mr-1" />
-                        Destination
-                      </span>
-                    </div>
-                    <h3 className="mt-2 text-2xl font-extrabold uppercase leading-none tracking-[0.02em] text-white">
-                      {String(selectedTrip.title || "Voyage")}
-                    </h3>
-                    <p className="mt-1 text-xs text-white/85">
-                      {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center -space-x-2">
-                      {(Array.isArray(selectedTrip?.invited_emails) ? selectedTrip.invited_emails : []).slice(0, 5).map((mail) => (
-                        <div
-                          key={String(mail)}
-                          title={String(mail)}
-                          className="h-9 w-9 overflow-hidden rounded-full bg-white/85 ring-2 ring-white/85 shadow-sm"
+                <TripLiquidGlassShell
+                  imageTitle={String(selectedTrip?.destination || selectedTrip?.title || "voyage")}
+                  active
+                  className="rounded-2xl border border-white/50 shadow-[0_12px_28px_rgba(2,6,23,0.12)]"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
+                    <div className="min-w-0 max-w-full flex-1">
+                      <p className="text-[10px] uppercase tracking-[0.34em] text-white/80">Voyage actif</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span
+                          className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white"
+                          style={{ backgroundColor: ACCENT }}
                         >
-                          <img
-                            src={buildParticipantAvatarUrl(mail)}
-                            alt={String(mail)}
-                            className="h-full w-full object-cover"
-                          />
-                        </div>
-                      ))}
+                          <MapPin size={10} className="mr-1 shrink-0" />
+                          Destination
+                        </span>
+                      </div>
+                      <h3 className="mt-2 break-words text-xl font-extrabold uppercase leading-tight tracking-[0.02em] text-white drop-shadow-sm sm:text-2xl sm:leading-none">
+                        {String(selectedTrip.title || "Voyage")}
+                      </h3>
+                      <p className="mt-1 break-all text-xs text-white/85">
+                        {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
+                      </p>
                     </div>
-                    <button
-                      onClick={() => setPlannerInviteOpen(true)}
-                      className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
-                      title="Inviter par email"
-                    >
-                      <Mail size={16} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center -space-x-2">
+                        {(Array.isArray(selectedTrip?.invited_emails) ? selectedTrip.invited_emails : [])
+                          .slice(0, 5)
+                          .map((mail) => (
+                            <div
+                              key={String(mail)}
+                              title={String(mail)}
+                              className="h-9 w-9 overflow-hidden rounded-full bg-white/85 ring-2 ring-white/85 shadow-sm"
+                            >
+                              <img
+                                src={buildParticipantAvatarUrl(mail)}
+                                alt={String(mail)}
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                          ))}
+                      </div>
+                      <button
+                        onClick={() => setPlannerInviteOpen(true)}
+                        className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
+                        title="Inviter par email"
+                      >
+                        <Mail size={16} />
+                      </button>
+                    </div>
                   </div>
-                  </div>
-                </div>
+                </TripLiquidGlassShell>
               ) : (
-                <p className="text-sm text-slate-500">Aucun voyage selectionne.</p>
+                <p className="text-sm text-slate-500">Aucun voyage en cours.</p>
               )}
             </div>
             <PlannerView
@@ -6709,6 +7758,7 @@ export default function App() {
               setSelectedDate={setSelectedDate}
               onSelectDate={handlePlannerDateSelect}
               selectedTrip={selectedTrip}
+              selectedTripId={selectedTripId}
               trips={trips}
               activities={activities}
               onAddActivity={addActivity}
@@ -6721,26 +7771,43 @@ export default function App() {
         ) : null}
 
         {activeTab === "budget" ? (
-          <section>
-            <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">Budget</h2>
+          <section className="pb-4">
+            <div className="mb-6 rounded-[2rem] border border-amber-100/90 bg-gradient-to-br from-amber-50/95 via-white to-slate-50/90 p-4 shadow-[0_14px_40px_rgba(180,83,9,0.07)] ring-1 ring-amber-100/60 sm:p-6">
+              <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-900 shadow-sm ring-1 ring-amber-200/50">
+                  <Wallet className="h-6 w-6" strokeWidth={2} aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold tracking-tight text-slate-900">Budget des voyages</h2>
+                  <p className="mt-2 break-words text-sm leading-relaxed text-slate-600">
+                    Touche un voyage pour ouvrir son budget :{' '}
+                    <span className="font-medium text-slate-800">dépenses partagées</span> (qui a payé, entre qui),{' '}
+                    <span className="font-medium text-slate-800">soldes</span> et{' '}
+                    <span className="font-medium text-slate-800">remboursements suggérés</span>, plus les{' '}
+                    <span className="font-medium text-slate-800">activités du planning</span> en bas de la fiche.
+                  </p>
+                </div>
+              </div>
+            </div>
             <div className="space-y-7">
               {(() => {
                 const sections = classifyTrips(trips || []);
                 const renderBudgetTrip = (trip) => (
-                  <TripExpenseDetail
+                  <BudgetTripSummaryCard
                     key={String(trip.id)}
                     trip={trip}
-                    activities={(activities || []).filter((a) => String(a.trip_id) === String(trip.id))}
-                    onOpenTricount={setTricountTrip}
-                    onUpdateExpense={updateActivity}
-                    onDeleteExpense={deleteActivity}
+                    activities={activities}
+                    groupExpenses={tripExpenses}
+                    groupExpensesEnabled={tripExpensesTableReady}
+                    onOpenDetail={() => setBudgetDetailTrip(trip)}
                   />
                 );
                 return (
                   <>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
-                        <h3 className="mb-3 text-xs uppercase tracking-[0.3em] text-emerald-700">Maintenant</h3>
+                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-emerald-700">En cours</h3>
+                        <p className="mb-3 text-[11px] text-emerald-900/60">Voyages dont les dates incluent aujourd&apos;hui.</p>
                         <div className="grid gap-4">
                         {sections.now.length > 0
                           ? sections.now.map(renderBudgetTrip)
@@ -6751,10 +7818,16 @@ export default function App() {
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
                         <button
+                          type="button"
                           onClick={() => setBudgetUpcomingOpen((v) => !v)}
-                          className="mb-3 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
+                          className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
                         >
-                          <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">Prochainement</h3>
+                          <div>
+                            <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">À venir</h3>
+                            <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-sky-800/55">
+                              Départs futurs
+                            </p>
+                          </div>
                           {budgetUpcomingOpen ? (
                             <ChevronDown size={16} className="text-sky-700" />
                           ) : (
@@ -6773,10 +7846,16 @@ export default function App() {
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
                         <button
+                          type="button"
                           onClick={() => setBudgetMemoriesOpen((v) => !v)}
-                          className="mb-3 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
+                          className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
                         >
-                          <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">Souvenirs</h3>
+                          <div>
+                            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">Passés</h3>
+                            <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-slate-500">
+                              Voyages terminés
+                            </p>
+                          </div>
                           {budgetMemoriesOpen ? (
                             <ChevronDown size={16} className="text-slate-600" />
                           ) : (
@@ -6816,7 +7895,7 @@ export default function App() {
         ) : null}
       </main>
 
-      <nav className="fixed bottom-4 left-1/2 z-30 w-[calc(100%-1.5rem)] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-2 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70">
+      <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-2 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70">
         <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
           {tabs.map((t) => {
             const Icon = t.icon;
@@ -6897,7 +7976,24 @@ export default function App() {
         }}
       />
       <ShareModal open={!!shareTrip} onClose={() => setShareTrip(null)} trip={shareTrip} />
-      <TricountModal open={!!tricountTrip} onClose={() => setTricountTrip(null)} trip={tricountTrip} onSave={saveParticipants} />
+      <TripParticipantsModal open={!!tricountTrip} onClose={() => setTricountTrip(null)} trip={tricountTrip} onSave={saveParticipants} />
+      {budgetDetailTrip ? (
+        <BudgetTripDetailShell trip={budgetDetailTrip} onClose={() => setBudgetDetailTrip(null)}>
+          <TripExpenseDetail
+            trip={budgetDetailTrip}
+            session={session}
+            activities={(activities || []).filter((a) => String(a.trip_id) === String(budgetDetailTrip.id))}
+            groupExpenses={(tripExpenses || []).filter((e) => String(e.trip_id) === String(budgetDetailTrip.id))}
+            groupExpensesEnabled={tripExpensesTableReady}
+            onOpenParticipants={setTricountTrip}
+            onUpdateActivity={updateActivity}
+            onDeleteActivity={deleteActivity}
+            onAddGroupExpense={addGroupExpense}
+            onUpdateGroupExpense={updateGroupExpense}
+            onDeleteGroupExpense={deleteGroupExpense}
+          />
+        </BudgetTripDetailShell>
+      ) : null}
       <ConfirmDeleteModal
         open={!!tripToDelete}
         trip={tripToDelete}

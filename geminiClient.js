@@ -15,6 +15,20 @@ export async function fetchGeminiTripSuggestions({ destination, days = 3 }) {
   return j;
 }
 
+/** Activités proposées uniquement (moins de tokens que /suggestions complet). */
+export async function fetchGeminiSuggestedActivities({ destination }) {
+  const r = await fetch("/api/gemini/suggested-activities", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Erreur ${r.status}`);
+  }
+  return j;
+}
+
 export async function fetchGeminiItinerary({ destination, startDate, endDate }) {
   const r = await fetch("/api/gemini/itinerary", {
     method: "POST",
