@@ -37,6 +37,12 @@ import {
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
+import {
+  buildCityDronePromptFR,
+  buildCityUnsplashStockQuery,
+  normalizeCityDroneKey,
+} from "./cityDroneImagePrompt.js";
+import { WIKIMEDIA_CURATED_CITY_HEROES } from "./cityWikimediaHeroes.js";
 
 /** Si true : bouton programme masqué sauf créateur (VITE_CREATOR_ITINERARY=true). Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const SHOW_DESTINATION_ITINERARY_CTA =
@@ -309,7 +315,7 @@ const CITY_CATALOG = [
   "Tokyo", "Kyoto", "Osaka", "Seoul", "Bangkok", "Singapore", "Bali", "Jakarta", "Beijing", "Shanghai", "Guangzhou",
   "New York", "Los Angeles", "San Francisco", "Miami", "Chicago", "Toronto", "Vancouver",
   "London", "Barcelona", "Madrid", "Rome", "Milan", "Venise", "Berlin", "Amsterdam",
-  "Bruxelles", "Lisbonne", "Porto", "Prague", "Vienne", "Budapest", "Athènes", "Istanbul",
+  "Bruxelles", "Berne", "Lisbonne", "Porto", "Prague", "Vienne", "Budapest", "Athènes", "Istanbul",
   "Dubai", "Doha", "Abu Dhabi", "Le Caire", "Marrakech", "Tunis", "Alger",
   "Sydney", "Melbourne", "Auckland", "Cape Town", "Rio de Janeiro", "Sao Paulo", "Phuket",
 ];
@@ -328,6 +334,8 @@ const CITY_ALIASES = {
   London: ["Londres"],
   Barcelona: ["Barcelone"],
   Rome: ["Roma"],
+  Milan: ["Milano"],
+  Berne: ["Bern"],
 };
 
 const CITY_SEARCH_ENTRIES = CITY_CATALOG.flatMap((canonical) => {
@@ -504,6 +512,7 @@ const WIKI_EN_PAGE_TITLE = Object.freeze({
   pekin: "Beijing",
   mumbai: "Mumbai",
   "rio de janeiro": "Rio de Janeiro",
+  berne: "Bern",
 });
 
 /** Titre de page Wikipédia FR quand il diffère du nom canon dans l’app. */
@@ -594,13 +603,11 @@ async function fetchFrenchWikiSummaryThumb(safeCity) {
  */
 /** Bundles locaux — régénérés avec npm run fetch:destinations (profils plage / skyline / patrimoine : scripts/destination-image-profiles.mjs). */
 const BUNDLED_CITY_HERO_PATHS = Object.freeze({
-  paris: "/destinations/paris.jpg",
   tokyo: "/destinations/tokyo.jpg",
   london: "/destinations/london.jpg",
   "new york": "/destinations/new-york.jpg",
   dubai: "/destinations/dubai.jpg",
   sydney: "/destinations/sydney.jpg",
-  barcelona: "/destinations/barcelona.jpg",
   rome: "/destinations/rome.jpg",
   berlin: "/destinations/berlin.jpg",
   istanbul: "/destinations/istanbul.jpg",
@@ -699,6 +706,16 @@ function getCityHeroImageCandidates(cityInput) {
   const seen = new Set();
   for (const k of keys) {
     if (!k) continue;
+    const curated = WIKIMEDIA_CURATED_CITY_HEROES[k];
+    if (Array.isArray(curated)) {
+      for (const u of curated) {
+        const s = String(u || "").trim();
+        if (s && !seen.has(s)) {
+          seen.add(s);
+          urls.push(s);
+        }
+      }
+    }
     const multi = CITY_HERO_IMAGE_URL_LISTS[k];
     if (multi) {
       for (const u of multi) {
@@ -726,18 +743,18 @@ function resolveCityHeroImageUrl(cityInput) {
   return list[0] || "";
 }
 
-/** Image carte voyage : bundle / Storage / Commons figés, puis Picsum déterministe (évite carte vide si 404 ou ville hors map). */
+/** Image carte voyage : bundle / Storage / Commons figés (sans Picsum : seeds souvent hors-sujet type nature abstraite). */
 function buildCityImageUrl(prompt) {
   const p = String(extractCityPrompt(prompt) || prompt || "").trim();
   if (!p) return "";
   const primary =
-    getBundledCityHeroPath(p) || getStorageMirrorHeroUrl(p) || resolveCityHeroImageUrl(p);
+    resolveCityHeroImageUrl(p) || getBundledCityHeroPath(p) || getStorageMirrorHeroUrl(p);
   if (primary) return primary;
-  return seededPicsumUrl(`${normalizeTextForSearch(p)}|city-hero`, 1600, 1000);
+  return "";
 }
 
 function getCityImageCacheKey(cityInput) {
-  return `v17:${String(extractCityPrompt(cityInput) || cityInput || "")
+  return `v31:${String(extractCityPrompt(cityInput) || cityInput || "")
     .trim()
     .toLowerCase()}`;
 }
@@ -960,9 +977,9 @@ function buildInstantDestinationGuide(rawQuery) {
   if (!safeCity || String(safeCity).trim().length < 2) return null;
   const img = buildCityImageUrl(safeCity);
   const instantCandidates = dedupeImageUrlChain([
+    ...getCityHeroImageCandidates(safeCity),
     getBundledCityHeroPath(safeCity),
     getStorageMirrorHeroUrl(safeCity),
-    ...getCityHeroImageCandidates(safeCity),
   ]);
   return {
     city: safeCity,
@@ -1265,13 +1282,13 @@ async function fetchDestinationGuide(city) {
   const wikiApiOrdered = wikiHeroUrls.filter((u) => u && !isLikelyWikiFlagOrSealThumb(u));
   const wikiApiPrimary = wikiApiOrdered[0] || wikiHeroUrls[0] || "";
 
-  /** Ordre : 1) bundle local 2) miroir Storage 3) Wikipédia (API + résumé) 4) Commons figés 5) cache. */
+  /** Ordre : 1) Commons curatés / figés 2) bundle 3) miroir Storage 4) Wikipédia 5) cache (évite JPG locaux hors-sujet qui masquaient Commons). */
   let imageUrl =
+    commonsFirst ||
     bundledUrl ||
     storageMirrorUrl ||
     wikiApiPrimary ||
     (wikiThumbUsable ? wikiThumbRaw : "") ||
-    commonsFirst ||
     "";
   let landscapeImageUrl = imageUrl;
 
@@ -1292,9 +1309,9 @@ async function fetchDestinationGuide(city) {
   }
 
   const heroImageCandidates = dedupeImageUrlChain([
+    ...commonsCandidates,
     bundledUrl,
     storageMirrorUrl,
-    ...commonsCandidates,
     ...wikiHeroUrls,
     ...(wikiThumbUsable ? [wikiThumbRaw] : []),
     ...(cachedUsable ? [cachedCityImage] : []),
@@ -1566,6 +1583,9 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
   const avoidKeywords = Array.isArray(options.avoidKeywords)
     ? options.avoidKeywords.map((k) => normalizeTextForSearch(k))
     : [];
+  const cityBoost = Array.isArray(options.cityBoostTokens)
+    ? options.cityBoostTokens.map((t) => normalizeTextForSearch(t)).filter(Boolean)
+    : [];
   try {
     const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(
       q
@@ -1585,14 +1605,22 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
       );
       const keywordBoost = preferredKeywords.reduce((acc, kw) => (kw && desc.includes(kw) ? acc + 18 : acc), 0);
       const avoidPenalty = avoidKeywords.reduce((acc, kw) => (kw && desc.includes(kw) ? acc + 22 : acc), 0);
+      const cityBoostScore = cityBoost.reduce(
+        (acc, tok) => (tok && desc.includes(tok) ? acc + 45 : acc),
+        0
+      );
       const likes = Number(item?.likes || 0);
       const qualityBoost = Math.min(24, Math.round(likes / 20));
-      const firstBias = pickFirst ? Math.max(0, 20 - index) : 0;
-      const score = keywordBoost + qualityBoost + firstBias - avoidPenalty;
+      const firstBias = pickFirst ? Math.max(0, 14 - index) : 0;
+      const score = keywordBoost + qualityBoost + firstBias + cityBoostScore - avoidPenalty;
       return { item, score };
     });
     scored.sort((a, b) => b.score - a.score);
-    const picked = scored[0]?.item || results[0];
+    const best = scored[0];
+    if (cityBoost.length > 0 && best && best.score < 8) {
+      return "";
+    }
+    const picked = best?.item || results[0];
     return String(picked?.urls?.regular || picked?.urls?.full || "");
   } catch (_e) {
     return "";
@@ -1884,23 +1912,70 @@ function classifyTrips(list) {
 async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
+  const curated = resolveCityHeroImageUrl(c);
+  if (curated) return curated;
   const bundled = getBundledCityHeroPath(c);
   if (bundled) return bundled;
   const mirrored = getStorageMirrorHeroUrl(c);
   if (mirrored) return mirrored;
-  if (UNSPLASH_ACCESS_KEY) {
-    const u = await fetchUnsplashImageByQuery(`${c} city landmark skyline`, { pickFirst: true });
-    if (u) return u;
-  }
   const wikiUrls = await fetchWikipediaHeroImageUrls(c);
   const preferred = wikiUrls.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || wikiUrls[0] || "";
   if (preferred) return preferred;
   const thumb = await fetchFrenchWikiSummaryThumb(c);
   if (thumb && !isLikelyWikiFlagOrSealThumb(thumb)) return thumb;
-  return (
-    resolveCityHeroImageUrl(c) ||
-    seededPicsumUrl(`${normalizeTextForSearch(c)}|card-resolve`, 1600, 1000)
-  );
+  if (UNSPLASH_ACCESS_KEY) {
+    const stockQ = buildCityUnsplashStockQuery(c);
+    const cityTok = normalizeCityDroneKey(c).split(/\s+/).filter((t) => t.length > 2);
+    const u = await fetchUnsplashImageByQuery(stockQ, {
+      pickFirst: false,
+      preferredKeywords: [
+        "aerial",
+        "drone",
+        "skyline",
+        "landmark",
+        "cityscape",
+        "cathedral",
+        "tower",
+        "downtown",
+        "urban",
+        "beach",
+        "harbor",
+        "harbour",
+      ],
+      avoidKeywords: [
+        "logo",
+        "icon",
+        "drawing",
+        "illustration",
+        "map",
+        "diagram",
+        "grass",
+        "lawn",
+        "meadow",
+        "field",
+        "macro",
+        "texture",
+        "bokeh",
+        "abstract",
+        "pattern",
+        "fabric",
+        "skin",
+        "portrait",
+        "wedding",
+        "food",
+        "coffee",
+        "pet",
+        "flower",
+        "leaf",
+        "forest",
+        "woodland",
+        "mountain trail",
+      ],
+      cityBoostTokens: [...cityTok, normalizeTextForSearch(c).split(/\s+/)[0]].filter(Boolean),
+    });
+    if (u) return u;
+  }
+  return "";
 }
 
 // Atomes UI
@@ -1965,21 +2040,22 @@ function CityImage({ title }) {
         const fromWiki = await resolveStableCityImageForCard(prompt);
         const url = fromWiki || fallbackCommons;
         cityImageMemoryCache[cacheKey] = url;
-        try {
-          window.localStorage.setItem(localStorageKey, url);
-        } catch (_e) {
-          // ignore localStorage errors
+        if (url) {
+          try {
+            window.localStorage.setItem(localStorageKey, url);
+          } catch (_e) {
+            // ignore localStorage errors
+          }
+          try {
+            const { error: insErr } = await supabase
+              .from("image_cache")
+              .upsert({ id: cacheKey, url }, { onConflict: "id" });
+            void insErr;
+          } catch (_e) {
+            // Ignore cache write failures
+          }
         }
         setResolvedUrl(url);
-
-        try {
-          const { error: insErr } = await supabase
-            .from("image_cache")
-            .upsert({ id: cacheKey, url }, { onConflict: "id" });
-          void insErr;
-        } catch (_e) {
-          // Ignore cache write failures
-        }
       } catch (_e) {
         if (!cancelled) setResolvedUrl(fallbackCommons);
       }
@@ -1993,17 +2069,17 @@ function CityImage({ title }) {
   }, [safeTitle, prompt]);
 
   const primarySrc = resolvedUrl || buildCityImageUrl(safeTitle);
-  const displaySrc = loadFailed
-    ? seededPicsumUrl(`${cacheKey}|img-err`, 1200, 900)
-    : primarySrc;
+  const displaySrc = loadFailed ? "" : primarySrc;
+  const dronePromptFr = buildCityDronePromptFR(prompt || safeTitle);
 
   return (
     <div className="h-full w-full overflow-hidden rounded-[3rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300">
       {displaySrc ? (
         <img
           src={displaySrc}
-          alt={safeTitle}
-          className="h-full w-full object-cover"
+          alt={`${safeTitle} — vue aérienne drone, photo de voyage`}
+          title={dronePromptFr}
+          className="h-full w-full object-cover object-center"
           referrerPolicy="no-referrer"
           onError={() => {
             if (!loadFailed) setLoadFailed(true);
@@ -3118,31 +3194,28 @@ function AccountModal({
 
 // Vues de listes
 function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
-  const imageTitle = String(trip?.destination || trip?.title || "voyage");
   return (
     <article
       className={`group ${muted ? "opacity-60 grayscale-[0.4]" : ""}`}
     >
-      <div className="relative aspect-square w-full min-w-0 overflow-hidden rounded-[3rem] shadow-2xl ring-1 ring-white/35">
+      <div className="relative aspect-square w-full min-w-0 overflow-hidden rounded-[3rem] shadow-2xl ring-1 ring-slate-200/40">
         <button onClick={() => onOpen(trip)} className="block h-full w-full text-left">
-          <TripLiquidGlassShell
-            imageTitle={imageTitle}
-            active={!!isNow}
-            className="h-full min-h-0 rounded-[3rem] border border-white/40 shadow-inner transition group-hover:border-white/55"
-          >
-            <div className="flex h-full min-h-[11rem] flex-col justify-end bg-gradient-to-t from-black/45 via-transparent to-transparent px-4 pb-5 pt-16">
-              <div className="flex w-full flex-col items-start">
-                <div className="inline-flex max-w-full items-center rounded-2xl border border-white/40 bg-white/10 px-2.5 py-1 backdrop-blur-md">
-                  <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white drop-shadow-sm">
-                    {String(trip.title)}
-                  </h3>
-                </div>
-                <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
-                  {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
-                </p>
+          <div className="h-full w-full overflow-hidden rounded-[3rem] [&_img]:transition-transform [&_img]:duration-500 [&_img]:ease-out group-hover:[&_img]:scale-[1.04]">
+            <CityImage title={trip.title} />
+          </div>
+          <div className="pointer-events-none absolute inset-0 rounded-[3rem] bg-gradient-to-t from-black/58 via-black/14 to-transparent" />
+          <div className="pointer-events-none absolute bottom-4 left-4 right-4 text-white">
+            <div className="flex w-full flex-col items-start">
+              <div className="inline-flex max-w-full items-center rounded-2xl border border-white/35 bg-black/28 px-2.5 py-1 backdrop-blur-md">
+                <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white">
+                  {String(trip.title)}
+                </h3>
               </div>
+              <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
+                {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
+              </p>
             </div>
-          </TripLiquidGlassShell>
+          </div>
         </button>
         <button
           onClick={(e) => {
@@ -3496,9 +3569,9 @@ function pickNextDestinationGuideImgSrc(el, guide) {
   const fromGuide = Array.isArray(guide?.heroImageCandidates) ? guide.heroImageCandidates : [];
   const chain = dedupeImageUrlChain([
     ...fromGuide,
+    ...getCityHeroImageCandidates(city),
     getBundledCityHeroPath(city),
     getStorageMirrorHeroUrl(city),
-    ...getCityHeroImageCandidates(city),
     guide?.landscapeImageUrl,
     guide?.imageUrl,
   ]);
@@ -3730,14 +3803,14 @@ function DestinationGuideView({
         ) : guide && displayGuide ? (
           <>
             <div className="relative p-4">
-              <div className="relative h-56 w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ring-1 ring-white/25">
+              <div className="relative h-56 w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ring-1 ring-white/25 sm:h-60">
                 {(() => {
                   const heroSrc = String(
                     displayGuide.landscapeImageUrl ||
                       displayGuide.imageUrl ||
+                      resolveCityHeroImageUrl(displayGuide.city) ||
                       getBundledCityHeroPath(displayGuide.city) ||
                       getStorageMirrorHeroUrl(displayGuide.city) ||
-                      resolveCityHeroImageUrl(displayGuide.city) ||
                       ""
                   ).trim();
                   if (!heroSrc) return null;
@@ -3746,7 +3819,7 @@ function DestinationGuideView({
                       key={String(displayGuide.city)}
                       src={heroSrc}
                       alt={String(displayGuide.city)}
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-cover object-center"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
                         const el = e.currentTarget;
