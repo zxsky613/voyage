@@ -1,0 +1,66 @@
+/** Chaîne normalisée pour dédoublonnage / tests (minuscules, sans accents). */
+function fold(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+const PLACE_SUBSTRINGS =
+  /mus[eé]e|tour|parc|park|place|pont|bridge|jardin|garden|cath[eé]drale|basilique|temple|ch[aâ]teau|castle|liberty|statue|observato|quartier|district|avenue|street|st\.|center|centre|plaza|square|hall|op[eé]ra|gallery|galerie|m[eé]morial|memorial|monument|arena|stadium|zoo|aquarium|island|[îi]le|beach|plage|march[eé]|market|tower|palace|palais|gate|wall|mur|central|rockefeller|broadway|empire|brooklyn|manhattan|queens|bronx|soho|tribeca|dumbo|high\s*line|chelsea|midtown|uptown|downtown|times\s*sq|metropolitan|guggenheim|\bmo\b|moma|one\s*world|ellis|battery|wharf|pier|botanical|cathedral|chapel|abbaye|abbatiale|forum|colosseum|colis[eé]e/i;
+
+/**
+ * Filtre les entrées « lieux incontournables » manifestement hors sujet (WP, hallucinations).
+ * @param {unknown[]} places
+ * @param {string} destinationHint ville demandée (ex. « New York », « Paris »)
+ */
+export function sanitizeMustSeePlaces(places, destinationHint = "") {
+  if (!Array.isArray(places)) return [];
+  const destRaw = String(destinationHint || "").trim();
+  const isNewYorkLike =
+    /\bnew\s*york\b|\bnyc\b|\bmanhattan\b|\bbrooklyn\b|\bqueens\b|\bbronx\b/i.test(destRaw) ||
+    fold(destRaw).includes("new york");
+
+  const blockedSubstring = [
+    /helvetica|comic\s*sans|times\s*new\s*roman|\barial\b|\bcalibri\b|\bcambria\b|\bgaramond\b/i,
+    /jeux\s+olympiques|olympics\s+20\d{2}|jo\s+de\s+20\d{2}|jo\s+20\d{2}/i,
+    /f[eê]te\s+de\s+la\s+musique/i,
+    /xi[eè]zh[iì]|xi[eè]\s*zhi/i,
+    /\bgendarme\b/i,
+  ];
+
+  /** Villes FR (ou assimilées) sans lien avec un city trip à New York — évite les homonymies WP. */
+  const frenchCityWrongForNy =
+    /^(n[îi]mes|lyon|paris|marseille|toulouse|bordeaux|strasbourg|lille|nice|rennes|reims|toulon|grenoble|dijon|angers|antibes|cannes|nantes|montpellier|aix-en-provence|avignon)$/i;
+
+  const junkNameOnly = /^(fr[eé]d[eé]ric\s+)?chopin$/i;
+
+  function looksLikePersonNameLine(s) {
+    const t = String(s || "").trim();
+    if (t.length < 4 || t.length > 72) return false;
+    if (PLACE_SUBSTRINGS.test(t)) return false;
+    const words = t.split(/\s+/).filter(Boolean);
+    if (words.length < 2 || words.length > 5) return false;
+    return words.every((w) => {
+      const segments = w.split("-").filter(Boolean);
+      if (segments.length === 0) return false;
+      return segments.every((seg) => /^[\p{Lu}À-Ÿ][\p{L}à-ÿ'’-]+$/u.test(seg));
+    });
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (const p of places) {
+    const s = String(p || "").trim();
+    if (s.length < 2 || s.length > 120) continue;
+    if (blockedSubstring.some((re) => re.test(s))) continue;
+    if (junkNameOnly.test(s)) continue;
+    if (isNewYorkLike && frenchCityWrongForNy.test(s)) continue;
+    if (looksLikePersonNameLine(s)) continue;
+    const k = fold(s);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}

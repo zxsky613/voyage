@@ -21,7 +21,24 @@ import {
   ChevronRight,
   Eye,
   ExternalLink,
+  CheckCircle2,
+  AlertTriangle,
+  Sparkles,
+  Lock,
 } from "lucide-react";
+import { fetchGeminiTripSuggestions, fetchGeminiItinerary } from "./geminiClient.js";
+import { sanitizeMustSeePlaces } from "./placeGuards.js";
+import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
+
+/** Si true : bouton programme masqué sauf créateur (VITE_CREATOR_ITINERARY=true). Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
+const SHOW_DESTINATION_ITINERARY_CTA =
+  import.meta.env.VITE_ITINERARY_PREMIUM_ONLY !== "true" ||
+  import.meta.env.VITE_CREATOR_ITINERARY === "true";
+
+/** Quand true : encarts quota Gemini, .env, détails techniques. À activer seulement dans .env.local du développeur — pas pour les utilisateurs finaux. */
+const SHOW_GEMINI_DEV_UI =
+  import.meta.env.VITE_SHOW_GEMINI_DEV_ERRORS === "true" ||
+  import.meta.env.VITE_SHOW_GEMINI_DEV_ERRORS === "1";
 
 const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -33,6 +50,8 @@ const SUPABASE_ANON_KEY =
   "YOUR_ANON_KEY";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
+/** Bucket Supabase Storage (public) pour la couche 3 — fichiers {slug}.webp ex. tokyo.webp */
+const CITY_HERO_STORAGE_BUCKET = import.meta.env.VITE_CITY_HERO_STORAGE_BUCKET || "";
 const cityImageMemoryCache = {};
 const CHAT_CACHE_KEY = "tp_chat_cache_v1";
 const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
@@ -280,6 +299,9 @@ const CITY_ALIASES = {
   "Sao Paulo": ["São Paulo"],
   Guangzhou: ["Canton", "Kwangchow"],
   Monaco: ["Monte Carlo", "Monte-Carlo"],
+  London: ["Londres"],
+  Barcelona: ["Barcelone"],
+  Rome: ["Roma"],
 };
 
 const CITY_SEARCH_ENTRIES = CITY_CATALOG.flatMap((canonical) => {
@@ -417,6 +439,15 @@ const BG = "#eef3f8";
 const TEXT = "#0B1220";
 const ACCENT = "#0F172A";
 const slots = ["09:30", "14:00", "18:30", "21:00"];
+
+/** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
+const TRIPS_SELECT_ATTEMPTS = [
+  "*",
+  "id,title,name,destination,start_date,end_date,fixed_url,participants,owner_id,invited_emails",
+  "id,title,start_date,end_date,owner_id,invited_emails",
+  "id,title,start_date,end_date,owner_id",
+];
+
 const GLASS_BUTTON_CLASS =
   "border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
 const GLASS_ACCENT_STYLE = {
@@ -530,8 +561,70 @@ async function fetchFrenchWikiSummaryThumb(safeCity) {
 }
 
 /**
- * Fichiers Wikimedia Commons figés (chemins stables). Complète Wikipédia quand l’illustration
- * principale d’un article est un drapeau ou manque.
+ * Couche 1 — Images servies par l’app (`public/destinations/{slug}.jpg`).
+ * Remplir avec `npm run fetch:destinations` (voir scripts/fetch-destination-images.mjs).
+ */
+/** Bundles locaux — régénérés avec npm run fetch:destinations (profils plage / skyline / patrimoine : scripts/destination-image-profiles.mjs). */
+const BUNDLED_CITY_HERO_PATHS = Object.freeze({
+  paris: "/destinations/paris.jpg",
+  tokyo: "/destinations/tokyo.jpg",
+  london: "/destinations/london.jpg",
+  "new york": "/destinations/new-york.jpg",
+  dubai: "/destinations/dubai.jpg",
+  sydney: "/destinations/sydney.jpg",
+  barcelona: "/destinations/barcelona.jpg",
+  rome: "/destinations/rome.jpg",
+  berlin: "/destinations/berlin.jpg",
+  istanbul: "/destinations/istanbul.jpg",
+  "los angeles": "/destinations/los-angeles.jpg",
+  nice: "/destinations/nice.jpg",
+  miami: "/destinations/miami.jpg",
+  singapore: "/destinations/singapore.jpg",
+  amsterdam: "/destinations/amsterdam.jpg",
+  prague: "/destinations/prague.jpg",
+  lyon: "/destinations/lyon.jpg",
+  pisa: "/destinations/pisa.jpg",
+  pise: "/destinations/pisa.jpg",
+  shanghai: "/destinations/shanghai.jpg",
+  beijing: "/destinations/beijing.jpg",
+  pekin: "/destinations/beijing.jpg",
+  marrakech: "/destinations/marrakech.jpg",
+  phuket: "/destinations/phuket.jpg",
+});
+
+function getBundledCityHeroPath(cityInput) {
+  const raw = String(extractCityPrompt(cityInput) || cityInput || "").trim();
+  if (!raw) return "";
+  const keys = [];
+  const canonical = resolveCanonicalCity(raw);
+  if (canonical) keys.push(normalizeTextForSearch(canonical));
+  keys.push(normalizeTextForSearch(raw));
+  const firstTok = normalizeTextForSearch(raw.split(/\s+/)[0] || "");
+  if (firstTok && !keys.includes(firstTok)) keys.push(firstTok);
+  for (const k of keys) {
+    if (!k) continue;
+    const p = BUNDLED_CITY_HERO_PATHS[k];
+    if (p) return String(p).trim();
+  }
+  return "";
+}
+
+/** Couche 3 — URL publique Supabase Storage (même nom que en local : {slug}.jpg). Upload : npm run upload:destinations */
+function getStorageMirrorHeroUrl(cityInput) {
+  if (!CITY_HERO_STORAGE_BUCKET) return "";
+  const base = String(SUPABASE_URL || "").replace(/\/$/, "");
+  if (!base || base.includes("YOUR_PROJECT")) return "";
+  const raw = String(extractCityPrompt(cityInput) || cityInput || "").trim();
+  if (!raw) return "";
+  const canonical = resolveCanonicalCity(raw) || raw;
+  const slug = normalizeTextForSearch(canonical).replace(/\s+/g, "-");
+  if (!slug) return "";
+  return `${base}/storage/v1/object/public/${CITY_HERO_STORAGE_BUCKET}/${slug}.jpg`;
+}
+
+/**
+ * Couche 2 (b) — Fichiers Wikimedia Commons figés (chemins stables), avant l’API pageimages.
+ * Complète quand il n’y a pas de bundle local ni miroir Storage.
  */
 const CITY_HERO_IMAGE_URLS = Object.freeze({
   nice: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Nice_vue_du_Ch%C3%A2teau.jpg/1600px-Nice_vue_du_Ch%C3%A2teau.jpg",
@@ -605,12 +698,18 @@ function resolveCityHeroImageUrl(cityInput) {
   return list[0] || "";
 }
 
+/** Image carte voyage : bundle / Storage / Commons figés, puis Picsum déterministe (évite carte vide si 404 ou ville hors map). */
 function buildCityImageUrl(prompt) {
-  return resolveCityHeroImageUrl(prompt) || "";
+  const p = String(extractCityPrompt(prompt) || prompt || "").trim();
+  if (!p) return "";
+  const primary =
+    getBundledCityHeroPath(p) || getStorageMirrorHeroUrl(p) || resolveCityHeroImageUrl(p);
+  if (primary) return primary;
+  return seededPicsumUrl(`${normalizeTextForSearch(p)}|city-hero`, 1600, 1000);
 }
 
 function getCityImageCacheKey(cityInput) {
-  return `v13:${String(extractCityPrompt(cityInput) || cityInput || "")
+  return `v17:${String(extractCityPrompt(cityInput) || cityInput || "")
     .trim()
     .toLowerCase()}`;
 }
@@ -729,6 +828,64 @@ function buildSuggestedActivitiesForCity(city) {
   return base;
 }
 
+/**
+ * Villes hors catalogue Open-Meteo / saisie libre : 5–7 axes concrets (pas de noms inventés).
+ */
+function buildExplorationPlacesFallback(cityLabel) {
+  const name = String(cityLabel || "").trim().replace(/\s+/g, " ");
+  if (name.length < 2) return null;
+  return [
+    `Centre historique & cœur de ${name}`,
+    `Musées, monuments & patrimoine — ${name}`,
+    `Parcs, jardins & points de vue à ${name}`,
+    `Quartiers agréables pour se balader`,
+    `Marchés, cuisine locale & vie de quartier`,
+    `Architecture remarquable & art dans la ville`,
+    `Excursion ou panorama aux alentours de ${name}`,
+  ];
+}
+
+/** Repères emblématiques : tout le CITY_CATALOG dans iconicPlacesData.js + repli exploration. */
+function getIconicPlacesFallback(safeCity) {
+  const resolved = String(resolveCanonicalCity(safeCity) || "").trim();
+  const candidates = [resolved, String(safeCity || "").trim()].filter((s) => s.length >= 2);
+  const tried = new Set();
+  for (const label of candidates) {
+    const k = normalizeTextForSearch(label);
+    if (tried.has(k)) continue;
+    tried.add(k);
+    const list = ICONIC_PLACES_CANONICAL[k];
+    if (Array.isArray(list) && list.length > 0) return list.slice();
+  }
+  return null;
+}
+
+/** Assure entre min et max lieux : complète avec repères emblématiques si besoin. */
+function clampPlacesList(places, cityName, { min = 5, max = 7 } = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (p) => {
+    const s = String(p || "").trim();
+    if (!s) return;
+    const k = normalizeTextForSearch(s);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(s);
+  };
+  (places || []).forEach(add);
+  const fallback =
+    getIconicPlacesFallback(cityName) || buildExplorationPlacesFallback(cityName) || [];
+  for (const p of fallback) {
+    if (out.length >= min) break;
+    add(p);
+  }
+  for (const p of fallback) {
+    if (out.length >= max) break;
+    add(p);
+  }
+  return out.slice(0, max);
+}
+
 /** Affichage instantane (sans reseau) le temps que les APIs repondent. */
 function buildInstantDestinationGuide(rawQuery) {
   const cityStem = extractCityPrompt(rawQuery) || normalizeCityInput(rawQuery);
@@ -736,11 +893,18 @@ function buildInstantDestinationGuide(rawQuery) {
   const safeCity = resolveCanonicalCity(cityStem);
   if (!safeCity || String(safeCity).trim().length < 2) return null;
   const img = buildCityImageUrl(safeCity);
-  const instantCandidates = img ? [img] : [];
+  const instantCandidates = dedupeImageUrlChain([
+    getBundledCityHeroPath(safeCity),
+    getStorageMirrorHeroUrl(safeCity),
+    ...getCityHeroImageCandidates(safeCity),
+  ]);
   return {
     city: safeCity,
     description: `Chargement des infos sur ${safeCity}…`,
-    places: [`Centre-ville de ${safeCity}`, `Quartier historique`, "Musee principal", "Point de vue iconique"],
+    places:
+      getIconicPlacesFallback(safeCity) ||
+      buildExplorationPlacesFallback(safeCity) ||
+      [],
     suggestedActivities: buildSuggestedActivitiesForCity(safeCity),
     tips: buildTravelTips(safeCity),
     imageUrl: img,
@@ -971,21 +1135,8 @@ async function fetchDestinationGuide(city) {
     }
   })();
 
-  const wikiSearchP = (async () => {
-    try {
-      const searchResp = await fetch(
-        `https://fr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-          `${safeCity} monuments incontournables`
-        )}&format=json&origin=*`
-      );
-      if (!searchResp.ok) return [];
-      const searchJson = await searchResp.json();
-      const hits = Array.isArray(searchJson?.query?.search) ? searchJson.query.search : [];
-      return hits.slice(0, 5).map((h) => String(h?.title || "")).filter(Boolean);
-    } catch (_e) {
-      return [];
-    }
-  })();
+  /** Ne pas utiliser les titres d’articles Wikipédia comme « lieux » : la recherche renvoie souvent films, homonymes, pages sans lien (ex. New York → titres français). Les pastilles viennent de Gemini. */
+  const wikiPlaceTitlesP = Promise.resolve([]);
 
   const nominatimP = (async () => {
     try {
@@ -1018,7 +1169,7 @@ async function fetchDestinationGuide(city) {
 
   const [summaryPack, places, geoPack, cachedCityImage, wikiHeroUrls] = await Promise.all([
     wikiSummaryP,
-    wikiSearchP,
+    wikiPlaceTitlesP,
     nominatimP,
     cachedImageP,
     wikiHeroUrlsP,
@@ -1034,6 +1185,8 @@ async function fetchDestinationGuide(city) {
   }
 
   const summaryText = summaryPack.summaryText;
+  const bundledUrl = getBundledCityHeroPath(safeCity);
+  const storageMirrorUrl = getStorageMirrorHeroUrl(safeCity);
   const commonsCandidates = getCityHeroImageCandidates(safeCity);
   const commonsFirst =
     commonsCandidates.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || commonsCandidates[0] || "";
@@ -1044,8 +1197,14 @@ async function fetchDestinationGuide(city) {
   const wikiApiOrdered = wikiHeroUrls.filter((u) => u && !isLikelyWikiFlagOrSealThumb(u));
   const wikiApiPrimary = wikiApiOrdered[0] || wikiHeroUrls[0] || "";
 
+  /** Ordre : 1) bundle local 2) miroir Storage 3) Wikipédia (API + résumé) 4) Commons figés 5) cache. */
   let imageUrl =
-    wikiApiPrimary || (wikiThumbUsable ? wikiThumbRaw : "") || commonsFirst || "";
+    bundledUrl ||
+    storageMirrorUrl ||
+    wikiApiPrimary ||
+    (wikiThumbUsable ? wikiThumbRaw : "") ||
+    commonsFirst ||
+    "";
   let landscapeImageUrl = imageUrl;
 
   if (!imageUrl && cachedUsable) {
@@ -1065,9 +1224,11 @@ async function fetchDestinationGuide(city) {
   }
 
   const heroImageCandidates = dedupeImageUrlChain([
+    bundledUrl,
+    storageMirrorUrl,
+    ...commonsCandidates,
     ...wikiHeroUrls,
     ...(wikiThumbUsable ? [wikiThumbRaw] : []),
-    ...commonsCandidates,
     ...(cachedUsable ? [cachedCityImage] : []),
   ]);
 
@@ -1111,7 +1272,9 @@ async function fetchDestinationGuide(city) {
     places:
       places.length > 0
         ? places
-        : [`Centre-ville de ${safeCity}`, `Quartier historique`, "Musee principal", "Point de vue iconique"],
+        : getIconicPlacesFallback(safeCity) ||
+          buildExplorationPlacesFallback(safeCity) ||
+          [],
     suggestedActivities,
     tips,
     imageUrl,
@@ -1125,6 +1288,102 @@ async function fetchDestinationGuide(city) {
     adminRegion: displayRegion || null,
     situationMap,
   };
+}
+
+function normalizeGeminiGuidePayload(data, destinationHint = "") {
+  if (!data || typeof data !== "object") return null;
+  const rawPlaces = Array.isArray(data.places)
+    ? data.places.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  const places = sanitizeMustSeePlaces(rawPlaces, destinationHint);
+  const fromActs = Array.isArray(data.suggestedActivities)
+    ? data.suggestedActivities
+    : Array.isArray(data.activities)
+      ? data.activities
+      : [];
+  const suggestedActivities = fromActs.map((x) => String(x || "").trim()).filter(Boolean);
+  const tipsRaw = data.tips && typeof data.tips === "object" ? data.tips : {};
+  const tipsDo = Array.isArray(tipsRaw.do)
+    ? tipsRaw.do.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  const tipsDont = Array.isArray(tipsRaw.dont)
+    ? tipsRaw.dont.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  return {
+    summary: String(data.summary || "").trim(),
+    places,
+    tips: { do: tipsDo, dont: tipsDont },
+    suggestedActivities,
+  };
+}
+
+function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
+  if (!baseGuide) return null;
+  const city = String(baseGuide.city || "");
+  if (!geminiNorm) {
+    return {
+      ...baseGuide,
+      places: clampPlacesList(baseGuide.places, city),
+    };
+  }
+  const mergedPlaces =
+    geminiNorm.places.length > 0 ? geminiNorm.places : baseGuide.places;
+  return {
+    ...baseGuide,
+    description: geminiNorm.summary || baseGuide.description,
+    places: clampPlacesList(mergedPlaces, city),
+    tips: {
+      do: geminiNorm.tips.do.length > 0 ? geminiNorm.tips.do : baseGuide.tips?.do || [],
+      dont: geminiNorm.tips.dont.length > 0 ? geminiNorm.tips.dont : baseGuide.tips?.dont || [],
+    },
+    suggestedActivities:
+      geminiNorm.suggestedActivities.length > 0
+        ? geminiNorm.suggestedActivities
+        : baseGuide.suggestedActivities,
+  };
+}
+
+function countInclusiveTripDaysClient(startYmd, endYmd) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(String(startYmd)) || !re.test(String(endYmd)))
+    return { ok: false, days: 0, error: "Utilise le format AAAA-MM-JJ." };
+  const t0 = Date.parse(`${startYmd}T12:00:00`);
+  const t1 = Date.parse(`${endYmd}T12:00:00`);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return { ok: false, days: 0, error: "Dates invalides." };
+  let a = t0;
+  let b = t1;
+  if (b < a) [a, b] = [b, a];
+  const days = Math.round((b - a) / 86400000) + 1;
+  if (days > 14) return { ok: false, days: 0, error: "Maximum 14 jours." };
+  return { ok: true, days, error: "" };
+}
+
+/** Jours AAAA-MM-JJ inclus entre début et fin du voyage. */
+function listTripDatesInclusive(startYmd, endYmd) {
+  const a = toYMD(startYmd, "");
+  const b = toYMD(endYmd, "");
+  if (!a || !b) return [];
+  let t0 = Date.parse(`${a}T12:00:00`);
+  let t1 = Date.parse(`${b}T12:00:00`);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return [];
+  if (t1 < t0) [t0, t1] = [t1, t0];
+  const out = [];
+  const d = new Date(t0);
+  while (d.getTime() <= t1) {
+    out.push(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+    );
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+/** Répartit N activités sur les jours du voyage (tour à tour). */
+function assignActivityDatesRoundRobin(startYmd, endYmd, count) {
+  const days = listTripDatesInclusive(startYmd, endYmd);
+  const fallback = toYMD(startYmd, getTodayStr());
+  if (!days.length) return Array.from({ length: count }, () => fallback);
+  return Array.from({ length: count }, (_, i) => days[i % days.length]);
 }
 
 function seededPicsumUrl(seedText, width = 240, height = 160) {
@@ -1208,6 +1467,19 @@ function normalizeTrip(trip) {
   };
 }
 
+/** Évite les doublons si la liste brute contient deux fois le même id (course requêtes / état). */
+function dedupeTripsById(trips) {
+  const seen = new Set();
+  const out = [];
+  for (const t of trips || []) {
+    const id = String(t?.id ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(t);
+  }
+  return out;
+}
+
 function formatCityName(value) {
   const raw = String(value || "")
     .trim()
@@ -1225,10 +1497,29 @@ function formatCityName(value) {
     .join(" ");
 }
 
+/** HH:MM pour champs activité (select ou saisie). */
+function normalizeActivityTimeHHMM(value) {
+  const s = String(value || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return "";
+  let h = parseInt(m[1], 10);
+  let min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return "";
+  h = Math.min(23, Math.max(0, h));
+  min = Math.min(59, Math.max(0, min));
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 function normalizeActivity(activity) {
   const rawTime = String(activity?.time || "");
   const time = rawTime.length >= 5 ? rawTime.slice(0, 5) : rawTime;
-  const normalizedDate = toYMD(activity?.date, "");
+  const rawDate =
+    activity?.date ??
+    activity?.date_key ??
+    activity?.scheduled_date ??
+    activity?.activity_date ??
+    activity?.day;
+  const normalizedDate = toYMDLoose(rawDate);
   const cachedDescription = getCachedActivityDescription(activity?.id);
   return {
     ...activity,
@@ -1251,15 +1542,24 @@ function userCanSeeTrip(trip, session) {
     ? trip.invited_emails.map((m) => String(m || "").toLowerCase().trim())
     : [];
 
-  // Backward-compatible mode: some schemas may not have owner/invited columns yet.
-  // In that case, do not hide rows client-side.
+  // Schéma sans colonnes owner / invités : ancien mode single-tenant (tout afficher).
   if (!hasOwnerField && !hasInvitedField) return true;
 
-  // Legacy rows without ownership metadata should stay visible for the signed-in user.
-  if (hasOwnerField && !ownerId && (!hasInvitedField || invited.length === 0)) return true;
-
   if (!userId && !userEmail) return false;
-  return ownerId === userId || (userEmail && invited.includes(userEmail));
+
+  if (ownerId && ownerId === userId) return true;
+  if (userEmail && invited.includes(userEmail)) return true;
+
+  // Ligne avec owner_id vide et sans invitation : données démo, autre compte, ou migration incomplète — ne pas mélanger les utilisateurs.
+  if (hasOwnerField && !ownerId) return false;
+
+  return false;
+}
+
+function visibleTripsForSession(rawTrips, session) {
+  const normalized = (rawTrips || []).map(normalizeTrip);
+  const visible = normalized.filter((trip) => userCanSeeTrip(trip, session));
+  return dedupeTripsById(visible);
 }
 
 function toYMD(value, fallback) {
@@ -1270,6 +1570,70 @@ function toYMD(value, fallback) {
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
+/** AAAA-MM-JJ depuis l'API ; "" si absent. Aligné sur le calendrier local (même logique que les cases du planning). */
+function toYMDLoose(value) {
+  const s = String(value ?? "").trim();
+  if (!s) return "";
+  // Date seule — ne pas utiliser `Date` (sinon "YYYY-MM-DD" = minuit UTC et jour local faux hors UTC).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Timestamptz / ISO avec heure : le préfixe AAAA-MM-JJ est souvent en UTC → on prend le jour LOCAL.
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return "";
+}
+
+/** Évite qu'un refetch juste après insertion écrase les activités (latence lecture / temps réel). */
+const ACTIVITY_INSERT_GRACE_MS = 90000;
+
+function mergeActivitiesFromServer(prev, fetched, tripIds, graceRef) {
+  const tripIdList = [...new Set((tripIds || []).map((id) => String(id)).filter(Boolean))];
+  const tripIdSet = new Set(tripIdList);
+  const prevOutside = (prev || []).filter((a) => !tripIdSet.has(String(a.trip_id)));
+  const now = Date.now();
+  const fetchedIds = new Set((fetched || []).map((a) => String(a.id)).filter(Boolean));
+  const g = graceRef?.current;
+  if (g && typeof g.forEach === "function") {
+    g.forEach((_t, id) => {
+      if (fetchedIds.has(id)) g.delete(id);
+    });
+  }
+  const merged = [];
+  for (const tid of tripIdList) {
+    const serverRows = (fetched || []).filter((a) => String(a.trip_id) === tid);
+    const serverIdSet = new Set(serverRows.map((a) => String(a.id)).filter(Boolean));
+    const prevRows = (prev || []).filter((a) => String(a.trip_id) === tid);
+    const lagRows = prevRows.filter((a) => {
+      const id = String(a.id || "");
+      if (!id || serverIdSet.has(id)) return false;
+      const t0 = g?.get(id);
+      return t0 != null && now - t0 < ACTIVITY_INSERT_GRACE_MS;
+    });
+    merged.push(...serverRows, ...lagRows);
+  }
+  return [...prevOutside, ...merged];
+}
+
+/** Sélection des activités d'un voyage ; replie sans `.order` si la colonne `date` n'existe pas côté Supabase. */
+async function fetchActivitiesRowsForTrip(tripId) {
+  const tid = String(tripId || "").trim();
+  if (!tid) return [];
+  const ordered = await supabase
+    .from("activities")
+    .select("*")
+    .eq("trip_id", tid)
+    .order("date", { ascending: true })
+    .order("time", { ascending: true });
+  if (!ordered.error) return ordered.data || [];
+  const plain = await supabase.from("activities").select("*").eq("trip_id", tid);
+  return plain.data || [];
 }
 
 async function fileToAvatarDataUrl(file) {
@@ -1342,12 +1706,23 @@ function classifyTrips(list) {
 async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
+  const bundled = getBundledCityHeroPath(c);
+  if (bundled) return bundled;
+  const mirrored = getStorageMirrorHeroUrl(c);
+  if (mirrored) return mirrored;
+  if (UNSPLASH_ACCESS_KEY) {
+    const u = await fetchUnsplashImageByQuery(`${c} city landmark skyline`, { pickFirst: true });
+    if (u) return u;
+  }
   const wikiUrls = await fetchWikipediaHeroImageUrls(c);
   const preferred = wikiUrls.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || wikiUrls[0] || "";
   if (preferred) return preferred;
   const thumb = await fetchFrenchWikiSummaryThumb(c);
   if (thumb && !isLikelyWikiFlagOrSealThumb(thumb)) return thumb;
-  return buildCityImageUrl(c);
+  return (
+    resolveCityHeroImageUrl(c) ||
+    seededPicsumUrl(`${normalizeTextForSearch(c)}|card-resolve`, 1600, 1000)
+  );
 }
 
 // Atomes UI
@@ -1356,6 +1731,11 @@ function CityImage({ title }) {
   const safeTitle = String(prompt || title || "voyage");
   const cacheKey = getCityImageCacheKey(prompt || safeTitle);
   const [resolvedUrl, setResolvedUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setLoadFailed(false);
+  }, [safeTitle, prompt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1434,7 +1814,10 @@ function CityImage({ title }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeTitle, prompt]);
 
-  const displaySrc = resolvedUrl || buildCityImageUrl(safeTitle);
+  const primarySrc = resolvedUrl || buildCityImageUrl(safeTitle);
+  const displaySrc = loadFailed
+    ? seededPicsumUrl(`${cacheKey}|img-err`, 1200, 900)
+    : primarySrc;
 
   return (
     <div className="h-full w-full overflow-hidden rounded-[3rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300">
@@ -1444,8 +1827,8 @@ function CityImage({ title }) {
           alt={safeTitle}
           className="h-full w-full object-cover"
           referrerPolicy="no-referrer"
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
+          onError={() => {
+            if (!loadFailed) setLoadFailed(true);
           }}
         />
       ) : null}
@@ -1872,6 +2255,7 @@ function TripFormModal({ open, onClose, onCreate }) {
   const [endDate, setEndDate] = useState(today);
   const [inviteInput, setInviteInput] = useState("");
   const [invitedEmails, setInvitedEmails] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -1978,18 +2362,26 @@ function TripFormModal({ open, onClose, onCreate }) {
             ) : null}
           </div>
           <button
-            onClick={() =>
-              onCreate({
-                title,
-                start_date: startDate,
-                end_date: endDate,
-                invited_emails: invitedEmails,
-              })
-            }
-            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+            type="button"
+            disabled={submitting}
+            onClick={async () => {
+              if (submitting) return;
+              setSubmitting(true);
+              try {
+                await onCreate({
+                  title,
+                  start_date: startDate,
+                  end_date: endDate,
+                  invited_emails: invitedEmails,
+                });
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             style={GLASS_ACCENT_STYLE}
           >
-            Creer
+            {submitting ? "Creation…" : "Creer"}
           </button>
         </div>
       </div>
@@ -2377,7 +2769,7 @@ function TricountModal({ open, onClose, trip, onSave }) {
   );
 }
 
-function ConfirmDeleteModal({ open, trip, onCancel, onConfirm }) {
+function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
   if (!open || !trip) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
@@ -2388,17 +2780,21 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm }) {
         </p>
         <div className="grid grid-cols-2 gap-3">
           <button
+            type="button"
             onClick={onCancel}
-            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
+            disabled={deleting}
+            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Annuler
           </button>
           <button
+            type="button"
             onClick={onConfirm}
-            className="rounded-2xl px-4 py-3 text-sm text-white"
+            disabled={deleting}
+            className="rounded-2xl px-4 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-60"
             style={{ backgroundColor: "#e11d48" }}
           >
-            Supprimer
+            {deleting ? "Suppression…" : "Supprimer"}
           </button>
         </div>
       </div>
@@ -2816,7 +3212,65 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   );
 }
 
-/** Repli si l’image ne charge pas : uniquement URLs Wikipédia / Commons déjà calculées (pas de photo « générique »). */
+/** Affichage lisible des erreurs Gemini (429 / quota vs autres). */
+function getGeminiErrorUi(raw) {
+  const full = String(raw || "").trim();
+  const quota = /429|Too Many Requests|quota exceeded|Quota exceeded|exceeded your current quota/i.test(full);
+  const modelMatch = full.match(/models\/([^/:]+)/i);
+  const modelName = modelMatch ? modelMatch[1] : "";
+  if (quota) {
+    return {
+      quota: true,
+      title: "Quota Gemini atteint",
+      subtitle: "Ce n’est pas un bug de l’app : Google limite les requêtes (gratuit ou par minute).",
+      bullets: [
+        modelName ? `Modèle actuel : ${modelName}.` : null,
+        "Attends 1 à 2 minutes puis recharge la page, ou change de modèle dans .env.local : GEMINI_MODEL=gemini-2.5-flash-lite (ou gemini-2.5-flash).",
+        "Si tu utilises souvent l’IA : facturation / forfait sur Google AI Studio ou Cloud.",
+      ].filter(Boolean),
+      technical: full,
+    };
+  }
+  return {
+    quota: false,
+    title: "Suggestions IA indisponibles",
+    subtitle: "Affichage des infos Wikipédia ou par défaut.",
+    bullets: [],
+    technical: full.length > 280 ? `${full.slice(0, 280)}…` : full,
+  };
+}
+
+/** Message court pour le programme (hors mode dev). */
+function userFacingItineraryErrorMessage(raw) {
+  const s = String(raw || "");
+  if (/403|premium|réservée/i.test(s)) {
+    return "Cette fonction n’est pas disponible avec ton compte.";
+  }
+  if (/429|quota|Too Many Requests|503|502|GEMINI_API_KEY|fetch/i.test(s)) {
+    return "Génération indisponible pour le moment. Réessaie plus tard.";
+  }
+  return "Impossible de générer le programme. Réessaie plus tard.";
+}
+
+/** Message court pour le guide destination (hors mode dev). */
+function userFacingGeminiGuideError() {
+  return "Les suggestions personnalisées ne sont pas disponibles pour le moment. Tu vois tout de même un guide général pour cette destination.";
+}
+
+/** Heures proposées dans le modal « Ajouter le voyage » (planning par activité). */
+const TRIP_SCHEDULE_TIME_OPTIONS = [
+  "09:00",
+  "10:00",
+  "11:30",
+  "13:00",
+  "14:30",
+  "16:00",
+  "18:00",
+  "19:30",
+  "21:00",
+];
+
+/** Repli si l’image ne charge pas : uniquement URLs des 3 couches (pas de photo « générique »). */
 function pickNextDestinationGuideImgSrc(el, guide) {
   const city = String(guide?.city || "").trim();
   const tried = new Set(String(el.getAttribute("data-img-tried") || "").split("\x1e").filter(Boolean));
@@ -2825,6 +3279,8 @@ function pickNextDestinationGuideImgSrc(el, guide) {
   const fromGuide = Array.isArray(guide?.heroImageCandidates) ? guide.heroImageCandidates : [];
   const chain = dedupeImageUrlChain([
     ...fromGuide,
+    getBundledCityHeroPath(city),
+    getStorageMirrorHeroUrl(city),
     ...getCityHeroImageCandidates(city),
     guide?.landscapeImageUrl,
     guide?.imageUrl,
@@ -2852,6 +3308,60 @@ function DestinationGuideView({
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [startDate, setStartDate] = useState(getTodayStr());
   const [endDate, setEndDate] = useState(getTodayStr());
+  /** Indices des activités proposées cochées pour le voyage (évite les doublons de libellé). */
+  const [pickedActivityIndices, setPickedActivityIndices] = useState(() => new Set());
+  /** Par indice d'activité : { date?: 'YYYY-MM-DD', time?: 'HH:MM' } (optionnel ; défaut = répartition sur le séjour). */
+  const [activitySchedule, setActivitySchedule] = useState(() => ({}));
+  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [geminiError, setGeminiError] = useState("");
+  const [geminiContent, setGeminiContent] = useState(null);
+  const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
+  const [programStartDate, setProgramStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [programEndDate, setProgramEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [itineraryLoading, setItineraryLoading] = useState(false);
+  const [itineraryError, setItineraryError] = useState("");
+  const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
+  const [creatingVoyage, setCreatingVoyage] = useState(false);
+
+  const displayGuide = useMemo(
+    () => mergeDestinationGuideWithGemini(guide, geminiContent),
+    [guide, geminiContent]
+  );
+
+  const tripDatesForModal = useMemo(() => listTripDatesInclusive(startDate, endDate), [startDate, endDate]);
+
+  const sortedPickedIndices = useMemo(
+    () => [...pickedActivityIndices].sort((a, b) => a - b),
+    [pickedActivityIndices]
+  );
+
+  useEffect(() => {
+    setGeminiContent(null);
+    setGeminiError("");
+    setGeneratedDayIdeas(null);
+    setItineraryError("");
+    setItineraryModalOpen(false);
+    const y = new Date().toISOString().slice(0, 10);
+    setProgramStartDate(y);
+    setProgramEndDate(y);
+  }, [confirmedDestination]);
+
+  const addModalWasOpenRef = useRef(false);
+  /** Libellés figés au moment du cochet (si la liste Gemini change avant « Créer », on garde le bon titre). */
+  const pickedActivityLabelsRef = useRef(new Map());
+  useEffect(() => {
+    if (addModalOpen) {
+      if (!addModalWasOpenRef.current && displayGuide) {
+        setPickedActivityIndices(new Set());
+        setActivitySchedule({});
+        pickedActivityLabelsRef.current = new Map();
+      }
+      addModalWasOpenRef.current = true;
+    } else {
+      addModalWasOpenRef.current = false;
+    }
+  }, [addModalOpen, displayGuide]);
+
   useEffect(() => {
     const cityStem = extractCityPrompt(confirmedDestination) || normalizeCityInput(confirmedDestination);
     if (cityStem.length < 2) {
@@ -2887,6 +3397,66 @@ function DestinationGuideView({
     };
   }, [confirmedDestination]);
 
+  useEffect(() => {
+    const dest = String(
+      extractCityPrompt(confirmedDestination) || normalizeCityInput(confirmedDestination) || ""
+    ).trim();
+    if (dest.length < 2) return undefined;
+    let cancelled = false;
+    setGeminiLoading(true);
+    setGeminiError("");
+    setGeminiContent(null);
+    fetchGeminiTripSuggestions({ destination: dest })
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.ok && res.data) {
+          const norm = normalizeGeminiGuidePayload(res.data, dest);
+          setGeminiContent(norm);
+          setGeminiError("");
+        } else {
+          setGeminiError("Réponse vide du serveur.");
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setGeminiError(String(e?.message || e));
+      })
+      .finally(() => {
+        if (!cancelled) setGeminiLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmedDestination]);
+
+  async function handleGenerateItinerary() {
+    const dest = String(displayGuide?.city || "").trim();
+    if (!dest) return;
+    const { ok, error } = countInclusiveTripDaysClient(programStartDate, programEndDate);
+    if (!ok) {
+      setItineraryError(error);
+      return;
+    }
+    setItineraryLoading(true);
+    setItineraryError("");
+    try {
+      const res = await fetchGeminiItinerary({
+        destination: dest,
+        startDate: programStartDate,
+        endDate: programEndDate,
+      });
+      if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
+        setGeneratedDayIdeas(res.data.dayIdeas);
+        setItineraryModalOpen(false);
+      } else {
+        setItineraryError("Le programme renvoyé est vide.");
+      }
+    } catch (e) {
+      setItineraryError(String(e?.message || e));
+    } finally {
+      setItineraryLoading(false);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
@@ -2917,28 +3487,30 @@ function DestinationGuideView({
           </div>
         ) : guideError ? (
           <div className="p-6 text-sm text-rose-600">{String(guideError)}</div>
-        ) : guide ? (
+        ) : guide && displayGuide ? (
           <>
             <div className="relative p-4">
               <div className="relative h-56 w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ring-1 ring-white/25">
                 {(() => {
                   const heroSrc = String(
-                    guide.landscapeImageUrl ||
-                      guide.imageUrl ||
-                      resolveCityHeroImageUrl(guide.city) ||
+                    displayGuide.landscapeImageUrl ||
+                      displayGuide.imageUrl ||
+                      getBundledCityHeroPath(displayGuide.city) ||
+                      getStorageMirrorHeroUrl(displayGuide.city) ||
+                      resolveCityHeroImageUrl(displayGuide.city) ||
                       ""
                   ).trim();
                   if (!heroSrc) return null;
                   return (
                     <img
-                      key={String(guide.city)}
+                      key={String(displayGuide.city)}
                       src={heroSrc}
-                      alt={String(guide.city)}
+                      alt={String(displayGuide.city)}
                       className="h-full w-full object-cover"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
                         const el = e.currentTarget;
-                        const next = pickNextDestinationGuideImgSrc(el, guide);
+                        const next = pickNextDestinationGuideImgSrc(el, displayGuide);
                         if (next) {
                           el.src = next;
                           return;
@@ -2949,72 +3521,280 @@ function DestinationGuideView({
                     />
                   );
                 })()}
-                {guide.situationMap?.miniMap?.viewBbox && guide.coordinates ? (
+                {displayGuide.situationMap?.miniMap?.viewBbox && displayGuide.coordinates ? (
                   <DestinationMiniMapOverlay
-                    city={guide.city}
-                    country={guide.country}
-                    adminRegion={guide.adminRegion}
-                    situationMap={guide.situationMap}
-                    coordinates={guide.coordinates}
+                    city={displayGuide.city}
+                    country={displayGuide.country}
+                    adminRegion={displayGuide.adminRegion}
+                    situationMap={displayGuide.situationMap}
+                    coordinates={displayGuide.coordinates}
                   />
                 ) : null}
               </div>
             </div>
-            <div className="space-y-5 p-6">
-              <div>
-                <h3 className="text-sm uppercase tracking-[0.4em] text-slate-500">Destination</h3>
-                <p className="mt-1 text-2xl font-semibold text-slate-900">{String(guide.city)}</p>
-                <p className="mt-2 text-sm text-slate-700">{String(guide.description)}</p>
-                  <button
-                    onClick={() => {
-                      setStartDate(getTodayStr());
-                      setEndDate(getTodayStr());
-                      setAddModalOpen(true);
-                    }}
-                    className={`mt-4 rounded-2xl px-4 py-2 text-sm text-white ${GLASS_BUTTON_CLASS}`}
-                    style={GLASS_ACCENT_STYLE}
-                  >
-                    Ajouter aux voyages
-                  </button>
+            <div className="space-y-6 bg-gradient-to-b from-slate-50/90 via-white to-sky-50/30 px-4 py-6 sm:px-7 sm:py-8">
+              <div className="relative overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-6">
+                <div
+                  className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/25 blur-3xl"
+                  aria-hidden
+                />
+                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-700/90">Destination</p>
+                <h3 className="mt-2 font-serif text-[1.65rem] font-semibold leading-tight tracking-tight text-slate-900 sm:text-3xl">
+                  {String(displayGuide.city)}
+                </h3>
+                <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">{String(displayGuide.description)}</p>
+                {geminiLoading ? (
+                  <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800 ring-1 ring-violet-200/80">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500" aria-hidden />
+                    {SHOW_GEMINI_DEV_UI
+                      ? "Génération des lieux et activités (Gemini)…"
+                      : "Personnalisation du guide en cours…"}
+                  </p>
+                ) : null}
+                {geminiError && !geminiLoading ? (
+                  SHOW_GEMINI_DEV_UI ? (
+                    (() => {
+                      const ui = getGeminiErrorUi(geminiError);
+                      return (
+                        <div className="mt-3 rounded-xl border border-amber-200/90 bg-amber-50/90 px-3 py-3 text-xs text-amber-950">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800/90">
+                            Mode développeur
+                          </p>
+                          <p className="font-semibold text-amber-950">{ui.title}</p>
+                          <p className="mt-1 leading-relaxed text-amber-900/90">{ui.subtitle}</p>
+                          {ui.bullets.length > 0 ? (
+                            <ul className="mt-2 list-inside list-disc space-y-1.5 text-[11px] leading-snug text-amber-900/85">
+                              {ui.bullets.map((line) => (
+                                <li key={line}>{line}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-2 font-mono text-[10px] leading-relaxed text-amber-900/75">{ui.technical}</p>
+                          )}
+                          {ui.bullets.length > 0 && ui.technical ? (
+                            <details className="mt-2 rounded-lg bg-amber-100/40 px-2 py-1 text-[10px] text-amber-900/70">
+                              <summary className="cursor-pointer select-none font-medium text-amber-900/80">
+                                Détail technique
+                              </summary>
+                              <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono leading-snug">
+                                {ui.technical.length > 600 ? `${ui.technical.slice(0, 600)}…` : ui.technical}
+                              </pre>
+                            </details>
+                          ) : null}
+                          {ui.quota ? (
+                            <p className="mt-2 text-[10px] text-amber-800/80">
+                              <a
+                                href="https://ai.google.dev/gemini-api/docs/rate-limits"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline decoration-amber-600/60 underline-offset-2 hover:text-amber-950"
+                              >
+                                Documentation des limites Gemini
+                              </a>
+                              {" · "}
+                              <a
+                                href="https://aistudio.google.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline decoration-amber-600/60 underline-offset-2 hover:text-amber-950"
+                              >
+                                Google AI Studio
+                              </a>
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-slate-200/90 bg-slate-50/95 px-3 py-2.5 text-xs leading-relaxed text-slate-600">
+                      {userFacingGeminiGuideError()}
+                    </div>
+                  )
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate(getTodayStr());
+                    setEndDate(getTodayStr());
+                    setAddModalOpen(true);
+                  }}
+                  className={`mt-5 rounded-2xl px-5 py-2.5 text-sm font-medium text-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] ${GLASS_BUTTON_CLASS}`}
+                  style={GLASS_ACCENT_STYLE}
+                >
+                  Ajouter aux voyages
+                </button>
               </div>
-              <div>
-                <h4 className="text-xs uppercase tracking-[0.4em] text-slate-500">Lieux incontournables</h4>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(guide.places || []).map((p) => (
-                    <span key={p} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+
+              <section className="rounded-[1.75rem] border border-slate-200/70 bg-white/95 p-5 shadow-[0_8px_32px_rgba(30,58,95,0.05)] sm:p-6">
+                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-sky-700 ring-1 ring-sky-200/60">
+                    <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                  </span>
+                  <div>
+                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">Lieux incontournables</h4>
+                    <p className="text-[11px] text-slate-500">À ne pas manquer sur place</p>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2.5">
+                  {(displayGuide.places || []).map((p, i) => (
+                    <span
+                      key={`place-${i}-${String(p).slice(0, 24)}`}
+                      className="inline-flex max-w-full items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-xs font-medium leading-snug text-slate-800 shadow-sm ring-1 ring-slate-100/80"
+                    >
                       {String(p)}
                     </span>
                   ))}
                 </div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <h4 className="text-xs uppercase tracking-[0.4em] text-slate-500">Conseils experts - A faire</h4>
-                  <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                    {(guide.tips?.do || []).map((tip) => (
-                      <li key={tip}>- {String(tip)}</li>
+              </section>
+
+              <div className="grid gap-4 md:grid-cols-2 md:gap-5">
+                <section className="flex flex-col rounded-[1.75rem] border border-emerald-200/60 bg-gradient-to-br from-emerald-50/95 to-white p-5 shadow-[0_8px_28px_rgba(5,150,105,0.07)] sm:p-6">
+                  <div className="flex items-center gap-2.5 border-b border-emerald-100/90 pb-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/70">
+                      <CheckCircle2 className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    </span>
+                    <div>
+                      <h4 className="text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-950/90">À faire</h4>
+                      <p className="text-[11px] text-emerald-800/70">Conseils experts</p>
+                    </div>
+                  </div>
+                  <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-800">
+                    {(displayGuide.tips?.do || []).map((tip, i) => (
+                      <li key={`do-${i}-${String(tip).slice(0, 20)}`} className="flex gap-2.5">
+                        <span
+                          className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+                          aria-hidden
+                        />
+                        <span>{String(tip)}</span>
+                      </li>
                     ))}
                   </ul>
-                </div>
-                <div>
-                  <h4 className="text-xs uppercase tracking-[0.4em] text-slate-500">A eviter</h4>
-                  <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                    {(guide.tips?.dont || []).map((tip) => (
-                      <li key={tip}>- {String(tip)}</li>
+                </section>
+                <section className="flex flex-col rounded-[1.75rem] border border-amber-200/60 bg-gradient-to-br from-amber-50/90 to-white p-5 shadow-[0_8px_28px_rgba(217,119,6,0.08)] sm:p-6">
+                  <div className="flex items-center gap-2.5 border-b border-amber-100/90 pb-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-800 ring-1 ring-amber-200/70">
+                      <AlertTriangle className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    </span>
+                    <div>
+                      <h4 className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-950/90">À éviter</h4>
+                      <p className="text-[11px] text-amber-800/75">Pièges & bonnes pratiques</p>
+                    </div>
+                  </div>
+                  <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-800">
+                    {(displayGuide.tips?.dont || []).map((tip, i) => (
+                      <li key={`dont-${i}-${String(tip).slice(0, 20)}`} className="flex gap-2.5">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                        <span>{String(tip)}</span>
+                      </li>
                     ))}
                   </ul>
-                </div>
+                </section>
               </div>
-              <div>
-                <h4 className="text-xs uppercase tracking-[0.4em] text-slate-500">Activites proposees</h4>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(guide.suggestedActivities || []).map((a) => (
-                    <span key={a} className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
+
+              <section className="rounded-[1.75rem] border border-indigo-200/50 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/40 p-5 shadow-[0_8px_32px_rgba(67,56,202,0.06)] sm:p-6">
+                <div className="flex items-center gap-2.5 border-b border-indigo-100/80 pb-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200/60">
+                    <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                  </span>
+                  <div>
+                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">Activités proposées</h4>
+                    <p className="text-[11px] text-slate-500">Idées pour ton séjour</p>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2.5">
+                  {(displayGuide.suggestedActivities || []).map((a, i) => (
+                    <span
+                      key={`act-${i}-${String(a).slice(0, 20)}`}
+                      className="inline-flex max-w-full items-center rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
+                    >
                       {String(a)}
                     </span>
                   ))}
                 </div>
-              </div>
+              </section>
+
+              {SHOW_DESTINATION_ITINERARY_CTA ? (
+                <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
+                  <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 ring-1 ring-slate-200/80">
+                        <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                      </span>
+                      <div>
+                        <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                          Programme sur mesure
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Indique tes dates sur place — génération à la demande (max. 14 jours).
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setItineraryError("");
+                        setItineraryModalOpen(true);
+                      }}
+                      disabled={itineraryLoading || geminiLoading}
+                      className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                    >
+                      {itineraryLoading ? "Génération…" : "Générer un programme"}
+                    </button>
+                  </div>
+                  {itineraryError && !itineraryModalOpen ? (
+                    <p className="mt-3 text-xs text-rose-600">
+                      {SHOW_GEMINI_DEV_UI ? itineraryError : userFacingItineraryErrorMessage(itineraryError)}
+                    </p>
+                  ) : null}
+                  {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
+                    <ul className="mt-5 space-y-4">
+                      {generatedDayIdeas.map((d) => (
+                        <li
+                          key={String(d?.day) + String(d?.title)}
+                          className="relative overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/50 py-4 pl-4 pr-4 shadow-sm ring-1 ring-slate-100/90 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-2xl before:bg-gradient-to-b before:from-sky-500 before:to-indigo-500 before:content-['']"
+                        >
+                          <p className="text-sm font-semibold text-slate-900">
+                            Jour {Number(d?.day) || "?"} — {String(d?.title || "")}
+                          </p>
+                          {Array.isArray(d?.bullets) && d.bullets.length > 0 ? (
+                            <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3 text-sm text-slate-700">
+                              {d.bullets.map((b, j) => (
+                                <li key={j} className="flex gap-2 pl-0.5">
+                                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" aria-hidden />
+                                  <span className="leading-relaxed">{String(b)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : generatedDayIdeas === null ? (
+                    <p className="mt-4 text-center text-xs text-slate-400">
+                      Clique sur « Générer un programme », choisis tes dates, puis valide.
+                    </p>
+                  ) : null}
+                </section>
+              ) : (
+                <section className="rounded-[1.75rem] border border-dashed border-slate-300/90 bg-slate-50/80 p-5 sm:p-6">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-200/80 text-slate-600">
+                      <Lock className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    </span>
+                    <div>
+                      <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-700">
+                        Programme sur mesure — Premium
+                      </h4>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                        Cette fonction sera réservée aux abonnés Premium. Pour le développement, active{" "}
+                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">VITE_CREATOR_ITINERARY=true</code> et{" "}
+                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">GEMINI_CREATOR_ITINERARY=true</code> dans{" "}
+                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">.env.local</code>.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
           </>
         ) : (
@@ -3047,14 +3827,95 @@ function DestinationGuideView({
         )}
       </div>
 
-      {addModalOpen && guide ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">
-                Ajouter {String(guide.city)}
+      {itineraryModalOpen && displayGuide && SHOW_DESTINATION_ITINERARY_CTA ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="itinerary-modal-title"
+            className="w-full max-w-md rounded-[2rem] border border-slate-200/80 bg-white p-6 shadow-2xl sm:p-8"
+          >
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 id="itinerary-modal-title" className="text-sm font-semibold text-slate-900">
+                Programme à {String(displayGuide.city)}
               </h2>
               <button
+                type="button"
+                onClick={() => setItineraryModalOpen(false)}
+                className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Fermer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="mb-4 text-xs text-slate-600">
+              Choisis la période de ton séjour sur place. Nous générons un fil jour par jour (jusqu’à 14 jours).
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                Début
+                <input
+                  type="date"
+                  value={programStartDate}
+                  onChange={(e) => setProgramStartDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+              <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                Fin
+                <input
+                  type="date"
+                  value={programEndDate}
+                  onChange={(e) => setProgramEndDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+            </div>
+            {(() => {
+              const prev = countInclusiveTripDaysClient(programStartDate, programEndDate);
+              return (
+                <p className="mt-3 text-xs text-slate-600">
+                  {prev.ok
+                    ? `Durée : ${prev.days} jour(s) inclus.`
+                    : prev.error || "Vérifie les dates."}
+                </p>
+              );
+            })()}
+            {itineraryError ? (
+              <p className="mt-3 text-xs leading-relaxed text-rose-600">
+                {SHOW_GEMINI_DEV_UI ? itineraryError : userFacingItineraryErrorMessage(itineraryError)}
+              </p>
+            ) : null}
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setItineraryModalOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerateItinerary}
+                disabled={itineraryLoading}
+                className="rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50"
+              >
+                {itineraryLoading ? "Génération…" : "Générer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {addModalOpen && displayGuide ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+          <div className="max-h-[min(90vh,40rem)] w-full max-w-lg overflow-y-auto rounded-[3rem] bg-white/95 p-6 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">
+                Ajouter {String(displayGuide.city)}
+              </h2>
+              <button
+                type="button"
                 onClick={() => setAddModalOpen(false)}
                 className="rounded-full p-2 hover:bg-slate-100"
               >
@@ -3078,19 +3939,181 @@ function DestinationGuideView({
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
             </div>
+            <div className="mt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
+                Activités à inclure
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Coche les activités puis, pour chacune, choisis le <span className="font-medium text-slate-600">jour</span> du
+                séjour et l’<span className="font-medium text-slate-600">heure</span> — elles apparaissent ainsi dans le
+                calendrier.
+              </p>
+              <div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3">
+                {(displayGuide.suggestedActivities || []).length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    Aucune activité proposée pour cette destination — tu pourras en ajouter dans le planning.
+                  </p>
+                ) : (
+                  (displayGuide.suggestedActivities || []).map((a, i) => {
+                    const label = String(a);
+                    const checked = pickedActivityIndices.has(i);
+                    return (
+                      <label
+                        key={`pick-act-${i}-${label.slice(0, 32)}`}
+                        className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-100 transition hover:bg-slate-50/90"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setPickedActivityIndices((prev) => {
+                              const n = new Set(prev);
+                              if (n.has(i)) {
+                                n.delete(i);
+                                pickedActivityLabelsRef.current.delete(i);
+                              } else {
+                                n.add(i);
+                                pickedActivityLabelsRef.current.set(i, label);
+                              }
+                              return n;
+                            });
+                          }}
+                          className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span className="text-sm leading-snug text-slate-800">{label}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              {sortedPickedIndices.length > 0 ? (
+                <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90">
+                    Jour & heure dans le calendrier
+                  </p>
+                  {tripDatesForModal.length === 0 ? (
+                    <p className="mt-2 text-xs text-rose-600">Indique des dates de séjour valides (début ≤ fin).</p>
+                  ) : (
+                    <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+                      {sortedPickedIndices.map((actIndex, j) => {
+                        const label = String(
+                          pickedActivityLabelsRef.current.get(actIndex) ||
+                            (displayGuide.suggestedActivities || [])[actIndex] ||
+                            ""
+                        );
+                        const defDate =
+                          tripDatesForModal[j % tripDatesForModal.length] || startDate;
+                        const defTime =
+                          TRIP_SCHEDULE_TIME_OPTIONS[j % TRIP_SCHEDULE_TIME_OPTIONS.length];
+                        const sched = activitySchedule[String(actIndex)] || {};
+                        let dateVal = sched.date || defDate;
+                        if (!tripDatesForModal.includes(dateVal)) dateVal = defDate;
+                        const timeVal = normalizeActivityTimeHHMM(sched.time) || defTime;
+                        return (
+                          <li
+                            key={`sched-${actIndex}-${label.slice(0, 24)}`}
+                            className="flex flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
+                          >
+                            <span className="min-w-0 flex-1 text-xs font-medium leading-snug text-slate-800">
+                              {label}
+                            </span>
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <select
+                                aria-label={`Jour pour ${label}`}
+                                value={dateVal}
+                                onChange={(e) =>
+                                  setActivitySchedule((prev) => ({
+                                    ...prev,
+                                    [String(actIndex)]: {
+                                      ...prev[String(actIndex)],
+                                      date: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-800"
+                              >
+                                {tripDatesForModal.map((d) => (
+                                  <option key={d} value={d}>
+                                    {new Date(`${d}T12:00:00`).toLocaleDateString("fr-FR", {
+                                      weekday: "short",
+                                      day: "numeric",
+                                      month: "short",
+                                    })}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                aria-label={`Heure pour ${label}`}
+                                value={timeVal}
+                                onChange={(e) =>
+                                  setActivitySchedule((prev) => ({
+                                    ...prev,
+                                    [String(actIndex)]: {
+                                      ...prev[String(actIndex)],
+                                      time: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-800"
+                              >
+                                {TRIP_SCHEDULE_TIME_OPTIONS.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </div>
             <button
+              type="button"
+              disabled={
+                creatingVoyage || (sortedPickedIndices.length > 0 && tripDatesForModal.length === 0)
+              }
               onClick={async () => {
-                const ok = await onCreateTrip({
-                  title: String(guide.city || ""),
-                  start_date: startDate,
-                  end_date: endDate,
+                if (creatingVoyage) return;
+                setCreatingVoyage(true);
+                const suggested = displayGuide.suggestedActivities || [];
+                const selectedActivitiesWithSchedule = sortedPickedIndices.map((actIndex, j) => {
+                  const defDate =
+                    tripDatesForModal[j % Math.max(1, tripDatesForModal.length)] || startDate;
+                  const defTime =
+                    TRIP_SCHEDULE_TIME_OPTIONS[j % TRIP_SCHEDULE_TIME_OPTIONS.length];
+                  const sched = activitySchedule[String(actIndex)] || {};
+                  let date = sched.date || defDate;
+                  if (tripDatesForModal.length > 0 && !tripDatesForModal.includes(date)) date = defDate;
+                  const time = normalizeActivityTimeHHMM(sched.time) || defTime;
+                  const rawTitle =
+                    pickedActivityLabelsRef.current.get(actIndex) ||
+                    suggested[actIndex] ||
+                    `Activite ${j + 1}`;
+                  const title = String(rawTitle).trim() || `Activite ${j + 1}`;
+                  return { title, date, time };
                 });
-                if (ok) setAddModalOpen(false);
+                try {
+                  const ok = await onCreateTrip({
+                    title: String(displayGuide.city || ""),
+                    destination: String(displayGuide.city || ""),
+                    start_date: startDate,
+                    end_date: endDate,
+                    selectedActivitiesWithSchedule,
+                    selectedActivities: selectedActivitiesWithSchedule.map((r) => r.title),
+                  });
+                  if (ok) setAddModalOpen(false);
+                } finally {
+                  setCreatingVoyage(false);
+                }
               }}
-              className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+              className={`mt-5 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
               style={GLASS_ACCENT_STYLE}
             >
-              Creer ce voyage
+              {creatingVoyage ? "Creation…" : "Creer ce voyage"}
             </button>
           </div>
         </div>
@@ -3219,24 +4242,29 @@ function PlannerView({
     return rows;
   }, [monthCursor]);
 
-  const selectedTripIdSafe = String(selectedTrip?.id || "");
+  const selectedTripIdSafe = String(selectedTrip?.id || "").trim();
   const dayActivities = (activities || [])
     .filter(
       (a) =>
-        String(a?.trip_id || "") === selectedTripIdSafe &&
-        toYMD(a?.date_key || a?.date, "") === selectedDateKey
+        String(a?.trip_id || "").trim() === selectedTripIdSafe &&
+        toYMDLoose(a?.date_key || a?.date) === selectedDateKey
     )
     .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
 
   const activityCountByDay = useMemo(() => {
     const map = {};
     (activities || []).forEach((a) => {
-      if (String(a?.trip_id || "") !== selectedTripIdSafe) return;
-      const key = toYMD(a?.date_key || a?.date, "");
+      if (String(a?.trip_id || "").trim() !== selectedTripIdSafe) return;
+      const key = toYMDLoose(a?.date_key || a?.date);
       if (!key) return;
       map[key] = (map[key] || 0) + 1;
     });
     return map;
+  }, [activities, selectedTripIdSafe]);
+
+  const tripActivityTotal = useMemo(() => {
+    if (!selectedTripIdSafe) return 0;
+    return (activities || []).filter((a) => String(a?.trip_id || "").trim() === selectedTripIdSafe).length;
   }, [activities, selectedTripIdSafe]);
 
   const inTrip = (dateStr) => {
@@ -3318,13 +4346,19 @@ function PlannerView({
               );
             })}
           </div>
+          <p className="mt-3 text-center text-[10px] leading-relaxed text-slate-500">
+            Chiffre en haut à droite d&apos;une case = nombre d&apos;activités ce jour. Le point en bas = jour inclus dans
+            un voyage (pas forcément d&apos;activité).
+          </p>
         </div>
 
         <div className="order-2 px-1 py-1 lg:order-2">
           <h3 className="mb-3 text-xs uppercase tracking-[0.4em] text-slate-500">{selectedDate}</h3>
           <button
             onClick={() => {
-              const index = (activities || []).filter((a) => String(a.date) === selectedDate).length;
+              const index = (activities || []).filter(
+                (a) => toYMDLoose(a?.date_key || a?.date) === selectedDateKey
+              ).length;
               setActivityTime(slots[index % slots.length]);
               setActivityModalOpen(true);
             }}
@@ -3389,7 +4423,22 @@ function PlannerView({
                   </button>
                 </div>
               </div>
-            )) : <p className="text-sm text-slate-500">Aucune activite.</p>}
+            )) : (
+              <div className="space-y-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
+                <p className="font-medium text-slate-700">Aucune activité à cette date.</p>
+                {tripActivityTotal === 0 ? (
+                  <p>
+                    Aucune activité n&apos;est enregistrée pour ce voyage. Après création depuis la recherche, regarde s&apos;il
+                    y a un message d&apos;erreur en haut de l&apos;écran (droits Supabase sur la table des activités, etc.).
+                  </p>
+                ) : (
+                  <p>
+                    Ce jour n&apos;a pas d&apos;activité, mais le voyage en a sur d&apos;autres dates : clique les jours du
+                    séjour où tu vois un <span className="font-medium text-slate-800">chiffre</span> sur la case.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -4188,6 +5237,7 @@ export default function App() {
   const [tricountTrip, setTricountTrip] = useState(null);
   const [editingTrip, setEditingTrip] = useState(null);
   const [tripToDelete, setTripToDelete] = useState(null);
+  const [deletingTrip, setDeletingTrip] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
@@ -4211,6 +5261,13 @@ export default function App() {
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
   const [budgetUpcomingOpen, setBudgetUpcomingOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
+
+  /** Évite de réinitialiser le jour du planning à chaque refetch de `trips` (même voyage, nouvelle référence d'objet). */
+  const plannerSyncedTripIdRef = useRef("");
+  /** Ids d'activités insérées récemment — fusion avec loadActivities pour éviter l'écrasement par une lecture vide / en retard. */
+  const activityInsertGraceRef = useRef(new Map());
+  /** Évite double insertion voyage (double clic, double appel concurrent). */
+  const createTripInFlightRef = useRef(false);
 
   const selectedTrip = trips.find((t) => String(t.id) === String(selectedTripId)) || null;
   const uiTitle =
@@ -4286,6 +5343,16 @@ export default function App() {
     const fresh = (freshTripActivities || []).map(normalizeActivity);
     setActivities((prev) => {
       const keep = (prev || []).filter((a) => String(a?.trip_id || "") !== targetTripId);
+      if (fresh.length === 0) {
+        const now = Date.now();
+        const lagOnly = (prev || []).filter((a) => {
+          if (String(a?.trip_id || "") !== targetTripId) return false;
+          const id = String(a.id || "");
+          const t0 = activityInsertGraceRef.current.get(id);
+          return id && t0 != null && now - t0 < ACTIVITY_INSERT_GRACE_MS;
+        });
+        return [...keep, ...lagOnly];
+      }
       return [...keep, ...fresh];
     });
   };
@@ -4468,12 +5535,11 @@ export default function App() {
   useEffect(() => {
     const loadTrips = async () => {
       try {
-        const selects = ["*", "id,title,start_date", "id,title", "id"];
         let data = null;
         let lastError = null;
 
-        for (let i = 0; i < selects.length; i += 1) {
-          const { data: d, error } = await supabase.from("trips").select(selects[i]);
+        for (let i = 0; i < TRIPS_SELECT_ATTEMPTS.length; i += 1) {
+          const { data: d, error } = await supabase.from("trips").select(TRIPS_SELECT_ATTEMPTS[i]);
           if (!error) {
             data = d;
             lastError = null;
@@ -4484,8 +5550,7 @@ export default function App() {
 
         if (lastError) throw lastError;
 
-        const normalized = (data || []).map(normalizeTrip);
-        const visibleTrips = normalized.filter((trip) => userCanSeeTrip(trip, session));
+        const visibleTrips = visibleTripsForSession(data, session);
         setTrips(visibleTrips);
         if (visibleTrips.length > 0 && !selectedTripId) setSelectedTripId(String(visibleTrips[0].id));
         if (visibleTrips.length === 0) setSelectedTripId("");
@@ -4500,7 +5565,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, loadTrips)
       .subscribe();
     return () => supabase.removeChannel(tripChannel);
-  }, [selectedTripId, session]);
+  }, [session]);
 
   useEffect(() => {
     const loadActivities = async () => {
@@ -4515,7 +5580,8 @@ export default function App() {
           .select("*")
           .in("trip_id", tripIds);
         if (error) throw error;
-        setActivities((data || []).map(normalizeActivity));
+        const fetched = (data || []).map(normalizeActivity);
+        setActivities((prev) => mergeActivitiesFromServer(prev, fetched, tripIds, activityInsertGraceRef));
       } catch (e) {
         setNotice(String(e?.message || "Erreur chargement activites"));
       }
@@ -4530,11 +5596,16 @@ export default function App() {
   }, [trips, session]);
 
   useEffect(() => {
-    if (!selectedTrip) return;
+    if (!selectedTripId || !selectedTrip) {
+      if (!selectedTripId) plannerSyncedTripIdRef.current = "";
+      return;
+    }
+    const id = String(selectedTripId);
+    if (plannerSyncedTripIdRef.current === id) return;
+    plannerSyncedTripIdRef.current = id;
     const tripStart = toYMD(selectedTrip.start_date, getTodayStr());
-    const targetDate = tripStart;
-    setSelectedDate(targetDate);
-    const d = new Date(`${targetDate}T00:00:00`);
+    setSelectedDate(tripStart);
+    const d = new Date(`${tripStart}T12:00:00`);
     if (!Number.isNaN(d.getTime())) {
       setMonthCursor(new Date(d.getFullYear(), d.getMonth(), 1));
     }
@@ -4733,6 +5804,121 @@ export default function App() {
     }
   };
 
+  const insertActivitiesFromGuideSelection = async (tripId, items, startYmd, endYmd, userId) => {
+    const raw = Array.isArray(items) ? items : [];
+    const normalizedItems = raw
+      .map((item) => {
+        if (typeof item === "string") {
+          return { title: String(item || "").trim(), date: "", time: "" };
+        }
+        return {
+          title: String(item?.title || "").trim(),
+          date:
+            item?.date != null && String(item.date).trim() !== ""
+              ? toYMDLoose(item.date) || toYMD(item.date, "")
+              : "",
+          time: String(item?.time || "").trim(),
+        };
+      })
+      .filter((x) => x.title);
+    if (!tripId || normalizedItems.length === 0) return true;
+    const tripDayList = listTripDatesInclusive(startYmd, endYmd);
+    const tripDaySet = new Set(tripDayList);
+    const fallbackDates = assignActivityDatesRoundRobin(startYmd, endYmd, normalizedItems.length);
+    const insertErrorMsgs = [];
+    for (let i = 0; i < normalizedItems.length; i += 1) {
+      const { title, date: inDate, time: inTime } = normalizedItems[i];
+      const safeDate =
+        inDate && tripDaySet.has(inDate)
+          ? inDate
+          : toYMD(fallbackDates[i], toYMD(startYmd, getTodayStr()));
+      const assignedTime =
+        normalizeActivityTimeHHMM(inTime) || String(slots[i % slots.length]).slice(0, 5);
+      const activityPrompt = `${title} ${safeDate} ${assignedTime}`;
+      const fallbackPhoto =
+        seededPicsumUrl(activityPrompt, 1200, 800) || seededPicsumUrl(`${title}|${tripId}`, 1200, 800);
+      let actPayload = {
+        trip_id: String(tripId),
+        date: safeDate,
+        date_key: safeDate,
+        activity_date: safeDate,
+        time: assignedTime,
+        title,
+        name: title,
+        description: "",
+        details: "",
+        notes: "",
+        cost: 0,
+        location: "",
+        owner_id: String(userId || ""),
+        photo_url: String(fallbackPhoto || ""),
+        image_url: String(fallbackPhoto || ""),
+      };
+      let insertFailed = true;
+      let lastInsertErr = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const { data: insRow, error: actErr } = await supabase
+          .from("activities")
+          .insert(actPayload)
+          .select("id")
+          .limit(1);
+        if (!actErr) {
+          insertFailed = false;
+          const newId = String(insRow?.[0]?.id || "");
+          if (newId) activityInsertGraceRef.current.set(newId, Date.now());
+          setActivities((prev) => [
+            ...(prev || []).filter((a) => String(a.id) !== newId),
+            normalizeActivity({
+              id: newId,
+              trip_id: String(tripId),
+              date: safeDate,
+              date_key: safeDate,
+              time: assignedTime,
+              title,
+              name: title,
+              cost: 0,
+              location: "",
+              description: "",
+              details: "",
+              notes: "",
+              photo_url: String(actPayload.photo_url || ""),
+              image_url: String(actPayload.image_url || ""),
+            }),
+          ]);
+          break;
+        }
+        lastInsertErr = actErr;
+        const msg = String(actErr?.message || "");
+        const m1 = msg.match(/Could not find the '([^']+)' column/i);
+        const m2 = msg.match(/column "([^"]+)" does not exist/i);
+        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+        if (missing && Object.prototype.hasOwnProperty.call(actPayload, missing)) {
+          const { [missing]: _removed, ...rest } = actPayload;
+          actPayload = rest;
+          continue;
+        }
+        break;
+      }
+      if (insertFailed && lastInsertErr) {
+        insertErrorMsgs.push(String(lastInsertErr.message || "Impossible d'enregistrer une activite."));
+      }
+    }
+    if (insertErrorMsgs.length > 0) {
+      setNotice(
+        insertErrorMsgs.length === 1
+          ? insertErrorMsgs[0]
+          : `${insertErrorMsgs.length} activite(s) non enregistree(s). ${insertErrorMsgs[0]}`
+      );
+    }
+    try {
+      const fresh = await fetchActivitiesRowsForTrip(tripId);
+      replaceTripActivitiesInState(String(tripId), fresh);
+    } catch (_e) {
+      /* ignore */
+    }
+    return insertErrorMsgs.length === 0;
+  };
+
   const createTrip = async (payload) => {
     const safeTitle = formatCityName(payload?.title || "");
     if (!safeTitle) {
@@ -4743,6 +5929,11 @@ export default function App() {
       setNotice("Date de debut invalide.");
       return false;
     }
+    if (createTripInFlightRef.current) {
+      setNotice("Creation du voyage en cours…");
+      return false;
+    }
+    createTripInFlightRef.current = true;
     try {
       // Certains schémas ont owner_id NOT NULL.
       // Avec signInAnonymously(), l'utilisateur est "authenticated" et a un id.
@@ -4777,21 +5968,50 @@ export default function App() {
       // If the DB schema cache is stale or columns are missing,
       // retry the insert while removing the missing column from payload.
       for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { error } = await supabase.from("trips").insert(body);
+        const { data: insertedRows, error } = await supabase.from("trips").insert(body).select("id");
         if (!error) {
+          const newTripId = String(insertedRows?.[0]?.id || "").trim();
+          const withSchedule = Array.isArray(payload?.selectedActivitiesWithSchedule)
+            ? payload.selectedActivitiesWithSchedule
+                .map((row) => {
+                  const title = String(row?.title || "").trim();
+                  const dateRaw = row?.date;
+                  const dateYmd =
+                    dateRaw != null && String(dateRaw).trim() !== ""
+                      ? toYMDLoose(dateRaw) || toYMD(dateRaw, "")
+                      : "";
+                  return { title, date: dateYmd, time: String(row?.time || "").trim() };
+                })
+                .filter((r) => r.title)
+            : [];
+          const selectedActs = Array.isArray(payload?.selectedActivities)
+            ? payload.selectedActivities.map((x) => String(x || "").trim()).filter(Boolean)
+            : [];
+          const itemsToInsert =
+            withSchedule.length > 0 ? withSchedule : selectedActs.map((t) => ({ title: t, date: "", time: "" }));
+          let activitiesInsertOk = true;
+          if (newTripId && itemsToInsert.length > 0) {
+            activitiesInsertOk = await insertActivitiesFromGuideSelection(
+              newTripId,
+              itemsToInsert,
+              String(body.start_date || ""),
+              String(body.end_date || ""),
+              ownerId
+            );
+          }
+
           setTripModalOpen(false);
           // Pas de message "success" : on laisse l'UI se mettre à jour via le fetch/les subscriptions.
-          setNotice("");
+          if (activitiesInsertOk) setNotice("");
           // Force immediate UI refresh (subscription can lag).
           try {
-            const selects = ["*", "id,title,start_date", "id,title", "id"];
             let data = null;
             let lastError = null;
 
-            for (let i = 0; i < selects.length; i += 1) {
+            for (let i = 0; i < TRIPS_SELECT_ATTEMPTS.length; i += 1) {
               const { data: d, error: selErr } = await supabase
                 .from("trips")
-                .select(selects[i]);
+                .select(TRIPS_SELECT_ATTEMPTS[i]);
               if (!selErr) {
                 data = d;
                 lastError = null;
@@ -4802,15 +6022,15 @@ export default function App() {
 
             if (lastError) throw lastError;
 
-            const normalized = (data || []).map(normalizeTrip);
-            setTrips(normalized);
+            const visibleAfterCreate = visibleTripsForSession(data, session);
+            setTrips(visibleAfterCreate);
             // Select the newly created trip so the Calendar marks appear immediately.
             try {
               const wantedStart = toYMD(body.start_date, "");
               const wantedEnd = toYMD(body.end_date, "");
               const wantedTitle = String(body.destination || body.title || safeTitle || "");
               const match =
-                normalized.find((t) => {
+                visibleAfterCreate.find((t) => {
                   const tStart = String(t.start_date || "");
                   const tEnd = String(t.end_date || "");
                   const tTitle = String(t.title || "");
@@ -4820,12 +6040,29 @@ export default function App() {
                     (tTitle === wantedTitle || tTitle.toLowerCase() === wantedTitle.toLowerCase())
                   );
                 }) ||
-                normalized.find((t) => String(t.start_date || "") === wantedStart && String(t.end_date || "") === wantedEnd) ||
-                normalized[0];
+                visibleAfterCreate.find((t) => String(t.start_date || "") === wantedStart && String(t.end_date || "") === wantedEnd) ||
+                visibleAfterCreate[0];
 
-              if (match?.id) setSelectedTripId(String(match.id));
+              if (match?.id) {
+                setSelectedTripId(String(match.id));
+                const tripStart = toYMD(body.start_date, getTodayStr());
+                setSelectedDate(tripStart);
+                const md = new Date(`${tripStart}T12:00:00`);
+                if (!Number.isNaN(md.getTime())) {
+                  setMonthCursor(new Date(md.getFullYear(), md.getMonth(), 1));
+                }
+              }
             } catch (_matchErr) {
-              if (normalized.length > 0) setSelectedTripId(String(normalized[0].id));
+              if (visibleAfterCreate.length > 0) setSelectedTripId(String(visibleAfterCreate[0].id));
+            }
+
+            if (newTripId && itemsToInsert.length > 0) {
+              try {
+                const actRows = await fetchActivitiesRowsForTrip(newTripId);
+                replaceTripActivitiesInState(newTripId, actRows);
+              } catch (_actRefetchErr) {
+                /* ignore */
+              }
             }
           } catch (_refreshErr) {
             // keep success message; user will retry once
@@ -4858,6 +6095,8 @@ export default function App() {
       }
     } catch (e) {
       setNotice(String(e?.message || "Erreur creation voyage"));
+    } finally {
+      createTripInFlightRef.current = false;
     }
     return false;
   };
@@ -4870,7 +6109,7 @@ export default function App() {
     try {
       const userId = String(session?.user?.id || "");
       const safeSelectedDate = toYMD(selectedDate, getTodayStr());
-      const index = (activities || []).filter((a) => toYMD(a?.date_key || a?.date, "") === safeSelectedDate).length;
+      const index = (activities || []).filter((a) => toYMDLoose(a?.date_key || a?.date) === safeSelectedDate).length;
       const manualTime = String(input?.time || "").trim();
       const assignedTime = manualTime || slots[index % slots.length];
       const activityPrompt = String(
@@ -4915,6 +6154,7 @@ export default function App() {
           .limit(1);
         if (!error) {
           const insertedId = String(inserted?.[0]?.id || "");
+          if (insertedId) activityInsertGraceRef.current.set(insertedId, Date.now());
           // Immediate refresh to avoid waiting for realtime sync.
           try {
             const { data: fresh, error: freshErr } = await supabase
@@ -5254,21 +6494,51 @@ export default function App() {
   };
 
   const deleteTrip = async (trip) => {
+    if (deletingTrip) return;
     setTripToDelete(trip);
   };
 
   const confirmDeleteTrip = async () => {
-    if (!tripToDelete) return;
+    if (!tripToDelete || deletingTrip) return;
+    const tid = tripToDelete.id;
+    if (tid == null || tid === "") return;
+    const idStr = String(tid);
+    setDeletingTrip(true);
     try {
-      const { error } = await supabase.from("trips").delete().eq("id", tripToDelete.id);
+      // Enfants d’abord : sinon la FK peut faire échouer la suppression ou laisser l’UI attendre le realtime.
+      const childTables = ["activity_votes", "chat_messages", "activities"];
+      for (const table of childTables) {
+        await supabase.from(table).delete().eq("trip_id", idStr);
+      }
+      const { error } = await supabase.from("trips").delete().eq("id", tid);
       if (error) throw error;
-      setNotice("");
-      if (String(selectedTripId) === String(tripToDelete.id)) {
+
+      setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
+      setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
+      setChatMessagesByTrip((prev) => {
+        const next = { ...(prev || {}) };
+        delete next[idStr];
+        return next;
+      });
+      if (String(chatTripId) === idStr) {
+        setChatTripId("");
+        setChatMessages([]);
+        setActivityVotes([]);
+        setChatActivities([]);
+      }
+      if (String(selectedTripId) === idStr) {
         setSelectedTripId("");
       }
+      setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
+
+      setNotice("");
       setTripToDelete(null);
     } catch (e) {
       setNotice(String(e?.message || "Erreur suppression voyage"));
+    } finally {
+      setDeletingTrip(false);
     }
   };
 
@@ -5348,7 +6618,7 @@ export default function App() {
             onBack={() => setActiveTab("trips")}
             onCreateTrip={async (payload) => {
               const ok = await createTrip(payload);
-              if (ok) setActiveTab("trips");
+              if (ok) setActiveTab("planner");
               return ok;
             }}
           />
@@ -5631,7 +6901,10 @@ export default function App() {
       <ConfirmDeleteModal
         open={!!tripToDelete}
         trip={tripToDelete}
-        onCancel={() => setTripToDelete(null)}
+        deleting={deletingTrip}
+        onCancel={() => {
+          if (!deletingTrip) setTripToDelete(null);
+        }}
         onConfirm={confirmDeleteTrip}
       />
       <AccountModal
