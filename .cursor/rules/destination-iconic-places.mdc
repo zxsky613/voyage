@@ -1,0 +1,15 @@
+---
+description: Logique lieux incontournables / guide destination — ne pas modifier sans demande explicite
+alwaysApply: true
+---
+
+# Lieux incontournables & guide destination (figé)
+
+Sauf **demande explicite** de l’utilisateur, **ne modifie pas** :
+
+- **`iconicPlacesData.js`** — listes de repères par ville (catalogue)
+- **`placeGuards.js`** — `sanitizeMustSeePlaces` et règles associées
+- **`App.jsx`** — `buildExplorationPlacesFallback`, `getIconicPlacesFallback`, `clampPlacesList`, `mergeDestinationGuideWithGemini` (fusion du champ `places`), les `places` dans `fetchDestinationGuide` et `buildInstantDestinationGuide`, absence de titres Wikipédia comme source des lieux
+- **`gemini-dev-plugin.js`** — prompt, `systemInstruction`, température et post-traitement (`sanitizeMustSeePlaces`) de la route **`/api/gemini/suggestions`** pour le tableau **`places`**
+
+Tu peux corriger un **bug bloquant** ou une **coquille** signalée par l’utilisateur sur une zone précise. Ne **refactore** pas, ne **simplifie** pas et ne **réorganise** pas ce périmètre pour « améliorer » sans instruction claire.

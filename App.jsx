@@ -44,6 +44,10 @@ import {
   normalizeCityDroneKey,
 } from "./cityDroneImagePrompt.js";
 import { WIKIMEDIA_CURATED_CITY_HEROES } from "./cityWikimediaHeroes.js";
+import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
+import { getAppDateLocale } from "./i18n/dateLocale.js";
+import { catalogCityHitsForLocalizedQuery, displayCityForLocale } from "./i18n/cityDisplay.js";
+import { activityTitleSaveValue, displayActivityTitleForLocale } from "./i18n/activityDisplay.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -121,7 +125,7 @@ function formatDate(value) {
   if (!s) return "-";
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+  return d.toLocaleDateString(getAppDateLocale(), { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function getInviteApiUrl() {
@@ -331,6 +335,15 @@ function normalizeTextForSearch(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
+}
+
+/** Open-Meteo Geocoding : langue des résultats (aligné sur les codes app). */
+function openMeteoLanguageParam(appLang) {
+  const c = String(appLang || "fr")
+    .toLowerCase()
+    .split("-")[0]
+    .slice(0, 2);
+  return ["fr", "en", "de", "es", "it", "zh"].includes(c) ? c : "en";
 }
 
 const CITY_CATALOG = [
@@ -620,8 +633,9 @@ function mergeCitySuggestionLists(localList, remoteList, max = 10) {
 }
 
 function getCitySuggestions(input) {
+  const fromLocalized = catalogCityHitsForLocalizedQuery(input);
   const q = normalizeTextForSearch(input);
-  if (q.length < 2) return [];
+  if (q.length < 2 && fromLocalized.length === 0) return [];
   const groupsHit = countryGroupsMatchingQuery(q);
   const fromCountry = citiesForCountrySearchQuery(q);
   /** Pas de fuzzy global sur le catalogue quand on tape un pays : évite Bali pour « italie », etc. */
@@ -631,7 +645,7 @@ function getCitySuggestions(input) {
         CITY_SEARCH_ENTRIES.filter((e) => normalizeTextForSearch(e.label) === q).map((e) => e.canonical)
       ),
     ];
-    return mergeCitySuggestionLists(fromCountry, exactCanon, 12);
+    return mergeCitySuggestionLists(fromLocalized, mergeCitySuggestionLists(fromCountry, exactCanon, 12), 12);
   }
   const ranked = CITY_SEARCH_ENTRIES.map((entry) => {
     const c = normalizeTextForSearch(entry.label);
@@ -651,25 +665,26 @@ function getCitySuggestions(input) {
 
   const strict = [...new Set(ranked.filter((x) => x.score >= 45).map((x) => x.city))].slice(0, 8);
   const mergedStrict = mergeCitySuggestionLists(fromCountry, strict, 12);
-  if (mergedStrict.length > 0) return mergedStrict;
+  if (mergedStrict.length > 0) return mergeCitySuggestionLists(fromLocalized, mergedStrict, 12);
 
   // Fallback: always keep a few closest results, to avoid empty suggestion list.
   const loose = [...new Set(ranked.filter((x) => x.score > 0).map((x) => x.city))].slice(0, 5);
-  return mergeCitySuggestionLists(fromCountry, loose, 12);
+  return mergeCitySuggestionLists(fromLocalized, mergeCitySuggestionLists(fromCountry, loose, 12), 12);
 }
 
 const OPEN_METEO_ROWS_CACHE = {};
 
-async function queryOpenMeteoLocations(input, limit = 12) {
+async function queryOpenMeteoLocations(input, limit = 12, appLanguage = "fr") {
   const q = normalizeCityInput(input);
   if (q.length < 2) return [];
   const lim = Math.min(Math.max(Number(limit) || 12, 1), 20);
-  const cacheKey = `${normalizeTextForSearch(q)}::${lim}`;
+  const oml = openMeteoLanguageParam(appLanguage);
+  const cacheKey = `${normalizeTextForSearch(q)}::${lim}::${oml}`;
   if (OPEN_METEO_ROWS_CACHE[cacheKey]) return OPEN_METEO_ROWS_CACHE[cacheKey];
   try {
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
       q
-    )}&count=${lim}&language=fr&format=json`;
+    )}&count=${lim}&language=${encodeURIComponent(oml)}&format=json`;
     const resp = await fetch(url);
     if (!resp.ok) {
       OPEN_METEO_ROWS_CACHE[cacheKey] = [];
@@ -703,14 +718,14 @@ function formatGeoResultLabel(row) {
   return parts.join(", ");
 }
 
-async function fetchWorldwideCitySuggestions(input, limit = 8) {
+async function fetchWorldwideCitySuggestions(input, limit = 8, appLanguage = "fr") {
   const q = normalizeCityInput(input);
   if (q.length < 2) return [];
   const qn = normalizeTextForSearch(q);
   const lim = Math.min(Math.max(Number(limit) || 8, 1), 12);
   const countryHit = countryGroupsMatchingQuery(qn).length > 0;
   const fetchCount = Math.min(20, Math.max(lim, 10) + (countryHit ? 14 : 0));
-  const rows = await queryOpenMeteoLocations(input, fetchCount);
+  const rows = await queryOpenMeteoLocations(input, fetchCount, appLanguage);
   const filtered = filterOpenMeteoRowsForCountrySearchQuery(qn, rows);
   const labels = [...new Set(filtered.map(formatGeoResultLabel))];
   return labels.slice(0, lim);
@@ -720,7 +735,7 @@ async function fetchWorldwideCitySuggestions(input, limit = 8) {
  * Valide une saisie libre (Entrée) : catalogue, suggestions locales, puis Open-Meteo.
  * Retourne une chaîne exploitable par le guide, ou null si rien n’est reconnu.
  */
-async function resolveValidatedDestination(raw) {
+async function resolveValidatedDestination(raw, uiLanguage = "fr") {
   const stem = extractCityPrompt(raw) || normalizeCityInput(raw);
   const trimmed = normalizeCityInput(stem);
   if (trimmed.length < 2) return null;
@@ -731,11 +746,14 @@ async function resolveValidatedDestination(raw) {
   const catHit = CITY_SEARCH_ENTRIES.find((e) => normalizeTextForSearch(e.label) === nstem);
   if (catHit) return catHit.canonical;
 
+  const locHits = catalogCityHitsForLocalizedQuery(trimmed);
+  if (locHits.length === 1) return locHits[0];
+
   const localMerged = mergeCitySuggestionLists(citiesForCountrySearchQuery(nstem), getCitySuggestions(raw), 16);
   const localExact = localMerged.find((c) => normalizeTextForSearch(extractCityPrompt(c) || c) === nstem);
   if (localExact) return resolveCanonicalCity(localExact);
 
-  const rowsRaw = await queryOpenMeteoLocations(trimmed, 14);
+  const rowsRaw = await queryOpenMeteoLocations(trimmed, 14, uiLanguage);
   const rows = filterOpenMeteoRowsForCountrySearchQuery(nstem, rowsRaw);
   if (!rows.length) return null;
 
@@ -1517,31 +1535,49 @@ function framingBboxForMiniMap(geojson, cityLat, cityLon, viewBbox) {
   return bboxAroundPoint(cityLat, cityLon, 6.5, 8);
 }
 
-async function fetchDestinationGuide(city) {
+const WIKI_LANG_CODES = { fr: "fr", en: "en", de: "de", es: "es", it: "it", zh: "zh" };
+
+async function fetchWikiSummaryForLang(safeCity, uiLang) {
+  const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
+  const norm = normalizeTextForSearch(safeCity);
+  try {
+    let title;
+    if (wikiLang === "fr") {
+      title = WIKI_FR_PAGE_TITLE[norm] || safeCity;
+    } else if (wikiLang === "en") {
+      title = WIKI_EN_PAGE_TITLE[norm] || safeCity;
+    } else {
+      title = displayCityForLocale(safeCity, wikiLang) || safeCity;
+    }
+    const resp = await fetch(
+      `https://${wikiLang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`
+    );
+    if (resp.ok) {
+      const json = await resp.json();
+      const text = String(json?.extract || "");
+      if (text) return { summaryText: text, thumb: String(json?.thumbnail?.source || ""), lat: Number(json?.coordinates?.lat), lon: Number(json?.coordinates?.lon) };
+    }
+    if (wikiLang !== "fr") {
+      const frTitle = WIKI_FR_PAGE_TITLE[norm] || safeCity;
+      const frResp = await fetch(`https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(frTitle)}`);
+      if (frResp.ok) {
+        const frJson = await frResp.json();
+        return { summaryText: String(frJson?.extract || ""), thumb: String(frJson?.thumbnail?.source || ""), lat: Number(frJson?.coordinates?.lat), lon: Number(frJson?.coordinates?.lon) };
+      }
+    }
+    return { summaryText: "", thumb: "", lat: NaN, lon: NaN };
+  } catch (_e) {
+    return { summaryText: "", thumb: "", lat: NaN, lon: NaN };
+  }
+}
+
+async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const cityStem = extractCityPrompt(city) || String(city || "").trim();
   if (cityStem.length < 2) return null;
   const safeCity = resolveCanonicalCity(cityStem);
   if (!safeCity || String(safeCity).trim().length < 2) return null;
 
-  const wikiSummaryP = (async () => {
-    try {
-      const frWikiTitle =
-        WIKI_FR_PAGE_TITLE[normalizeTextForSearch(safeCity)] || safeCity;
-      const summaryResp = await fetch(
-        `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(frWikiTitle)}`
-      );
-      if (!summaryResp.ok) return { summaryText: "", thumb: "", lat: NaN, lon: NaN };
-      const summaryJson = await summaryResp.json();
-      return {
-        summaryText: String(summaryJson?.extract || ""),
-        thumb: String(summaryJson?.thumbnail?.source || ""),
-        lat: Number(summaryJson?.coordinates?.lat),
-        lon: Number(summaryJson?.coordinates?.lon),
-      };
-    } catch (_e) {
-      return { summaryText: "", thumb: "", lat: NaN, lon: NaN };
-    }
-  })();
+  const wikiSummaryP = fetchWikiSummaryForLang(safeCity, uiLanguage);
 
   /** Pas de titres Wikipédia bruts comme « lieux » (homonymes / hors sujet). Lieux = répertoire emblématique + repli exploration ; enrichissement IA optionnel via VITE_GEMINI_DESTINATION_ENRICH. */
   const wikiPlaceTitlesP = Promise.resolve([]);
@@ -1997,13 +2033,14 @@ function formatCityName(value) {
     .trim()
     .replace(/\s+/g, " ");
   if (!raw) return "";
+  const tag = getAppDateLocale();
   return raw
-    .toLocaleLowerCase("fr-FR")
+    .toLocaleLowerCase(tag)
     .split(" ")
     .map((part) =>
       part
         .split("-")
-        .map((seg) => (seg ? seg.charAt(0).toLocaleUpperCase("fr-FR") + seg.slice(1) : seg))
+        .map((seg) => (seg ? seg.charAt(0).toLocaleUpperCase(tag) + seg.slice(1) : seg))
         .join("-")
     )
     .join(" ");
@@ -2132,7 +2169,7 @@ function tripDestinationDisplayName(trip) {
   const d = String(trip?.destination || "").trim();
   const ti = String(trip?.title || "").trim();
   const n = String(trip?.name || "").trim();
-  return d || ti || n || "Voyage";
+  return d || ti || n;
 }
 
 /** Évite qu'un refetch juste après insertion écrase les activités (latence lecture / temps réel). */
@@ -2508,6 +2545,14 @@ function TopNav({ onMenu, onAdd, title }) {
 
 // Modales
 function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTab, onSwitchTab }) {
+  const { t } = useI18n();
+  const navItems = [
+    { id: "trips", key: "nav.trips" },
+    { id: "planner", key: "nav.planner" },
+    { id: "destination", key: "nav.search" },
+    { id: "budget", key: "nav.budget" },
+    { id: "chat", key: "nav.chat" },
+  ];
   return (
     <div className={`fixed inset-0 z-40 transition ${open ? "pointer-events-auto" : "pointer-events-none"}`}>
       <div className={`absolute inset-0 bg-black/20 transition ${open ? "opacity-100" : "opacity-0"}`} onClick={onClose} />
@@ -2517,50 +2562,48 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
         }`}
       >
         <div className="mb-6 flex items-center justify-between">
-          <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Menu</p>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+          <p className="text-xs uppercase tracking-[0.4em] text-slate-500">{t("menu.title")}</p>
+          <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-slate-100" aria-label={t("menu.closeMenu")}>
             <X size={18} />
           </button>
         </div>
         <div className="space-y-3 text-sm text-slate-700">
           <p className="text-xs text-slate-500">{String(userEmail || "")}</p>
+          <LanguageSelector className="pt-1" />
           <div className="pt-2">
-            <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">Navigation</p>
+            <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.navigation")}</p>
             <div className="space-y-2">
-              {[
-                { id: "trips", label: "Mes Voyages" },
-                { id: "planner", label: "Calendrier" },
-                { id: "destination", label: "Recherche" },
-                { id: "budget", label: "Budget" },
-                { id: "chat", label: "Chat" },
-              ].map((item) => {
+              {navItems.map((item) => {
                 const active = activeTab === item.id;
                 return (
                   <button
                     key={item.id}
+                    type="button"
                     onClick={() => onSwitchTab(item.id)}
                     className={`w-full rounded-2xl px-3 py-2 text-left text-xs transition ${
                       active ? "text-white" : "border border-slate-200 bg-white hover:bg-slate-100"
                     }`}
                     style={active ? { backgroundColor: ACCENT } : undefined}
                   >
-                    {item.label}
+                    {t(item.key)}
                   </button>
                 );
               })}
             </div>
           </div>
           <button
+            type="button"
             onClick={onOpenAccount}
             className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
           >
-            Mon compte
+            {t("menu.account")}
           </button>
           <button
+            type="button"
             onClick={onSignOut}
             className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
           >
-            Se deconnecter
+            {t("menu.signOut")}
           </button>
         </div>
       </aside>
@@ -2569,6 +2612,7 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
 }
 
 function AuthView() {
+  const { t } = useI18n();
   const [mode, setMode] = useState("signin");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -2619,11 +2663,11 @@ function AuthView() {
     const safeFirstName = String(firstName || "").trim();
     const safeLastName = String(lastName || "").trim();
     if (!safeEmail || !safePassword) {
-      setMsg("Email et mot de passe requis.");
+      setMsg(t("auth.errEmailPassword"));
       return;
     }
     if (mode === "signup" && (!safeFirstName || !safeLastName)) {
-      setMsg("Nom et prenom requis pour creer le compte.");
+      setMsg(t("auth.errNameRequired"));
       return;
     }
     setLoading(true);
@@ -2647,7 +2691,7 @@ function AuthView() {
           },
         });
         if (error) throw error;
-        setMsg("Compte cree. Verifie ton email puis connecte-toi.");
+        setMsg(t("auth.accountCreated"));
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email: safeEmail,
@@ -2658,9 +2702,9 @@ function AuthView() {
     } catch (e) {
       const raw = String(e?.message || "");
       if (raw.toLowerCase().includes("invalid login credentials")) {
-        setMsg("Email ou mot de passe invalide.");
+        setMsg(t("auth.invalidCredentials"));
       } else {
-        setMsg(raw || "Erreur authentification.");
+        setMsg(raw || t("auth.errGeneric"));
       }
     } finally {
       setLoading(false);
@@ -2670,7 +2714,7 @@ function AuthView() {
   const forgotPassword = async () => {
     const safeEmail = String(email || "").trim();
     if (!safeEmail) {
-      setMsg("Entre ton email pour reinitialiser le mot de passe.");
+      setMsg(t("auth.forgotNeedEmail"));
       return;
     }
     setLoading(true);
@@ -2679,9 +2723,9 @@ function AuthView() {
       const redirectTo = `${window.location.origin}`;
       const { error } = await supabase.auth.resetPasswordForEmail(safeEmail, { redirectTo });
       if (error) throw error;
-      setMsg("Email de reinitialisation envoye. Verifie ta boite mail.");
+      setMsg(t("auth.resetSent"));
     } catch (e) {
-      setMsg(String(e?.message || "Erreur envoi email de reinitialisation."));
+      setMsg(String(e?.message || t("auth.resetErr")));
     } finally {
       setLoading(false);
     }
@@ -2693,7 +2737,7 @@ function AuthView() {
     const safePassword = String(invitePassword || "");
     const safeInviteEmail = String(inviteEmail || "").trim();
     if (!safeInviteEmail || !safeFirst || !safeLast || !safePassword) {
-      setMsg("Prenom, nom et mot de passe sont requis pour rejoindre ce voyage.");
+      setMsg(t("auth.inviteNeedFields"));
       return;
     }
 
@@ -2721,9 +2765,9 @@ function AuthView() {
       setPassword("");
       setInvitePromptOpen(false);
       clearInviteParams();
-      setMsg("Compte cree. Verifie ton email puis connecte-toi.");
+      setMsg(t("auth.inviteCreated"));
     } catch (e) {
-      setMsg(String(e?.message || "Impossible de creer le compte invitation."));
+      setMsg(String(e?.message || t("auth.inviteErr")));
     } finally {
       setLoading(false);
     }
@@ -2731,12 +2775,10 @@ function AuthView() {
 
   return (
     <div className="min-h-screen overflow-x-hidden px-4 py-8 sm:px-5" style={{ background: BG, color: TEXT }}>
-      <div className="mx-auto mt-10 min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2.5rem] bg-white/80 p-4 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:rounded-[4.5rem] sm:p-8">
-        <h1 className="mb-2 text-center text-xs uppercase tracking-[0.4em] text-slate-500">
-          Travel Planner
-        </h1>
+      <div className="relative mx-auto mt-10 min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2.5rem] bg-white/80 p-4 pb-6 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:rounded-[4.5rem] sm:p-8 sm:pb-8">
+        <h1 className="mb-2 text-center text-xs uppercase tracking-[0.4em] text-slate-500">{t("auth.brand")}</h1>
         <p className="mb-6 text-center text-lg font-semibold">
-          {mode === "signin" ? "Se connecter" : "S'inscrire"}
+          {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
         </p>
         <div className="space-y-3">
           {mode === "signup" ? (
@@ -2745,22 +2787,22 @@ function AuthView() {
                 type="text"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Prenom"
+                placeholder={t("auth.firstName")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <input
                 type="text"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                placeholder="Nom"
+                placeholder={t("auth.lastName")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Photo de profil (optionnel)</p>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("auth.profilePhotoOptional")}</p>
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
                     {profilePhotoPreview ? (
-                      <img src={profilePhotoPreview} alt="Apercu profil" className="h-full w-full object-cover" />
+                      <img src={profilePhotoPreview} alt={t("auth.previewAlt")} className="h-full w-full object-cover" />
                     ) : (
                       <div className="grid h-full w-full place-items-center text-slate-500">
                         <UserRound size={18} />
@@ -2794,26 +2836,32 @@ function AuthView() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email"
+            placeholder={t("auth.email")}
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Mot de passe"
+            placeholder={t("auth.password")}
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <button
+            type="button"
             onClick={submit}
             disabled={loading}
             className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            {loading ? "Chargement..." : mode === "signin" ? "Se connecter" : "Creer mon compte"}
+            {loading
+              ? t("auth.loading")
+              : mode === "signin"
+                ? t("auth.submitSignIn")
+                : t("auth.submitSignUp")}
           </button>
         </div>
         <button
+          type="button"
           onClick={() =>
             setMode((m) => {
               if (invitePromptOpen) return "signup";
@@ -2830,18 +2878,19 @@ function AuthView() {
           className="mt-4 w-full text-sm text-slate-600 underline"
         >
           {invitePromptOpen
-            ? "Invitation en cours - creation de compte requise"
+            ? t("auth.inviteFlowNote")
             : mode === "signin"
-            ? "Pas de compte ? Creer un compte"
-            : "Deja un compte ? Se connecter"}
+              ? t("auth.toggleSignUp")
+              : t("auth.toggleSignIn")}
         </button>
         {mode === "signin" && !invitePromptOpen ? (
           <button
+            type="button"
             onClick={forgotPassword}
             disabled={loading}
             className="mt-2 w-full text-sm text-slate-600 underline disabled:opacity-60"
           >
-            Mot de passe oublie ?
+            {t("auth.forgotPassword")}
           </button>
         ) : null}
         {msg ? (
@@ -2849,26 +2898,33 @@ function AuthView() {
             {String(msg)}
           </div>
         ) : null}
+        <footer className="mt-6 border-t border-slate-200/60 pt-4">
+          <LanguageFab placement="authFooter" />
+        </footer>
       </div>
       {invitePromptOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6">
-            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Invitation voyage</h3>
+          <div className="relative min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2rem] bg-white/95 p-4 pb-6 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6 sm:pb-8">
+            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("auth.inviteTitle")}</h3>
             <p className="mt-2 text-sm text-slate-700">
-              {inviteTripName ? `Tu as ete invite(e) au voyage ${inviteTripName}.` : "Tu as ete invite(e) a un voyage."}
+              {inviteTripName
+                ? t("auth.inviteBodyTrip", { trip: inviteTripName })
+                : t("auth.inviteBodyGeneric")}
             </p>
-            <p className="mt-1 break-all text-xs text-slate-500">Email invite: {String(inviteEmail || "-")}</p>
+            <p className="mt-1 break-all text-xs text-slate-500">
+              {t("auth.inviteEmailLine", { email: String(inviteEmail || "-") })}
+            </p>
             <div className={`mt-4 ${MODAL_GRID_2}`}>
               <input
                 value={inviteFirstName}
                 onChange={(e) => setInviteFirstName(e.target.value)}
-                placeholder="Prenom"
+                placeholder={t("auth.firstName")}
                 className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
               <input
                 value={inviteLastName}
                 onChange={(e) => setInviteLastName(e.target.value)}
-                placeholder="Nom"
+                placeholder={t("auth.lastName")}
                 className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
             </div>
@@ -2876,19 +2932,23 @@ function AuthView() {
               type="password"
               value={invitePassword}
               onChange={(e) => setInvitePassword(e.target.value)}
-              placeholder="Mot de passe"
+              placeholder={t("auth.password")}
               className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
             />
             <div className="mt-4">
               <button
+                type="button"
                 onClick={completeInviteSignup}
                 disabled={loading}
                 className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
-                {loading ? "Creation..." : "Creer mon compte pour rejoindre le voyage"}
+                {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
               </button>
             </div>
+            <footer className="mt-6 border-t border-slate-200/60 pt-4">
+              <LanguageFab placement="authFooter" />
+            </footer>
           </div>
         </div>
       ) : null}
@@ -2897,6 +2957,7 @@ function AuthView() {
 }
 
 function TripFormModal({ open, onClose, onCreate }) {
+  const { t } = useI18n();
   const today = getTodayStr();
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState(today);
@@ -2928,8 +2989,8 @@ function TripFormModal({ open, onClose, onCreate }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-5 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Nouveau voyage</h2>
-          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("tripForm.title")}</h2>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
@@ -2937,7 +2998,7 @@ function TripFormModal({ open, onClose, onCreate }) {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Destination"
+            placeholder={t("tripForm.destination")}
             className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           {/*
@@ -2963,25 +3024,23 @@ function TripFormModal({ open, onClose, onCreate }) {
                   addInvites();
                 }
               }}
-              placeholder="E-mail invité"
+              placeholder={t("tripForm.invitePlaceholder")}
               className="min-w-0 w-full max-w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
             <button
               type="button"
               onClick={addInvites}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-100"
-              title="Ajouter aux invites"
+              title={t("tripForm.addInviteTitle")}
             >
               <Plus size={18} />
             </button>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2">
             <p className="text-xs text-slate-600">
-              Personnes invitees: <span className="font-semibold text-slate-800">{invitedEmails.length}</span>
+              {t("tripForm.invitedLine", { count: invitedEmails.length })}
             </p>
-            <p className="mt-0.5 text-[11px] text-slate-500">
-              Ajoute chaque e-mail avec le bouton + (ou touche Entree).
-            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">{t("tripForm.inviteHint")}</p>
             {invitedEmails.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {invitedEmails.map((mail) => (
@@ -2994,7 +3053,7 @@ function TripFormModal({ open, onClose, onCreate }) {
                       type="button"
                       onClick={() => setInvitedEmails((prev) => (prev || []).filter((m) => String(m) !== String(mail)))}
                       className="rounded-full p-0.5 text-slate-500 hover:bg-slate-100"
-                      title="Retirer"
+                      title={t("tripForm.removeTitle")}
                     >
                       <X size={12} />
                     </button>
@@ -3023,7 +3082,7 @@ function TripFormModal({ open, onClose, onCreate }) {
             className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             style={GLASS_ACCENT_STYLE}
           >
-            {submitting ? "Creation…" : "Creer"}
+            {submitting ? t("tripForm.creating") : t("tripForm.create")}
           </button>
         </div>
       </div>
@@ -3032,6 +3091,7 @@ function TripFormModal({ open, onClose, onCreate }) {
 }
 
 function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
+  const { t } = useI18n();
   const [emailInput, setEmailInput] = useState("");
   const [emails, setEmails] = useState([]);
 
@@ -3056,7 +3116,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6">
         <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="min-w-0 text-xs uppercase tracking-[0.32em] text-slate-500">
-            {String(title || "Inviter des participants")}
+            {String(title || t("modals.inviteParticipantsTitle"))}
           </h3>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={16} />
@@ -3068,7 +3128,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
             type="email"
             value={emailInput}
             onChange={(e) => setEmailInput(e.target.value)}
-            placeholder="email@exemple.com"
+            placeholder={t("modals.inviteEmailPlaceholder")}
             className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
           />
           <button
@@ -3076,7 +3136,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
             className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            Ajouter
+            {t("common.add")}
           </button>
         </div>
 
@@ -3091,7 +3151,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
                 <X size={12} />
               </button>
             </span>
-          )) : <p className="text-xs text-slate-500">Aucun participant invite.</p>}
+          )) : <p className="text-xs text-slate-500">{t("modals.noInviteesYet")}</p>}
         </div>
 
         <button
@@ -3099,7 +3159,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
           className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
-          Enregistrer les invitations
+          {t("modals.saveInvitations")}
         </button>
       </div>
     </div>
@@ -3107,6 +3167,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
 }
 
 function EditTripModal({ open, onClose, trip, onSave }) {
+  const { t, language } = useI18n();
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState(getTodayStr());
   const [endDate, setEndDate] = useState(getTodayStr());
@@ -3116,12 +3177,14 @@ function EditTripModal({ open, onClose, trip, onSave }) {
 
   useEffect(() => {
     if (!trip) return;
-    setTitle(String(trip?.title || ""));
+    const rawTitle = String(trip?.title || "");
+    const shown = displayCityForLocale(rawTitle, language) || rawTitle;
+    setTitle(shown);
     setStartDate(toYMD(trip?.start_date, getTodayStr()));
     setEndDate(toYMD(trip?.end_date, getTodayStr()));
     setFixedUrl(String(trip?.fixed_url || ""));
     setInvitedEmails(Array.isArray(trip?.invited_emails) ? trip.invited_emails : []);
-  }, [trip]);
+  }, [trip, language]);
 
   if (!open || !trip) return null;
 
@@ -3129,7 +3192,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-5 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Modifier voyage</h2>
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.editTripTitle")}</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
@@ -3138,7 +3201,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Destination"
+            placeholder={t("tripForm.destination")}
             className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
@@ -3148,43 +3211,50 @@ function EditTripModal({ open, onClose, trip, onSave }) {
           <input
             value={fixedUrl}
             onChange={(e) => setFixedUrl(e.target.value)}
-            placeholder="Lien partage (optionnel)"
+            placeholder={t("modals.optionalShareLink")}
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
             <p className="text-sm text-slate-700">
-              Invites: <span className="font-semibold">{invitedEmails.length}</span>
+              {t("modals.invitesLine", { count: invitedEmails.length })}
             </p>
             <button
               onClick={() => setInviteModalOpen(true)}
               className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
-              title="Inviter par email"
+              title={t("modals.inviteByEmailTitle")}
             >
               <Mail size={14} />
             </button>
           </div>
           <button
-            onClick={() =>
+            onClick={() => {
+              const rawTripTitle = String(trip?.title || "").trim();
+              const localizedBaseline = String(
+                displayCityForLocale(rawTripTitle, language) || rawTripTitle
+              ).trim();
+              const nextTitle = String(title || "").trim();
+              const titleToSave =
+                nextTitle === localizedBaseline ? rawTripTitle : nextTitle;
               onSave({
                 ...trip,
-                title: String(title || "").trim(),
+                title: titleToSave,
                 start_date: startDate,
                 end_date: endDate,
                 fixed_url: String(fixedUrl || "").trim(),
                 invited_emails: invitedEmails,
-              })
-            }
+              });
+            }}
             className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            Enregistrer les modifications
+            {t("modals.editTripSave")}
           </button>
         </div>
       </div>
       <InviteEmailsModal
         open={inviteModalOpen}
         onClose={() => setInviteModalOpen(false)}
-        title="Inviter des participants"
+        title={t("modals.inviteParticipantsTitle")}
         initialEmails={invitedEmails}
         onSave={(emails) => {
           setInvitedEmails(Array.isArray(emails) ? emails : []);
@@ -3196,17 +3266,23 @@ function EditTripModal({ open, onClose, trip, onSave }) {
 }
 
 function ShareModal({ open, onClose, trip }) {
+  const { t } = useI18n();
   const [copyState, setCopyState] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendState, setSendState] = useState("");
+  const [sendFeedback, setSendFeedback] = useState(null);
   if (!open || !trip) return null;
 
   const invitedEmails = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
-  const recap = `Voyage: ${String(trip?.title || "Voyage")}\nDates: ${formatDate(trip?.start_date)} - ${formatDate(
-    trip?.end_date
-  )}\nLien: ${String(trip.fixed_url || "Aucun lien")}\nInvites: ${
-    invitedEmails.length > 0 ? invitedEmails.join(", ") : "Aucun"
-  }`;
+  const tripTitle = String(trip?.title || t("modals.tripDefault"));
+  const dateRange = `${formatDate(trip?.start_date)} - ${formatDate(trip?.end_date)}`;
+  const linkText = String(trip?.fixed_url || "").trim() || t("modals.noLink");
+  const guestList = invitedEmails.length > 0 ? invitedEmails.join(", ") : t("modals.guestsNone");
+  const recap = [
+    t("modals.shareLineTrip", { title: tripTitle }),
+    t("modals.shareLineDates", { range: dateRange }),
+    t("modals.shareLineLink", { link: linkText }),
+    t("modals.shareLineGuests", { list: guestList }),
+  ].join("\n");
 
   const copy = async () => {
     try {
@@ -3236,11 +3312,11 @@ function ShareModal({ open, onClose, trip }) {
   const sendInvitesByEmail = async () => {
     if (sending) return;
     if (invitedEmails.length === 0) {
-      setSendState("Aucun email invite a envoyer.");
+      setSendFeedback({ ok: false, msg: t("modals.noEmailsToSend") });
       return;
     }
     setSending(true);
-    setSendState("");
+    setSendFeedback(null);
     try {
       const resp = await fetch(getInviteApiUrl(), {
         method: "POST",
@@ -3249,7 +3325,7 @@ function ShareModal({ open, onClose, trip }) {
           to: invitedEmails,
           invite_base_url: window.location.origin,
           trip: {
-            title: String(trip?.title || "Voyage"),
+            title: tripTitle,
             startDate: formatDate(trip?.start_date),
             endDate: formatDate(trip?.end_date),
             link: String(trip?.fixed_url || ""),
@@ -3258,12 +3334,12 @@ function ShareModal({ open, onClose, trip }) {
       });
       const data = await resp.json().catch(() => ({}));
       if (resp.status === 404) {
-        throw new Error("API mail introuvable. Configure VITE_INVITE_API_BASE_URL ou utilise vercel dev.");
+        throw new Error(t("modals.apiMailMissing"));
       }
-      if (!resp.ok) throw new Error(String(data?.error || "Erreur envoi invitation"));
-      setSendState("Invitations envoyees avec succes.");
+      if (!resp.ok) throw new Error(String(data?.error || t("modals.inviteSendFailed")));
+      setSendFeedback({ ok: true, msg: t("modals.shareInviteSuccess") });
     } catch (e) {
-      setSendState(String(e?.message || "Impossible d'envoyer les invitations."));
+      setSendFeedback({ ok: false, msg: String(e?.message || t("modals.inviteSendFailed")) });
     } finally {
       setSending(false);
     }
@@ -3273,7 +3349,7 @@ function ShareModal({ open, onClose, trip }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-4 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Partager</h2>
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.shareTitle")}</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
@@ -3284,13 +3360,15 @@ function ShareModal({ open, onClose, trip }) {
         {invitedEmails.length > 0 ? (
           <div className="mb-3 space-y-2">
             {invitedEmails.map((mail) => {
-              const subject = encodeURIComponent(`Invitation voyage: ${String(trip.title)}`);
+              const subject = encodeURIComponent(
+                t("modals.shareMailSubject", { title: String(trip.title) })
+              );
               const body = encodeURIComponent(
-                `Salut,\n\nJe t'invite a rejoindre mon voyage "${String(
-                  trip.title
-                )}" (${formatDate(trip.start_date)} - ${formatDate(trip.end_date)}).\n\nLien: ${String(
-                  trip.fixed_url || "Aucun lien"
-                )}`
+                t("modals.shareMailBody", {
+                  title: String(trip.title),
+                  range: dateRange,
+                  link: String(trip.fixed_url || "").trim() || t("modals.noLink"),
+                })
               );
               return (
                 <a
@@ -3316,10 +3394,10 @@ function ShareModal({ open, onClose, trip }) {
             }
           >
             {copyState === "copied"
-              ? "Copie"
+              ? t("modals.copied")
               : copyState === "error"
-                ? "Copie impossible"
-                : "Copier recap"}
+                ? t("modals.copyFailed")
+                : t("modals.copyRecap")}
           </button>
           <button
             onClick={sendInvitesByEmail}
@@ -3327,12 +3405,12 @@ function ShareModal({ open, onClose, trip }) {
             className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            {sending ? "Envoi en cours..." : "Envoyer invitations"}
+            {sending ? t("modals.sendingInvites") : t("modals.sendInvitesButton")}
           </button>
         </div>
-        {sendState ? (
-          <p className={`mt-3 text-sm ${sendState.includes("succes") ? "text-emerald-700" : "text-rose-700"}`}>
-            {sendState}
+        {sendFeedback ? (
+          <p className={`mt-3 text-sm ${sendFeedback.ok ? "text-emerald-700" : "text-rose-700"}`}>
+            {sendFeedback.msg}
           </p>
         ) : null}
       </div>
@@ -3363,7 +3441,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
               <span className="font-medium text-slate-800">soldes</span> affichés dans le budget de ce voyage.
             </p>
           </div>
-          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100" aria-label={t("common.close")}>
             <X size={18} />
           </button>
         </div>
@@ -3415,13 +3493,15 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
 }
 
 function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
+  const { t } = useI18n();
   if (!open || !trip) return null;
+  const delTitle = String(trip?.title || t("modals.tripDefault"));
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
       <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
-        <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">Confirmation</h2>
+        <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("common.confirmation")}</h2>
         <p className="mb-6 break-words text-sm text-slate-700">
-          Supprimer le voyage <span className="font-semibold">{String(trip?.title || "Voyage")}</span> ?
+          {t("modals.deleteTripQuestion", { title: delTitle })}
         </p>
         <div className={MODAL_GRID_2}>
           <button
@@ -3430,7 +3510,7 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
             disabled={deleting}
             className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
           >
-            Annuler
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -3439,7 +3519,7 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
             className="min-w-0 rounded-2xl px-2 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
             style={{ backgroundColor: "#e11d48" }}
           >
-            {deleting ? "Suppression…" : "Supprimer"}
+            {deleting ? t("modals.deleting") : t("modals.delete")}
           </button>
         </div>
       </div>
@@ -3541,6 +3621,7 @@ function AccountModal({
 
 // Vues de listes
 function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
+  const { t, language } = useI18n();
   return (
     <article
       className={`group ${muted ? "opacity-60 grayscale-[0.4]" : ""}`}
@@ -3555,7 +3636,7 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
             <div className="flex w-full flex-col items-start">
               <div className="inline-flex max-w-full items-center rounded-2xl border border-white/35 bg-black/28 px-2.5 py-1 backdrop-blur-md">
                 <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white">
-                  {String(trip.title)}
+                  {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
                 </h3>
               </div>
               <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
@@ -3572,7 +3653,7 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
           className={`absolute left-5 rounded-full bg-white/88 p-2 text-slate-700 shadow-md backdrop-blur hover:bg-white ${
             "top-5"
           }`}
-          title="Partager"
+          title={t("tripCard.share")}
         >
           <Share2 size={14} />
         </button>
@@ -3585,7 +3666,7 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
                   onEdit(trip);
                 }}
                 className="rounded-full bg-white/88 p-2 text-slate-700 shadow-md backdrop-blur hover:bg-white"
-                title="Modifier"
+                title={t("tripCard.edit")}
               >
                 <Pencil size={14} />
               </button>
@@ -3597,7 +3678,7 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
                   onDelete(trip);
                 }}
                 className="rounded-full bg-white/88 p-2 text-rose-700 shadow-md backdrop-blur hover:bg-white"
-                title="Supprimer"
+                title={t("tripCard.delete")}
               >
                 <Trash2 size={14} />
               </button>
@@ -3609,6 +3690,17 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
   );
 }
 
+function formatCitySuggestionDisplay(suggestion, lang) {
+  const s = String(suggestion || "").trim();
+  if (!s) return "";
+  const i = s.indexOf(",");
+  if (i === -1) return displayCityForLocale(s, lang);
+  const cityPart = s.slice(0, i).trim();
+  const rest = s.slice(i + 1).trim();
+  const locCity = displayCityForLocale(cityPart, lang);
+  return rest ? `${locCity}, ${rest}` : locCity;
+}
+
 function CitySearchBox({
   value,
   onChange,
@@ -3617,6 +3709,7 @@ function CitySearchBox({
   placeholder,
   showSuggestions = true,
 }) {
+  const { language: uiLanguage } = useI18n();
   const [focused, setFocused] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   /** `key` = requête normalisée à laquelle `list` correspond (ignore si différent du champ → liste locale seule, immédiat). */
@@ -3648,7 +3741,7 @@ function CitySearchBox({
     setSuggestLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const remote = await fetchWorldwideCitySuggestions(q, 8);
+        const remote = await fetchWorldwideCitySuggestions(q, 8, uiLanguage);
         if (!cancelled) setRemotePack({ key, list: remote });
       } finally {
         if (!cancelled) setSuggestLoading(false);
@@ -3659,7 +3752,7 @@ function CitySearchBox({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value, showSuggestions]);
+  }, [value, showSuggestions, uiLanguage]);
 
   return (
     <div className="relative" style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}>
@@ -3700,7 +3793,7 @@ function CitySearchBox({
               }}
               className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
             >
-              {city}
+              {formatCitySuggestionDisplay(city, uiLanguage)}
             </button>
           ))}
         </div>
@@ -3794,6 +3887,7 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
 
 // Vues principales
 function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShareTrip, greetingName }) {
+  const { t } = useI18n();
   const today = getTodayStr();
   const filtered = (trips || []).filter((t) =>
     String(t.title || "")
@@ -3807,9 +3901,10 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   return (
     <section className="space-y-8">
       <div className="rounded-[2.2rem] bg-white/92 px-6 py-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
-        <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Accueil</p>
+        <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
         <h2 className="text-3xl font-semibold text-slate-900">
-          Bonjour {String(greetingName || "Voyageur")} <span className="inline-block">👋</span>
+          {t("home.greeting", { name: String(greetingName || t("common.traveler")) })}{" "}
+          <span className="inline-block">👋</span>
         </h2>
       </div>
 
@@ -3818,13 +3913,13 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
           value={query}
           onChange={onQuery}
           onPick={onPickDestination}
-          placeholder="Rechercher une destination..."
+          placeholder={t("home.searchPlaceholder")}
           showSuggestions
         />
       </div>
 
       <div>
-        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">Maintenant</h2>
+        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">{t("home.now")}</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {now && now.length > 0
             ? now.map((trip) => (
@@ -3837,12 +3932,12 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
                   muted={false}
                 />
               ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">Aucun voyage en cours.</p>}
+            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">{t("home.noCurrentTrip")}</p>}
         </div>
       </div>
 
       <div>
-        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">Prochainement</h2>
+        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">{t("home.upcoming")}</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {upcoming && upcoming.length > 0
             ? upcoming.map((trip) => (
@@ -3855,7 +3950,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
                   muted={false}
                 />
               ))
-            : <p className="text-sm text-slate-500">Aucun voyage planifie.</p>}
+            : <p className="text-sm text-slate-500">{t("home.noUpcoming")}</p>}
         </div>
       </div>
     </section>
@@ -3899,21 +3994,22 @@ function getGeminiErrorUi(raw) {
 }
 
 /** Message court pour le programme (affiché à tous les utilisateurs). */
-function userFacingItineraryErrorMessage(raw) {
+function userFacingItineraryErrorMessage(raw, tFn) {
   const s = String(raw || "");
+  const fb = (key, fallbackStr) => (typeof tFn === "function" ? tFn(key) : fallbackStr);
   if (/403|premium|réservée/i.test(s)) {
-    return "Cette fonctionnalité est réservée au service Premium. Veuillez souscrire à un forfait Premium pour l’utiliser.";
+    return fb("destination.premiumBody", "Cette fonctionnalité est réservée au service Premium.");
   }
   if (isGeminiQuotaError(s)) {
-    return "Veuillez réessayer plus tard.";
+    return fb("destination.quotaRetryLater", "Veuillez réessayer plus tard.");
   }
   if (/503|502|GEMINI_API_KEY|fetch/i.test(s)) {
-    return "Génération indisponible pour le moment. Réessaie plus tard.";
+    return fb("destination.itineraryGenerateError", "Service unavailable, please try again later.");
   }
   if (/JSON|invalide|guillemet|array element/i.test(s)) {
-    return "La réponse du modèle était incomplète ou mal formée. Réessaie, ou raccourcis la période (moins de jours).";
+    return fb("destination.itineraryFormatError", "The response was incomplete. Try again or shorten the period.");
   }
-  return "Impossible de générer le programme. Réessaie plus tard.";
+  return fb("destination.itineraryGenerateError", "Unable to generate. Please try again later.");
 }
 
 /** Bloc erreur programme : toujours le texte utilisateur ; détail brut seulement en mode dev (repliable). */
@@ -3922,7 +4018,7 @@ function ItineraryErrorNotice({ raw }) {
   if (!text) return null;
   return (
     <div className="mt-3 space-y-2">
-      <p className="text-xs leading-relaxed text-rose-600">{userFacingItineraryErrorMessage(text)}</p>
+      <p className="text-xs leading-relaxed text-rose-600">{userFacingItineraryErrorMessage(text, t)}</p>
       {SHOW_GEMINI_DEV_UI ? (
         <details className="rounded-lg border border-rose-100 bg-rose-50/50 px-2 py-1.5 text-[10px] text-rose-900/80">
           <summary className="cursor-pointer select-none font-medium text-rose-800/90">Détail technique (dev)</summary>
@@ -3981,6 +4077,7 @@ function DestinationGuideView({
   onCreateTrip,
   onBack,
 }) {
+  const { t, language } = useI18n();
   const [guideError, setGuideError] = useState("");
   const [guide, setGuide] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -4003,23 +4100,30 @@ function DestinationGuideView({
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
+  /** Tips en langue UI (Gemini) — utilisés quand la langue n'est pas le français et que GEMINI_DESTINATION_ENRICH est désactivé. */
+  const [geminiLangTips, setGeminiLangTips] = useState(null);
 
   const displayGuide = useMemo(() => {
     if (!guide) return null;
+    let base;
     if (GEMINI_DESTINATION_ENRICH) {
-      return mergeDestinationGuideWithGemini(guide, geminiContent);
-    }
-    if (geminiAiSuggestedActivities && geminiAiSuggestedActivities.length > 0) {
+      base = mergeDestinationGuideWithGemini(guide, geminiContent);
+    } else if (geminiAiSuggestedActivities && geminiAiSuggestedActivities.length > 0) {
       const city = String(guide.city || "");
-      return {
+      base = {
         ...guide,
         places: clampPlacesList(guide.places, city),
         suggestedActivities: geminiAiSuggestedActivities,
         tips: guide.tips,
       };
+    } else {
+      base = mergeDestinationGuideWithGemini(guide, null);
     }
-    return mergeDestinationGuideWithGemini(guide, null);
-  }, [guide, geminiContent, geminiAiSuggestedActivities]);
+    if (geminiLangTips && !GEMINI_DESTINATION_ENRICH) {
+      return { ...base, tips: geminiLangTips };
+    }
+    return base;
+  }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips]);
 
   const tripDatesForModal = useMemo(() => listTripDatesInclusive(startDate, endDate), [startDate, endDate]);
 
@@ -4037,6 +4141,7 @@ function DestinationGuideView({
     setItineraryModalOpen(false);
     setItineraryPremiumGateOpen(false);
     setItineraryQuotaModalOpen(false);
+    setGeminiLangTips(null);
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
@@ -4075,12 +4180,12 @@ function DestinationGuideView({
     let cancelled = false;
     (async () => {
       try {
-        const result = await fetchDestinationGuide(confirmedDestination);
+        const result = await fetchDestinationGuide(confirmedDestination, language);
         if (!cancelled && result) setGuide(result);
       } catch (_e) {
         if (!cancelled && !instant) {
           setGuide(null);
-          setGuideError("Impossible de charger le guide destination.");
+          setGuideError(t("destination.guideLoadError"));
         }
       }
     })();
@@ -4088,7 +4193,7 @@ function DestinationGuideView({
     return () => {
       cancelled = true;
     };
-  }, [confirmedDestination]);
+  }, [confirmedDestination, language, t]);
 
   useEffect(() => {
     const dest = String(
@@ -4101,7 +4206,7 @@ function DestinationGuideView({
     setGeminiAiSuggestedActivities(null);
 
     if (GEMINI_DESTINATION_ENRICH) {
-      fetchGeminiTripSuggestions({ destination: dest })
+      fetchGeminiTripSuggestions({ destination: dest, language })
         .then((res) => {
           if (cancelled) return;
           if (res?.ok && res.data) {
@@ -4126,7 +4231,7 @@ function DestinationGuideView({
       };
     }
 
-    fetchGeminiSuggestedActivities({ destination: dest })
+    fetchGeminiSuggestedActivities({ destination: dest, language })
       .then((res) => {
         if (cancelled) return;
         if (res?.ok && res.data) {
@@ -4134,7 +4239,7 @@ function DestinationGuideView({
           setGeminiAiSuggestedActivities(norm.length > 0 ? norm : null);
           setGeminiError("");
         } else {
-          setGeminiError("Réponse vide du serveur.");
+          setGeminiError(t("destination.guideLoadError"));
         }
       })
       .catch((e) => {
@@ -4143,7 +4248,33 @@ function DestinationGuideView({
     return () => {
       cancelled = true;
     };
-  }, [confirmedDestination]);
+  }, [confirmedDestination, language, t]);
+
+  useEffect(() => {
+    setGeminiLangTips(null);
+    if (GEMINI_DESTINATION_ENRICH) return;
+    const lang = String(language || "fr").toLowerCase().split("-")[0];
+    if (lang === "fr") return;
+    const dest = String(
+      extractCityPrompt(confirmedDestination) || normalizeCityInput(confirmedDestination) || ""
+    ).trim();
+    if (dest.length < 2) return;
+    let cancelled = false;
+    fetchGeminiTripSuggestions({ destination: dest, language })
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.ok && res.data) {
+          const norm = normalizeGeminiGuidePayload(res.data, dest);
+          if (norm?.tips && (norm.tips.do?.length > 0 || norm.tips.dont?.length > 0)) {
+            setGeminiLangTips(norm.tips);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmedDestination, language]);
 
   async function handleGenerateItinerary() {
     if (!userCanUseItineraryGeneration(session)) {
@@ -4165,6 +4296,7 @@ function DestinationGuideView({
         destination: dest,
         startDate: programStartDate,
         endDate: programEndDate,
+        language,
       });
       if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
         setGeneratedDayIdeas(res.data.dayIdeas);
@@ -4190,7 +4322,7 @@ function DestinationGuideView({
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs uppercase tracking-[0.4em] text-sky-900/45">Guide destination</h2>
+        <h2 className="text-xs uppercase tracking-[0.4em] text-sky-900/45">{t("destination.guideHeading")}</h2>
       </div>
 
       <div className="rounded-[2.2rem] bg-white/93 p-4 shadow-[0_14px_40px_rgba(30,58,95,0.08)] ring-1 ring-sky-100/55">
@@ -4199,7 +4331,7 @@ function DestinationGuideView({
           onChange={onSearchInputChange}
           onPick={onConfirmDestination}
           onConfirm={onConfirmDestination}
-          placeholder="Rechercher une destination..."
+          placeholder={t("destination.searchPlaceholder")}
         />
       </div>
 
@@ -4224,7 +4356,7 @@ function DestinationGuideView({
                     <img
                       key={String(displayGuide.city)}
                       src={heroSrc}
-                      alt={String(displayGuide.city)}
+                      alt={displayCityForLocale(String(displayGuide.city), language)}
                       className="h-full w-full object-cover object-center"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
@@ -4257,9 +4389,11 @@ function DestinationGuideView({
                   className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/25 blur-3xl"
                   aria-hidden
                 />
-                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-700/90">Destination</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-700/90">
+                  {t("destination.badgeDestination")}
+                </p>
                 <h3 className="mt-2 font-serif text-[1.65rem] font-semibold leading-tight tracking-tight text-slate-900 sm:text-3xl">
-                  {String(displayGuide.city)}
+                  {displayCityForLocale(String(displayGuide.city), language)}
                 </h3>
                 <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">{String(displayGuide.description)}</p>
                 {geminiError ? (
@@ -4318,7 +4452,7 @@ function DestinationGuideView({
                     })()
                   ) : isGeminiQuotaError(geminiError) ? (
                     <p className="mt-3 text-[15px] leading-relaxed text-slate-600" role="status">
-                      Veuillez réessayer plus tard.
+                      {t("destination.quotaRetryLater")}
                     </p>
                   ) : null
                 ) : null}
@@ -4332,7 +4466,7 @@ function DestinationGuideView({
                   className={`mt-5 rounded-2xl px-5 py-2.5 text-sm font-medium text-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] ${GLASS_BUTTON_CLASS}`}
                   style={GLASS_ACCENT_STYLE}
                 >
-                  Ajouter aux voyages
+                  {t("destination.addToTrips")}
                 </button>
               </div>
 
@@ -4342,8 +4476,10 @@ function DestinationGuideView({
                     <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">Lieux incontournables</h4>
-                    <p className="text-[11px] text-slate-500">À ne pas manquer sur place</p>
+                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                      {t("destination.mustSeeTitle")}
+                    </h4>
+                    <p className="text-[11px] text-slate-500">{t("destination.mustSeeSubtitle")}</p>
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
@@ -4352,20 +4488,25 @@ function DestinationGuideView({
                       key={`place-${i}-${String(p).slice(0, 24)}`}
                       className="inline-flex max-w-full items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-xs font-medium leading-snug text-slate-800 shadow-sm ring-1 ring-slate-100/80"
                     >
-                      {String(p)}
+                      {displayActivityTitleForLocale(String(p), language)}
                     </span>
                   ))}
                 </div>
               </section>
 
               {(() => {
-                const doList = (displayGuide.tips?.do || []).map(String).filter(Boolean);
+                const uiLang = String(language || "fr").toLowerCase().split("-")[0];
+                // Only use Gemini/base tips when they are in the correct language (fr base, or geminiLangTips has overridden them)
+                const doList = (uiLang === "fr" || geminiLangTips != null)
+                  ? (displayGuide.tips?.do || []).map(String).filter(Boolean)
+                  : [];
                 const cityLabel = String(displayGuide.city || "").trim();
                 const canonical = resolveCanonicalCity(cityLabel);
                 const fill = resolveTravelTips(
                   normalizeTextForSearch(canonical),
                   String(canonical || cityLabel).trim() || cityLabel,
-                  getIconicPlacesFallback(cityLabel) || []
+                  getIconicPlacesFallback(cityLabel) || [],
+                  language
                 ).do;
                 const expertTips = dedupeTipLines([...doList, ...fill]).slice(0, 3);
                 const threeTips = expertTips;
@@ -4384,10 +4525,10 @@ function DestinationGuideView({
                         id="destination-expert-tips-heading"
                         className="text-[11px] font-bold uppercase tracking-[0.32em] text-slate-300"
                       >
-                        Conseils
+                        {t("destination.tipsTitle")}
                       </h4>
                       <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" strokeWidth={2} aria-hidden />
-                      <span className="sr-only">Trois conseils d’expert pour la destination</span>
+                      <span className="sr-only">{t("destination.tipsSr")}</span>
                     </div>
                     <ul className="mt-6 space-y-6 text-sm leading-relaxed text-slate-100">
                       {threeTips.map((tip, i) => (
@@ -4410,8 +4551,10 @@ function DestinationGuideView({
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">Activités proposées</h4>
-                    <p className="text-[11px] text-slate-500">Idées pour ton séjour</p>
+                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                      {t("destination.activitiesTitle")}
+                    </h4>
+                    <p className="text-[11px] text-slate-500">{t("destination.activitiesSubtitle")}</p>
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
@@ -4422,7 +4565,7 @@ function DestinationGuideView({
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
                         className="inline-flex max-w-full rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
                       >
-                        {cell.title}
+                        {displayActivityTitleForLocale(cell.title, language)}
                       </span>
                     );
                   })}
@@ -4437,7 +4580,7 @@ function DestinationGuideView({
                     </span>
                     <div>
                       <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
-                        Programme sur mesure
+                        {t("destination.itineraryTitle")}
                         {VITE_ITINERARY_PREMIUM_ONLY ? (
                           <span className="ml-2 font-sans text-[10px] font-semibold normal-case tracking-normal text-amber-800/90">
                             Premium
@@ -4445,7 +4588,7 @@ function DestinationGuideView({
                         ) : null}
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Indique tes dates sur place — génération à la demande (max. 14 jours).
+                        {t("destination.itinerarySubtitle")}
                       </p>
                     </div>
                   </div>
@@ -4462,7 +4605,7 @@ function DestinationGuideView({
                     disabled={itineraryLoading}
                     className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
                   >
-                    {itineraryLoading ? "Génération…" : "Générer un programme"}
+                    {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
                   </button>
                 </div>
                 {itineraryError && !itineraryModalOpen ? <ItineraryErrorNotice raw={itineraryError} /> : null}
@@ -4474,7 +4617,7 @@ function DestinationGuideView({
                         className="relative overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/50 py-4 pl-4 pr-4 shadow-sm ring-1 ring-slate-100/90 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-2xl before:bg-gradient-to-b before:from-sky-500 before:to-indigo-500 before:content-['']"
                       >
                         <p className="text-sm font-semibold text-slate-900">
-                          Jour {Number(d?.day) || "?"} — {String(d?.title || "")}
+                          {t("destination.itineraryDay", { n: Number(d?.day) || "?" })} — {String(d?.title || "")}
                         </p>
                         {Array.isArray(d?.bullets) && d.bullets.length > 0 ? (
                           <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3 text-sm text-slate-700">
@@ -4491,7 +4634,7 @@ function DestinationGuideView({
                   </ul>
                 ) : generatedDayIdeas === null ? (
                   <p className="mt-4 text-center text-xs text-slate-400">
-                    Clique sur « Générer un programme », choisis tes dates, puis valide.
+                    {t("destination.itineraryHint")}
                   </p>
                 ) : null}
               </section>
@@ -4503,7 +4646,7 @@ function DestinationGuideView({
               src={DESTINATION_GUIDE_HERO_IMAGE_1280}
               srcSet={`${DESTINATION_GUIDE_HERO_IMAGE_1280} 1280w, ${DESTINATION_GUIDE_HERO_IMAGE} 3992w`}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
-              alt="Vue du ciel : vague, sable fin et eau turquoise"
+              alt={t("destination.heroImageAlt")}
               className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
               width={3992}
               height={2242}
@@ -4518,7 +4661,7 @@ function DestinationGuideView({
             <div className="absolute inset-0 z-[1] flex items-center justify-center px-3 py-4 sm:px-10 sm:py-6">
               <div className="w-full max-w-xl rounded-xl border border-white/25 bg-white/[0.14] px-5 py-6 shadow-[0_20px_48px_rgba(0,0,0,0.22)] backdrop-blur-md sm:rounded-[2rem] sm:px-12 sm:py-10">
                 <p className="text-center font-serif text-[clamp(1.5rem,7.5vw,3.15rem)] font-medium leading-snug tracking-tight text-white [text-shadow:0_2px_24px_rgba(0,0,0,0.4)] sm:leading-[1.15]">
-                  Envie de partir&nbsp;?
+                  {t("destination.heroTagline")}
                 </p>
                 <div className="mx-auto mt-4 h-px w-12 bg-gradient-to-r from-transparent via-white/55 to-transparent sm:mt-6 sm:w-16" aria-hidden />
               </div>
@@ -4537,23 +4680,25 @@ function DestinationGuideView({
           >
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 id="itinerary-modal-title" className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-900">
-                Programme à {String(displayGuide.city)}
+                {t("destination.itineraryModalTitle", {
+                  city: displayCityForLocale(String(displayGuide.city), language),
+                })}
               </h2>
               <button
                 type="button"
                 onClick={() => setItineraryModalOpen(false)}
                 className="shrink-0 rounded-full p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Fermer"
+                aria-label={t("common.close")}
               >
                 <X size={18} />
               </button>
             </div>
             <p className="mb-4 text-xs leading-relaxed text-slate-600">
-              Choisis la période de ton séjour sur place. Nous générons un fil jour par jour (jusqu’à 14 jours).
+              {t("destination.itineraryModalDesc")}
             </p>
             <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                Début
+                {t("destination.itineraryStart")}
                 <ModalDateField
                   wrapClass="mt-1"
                   value={programStartDate}
@@ -4561,7 +4706,7 @@ function DestinationGuideView({
                 />
               </label>
               <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                Fin
+                {t("destination.itineraryEnd")}
                 <ModalDateField
                   wrapClass="mt-1"
                   value={programEndDate}
@@ -4574,8 +4719,8 @@ function DestinationGuideView({
               return (
                 <p className="mt-3 text-xs text-slate-600">
                   {prev.ok
-                    ? `Durée : ${prev.days} jour(s) inclus.`
-                    : prev.error || "Vérifie les dates."}
+                    ? t("destination.itineraryDuration", { n: prev.days })
+                    : prev.error || t("destination.itineraryDatesError")}
                 </p>
               );
             })()}
@@ -4586,7 +4731,7 @@ function DestinationGuideView({
                 onClick={() => setItineraryModalOpen(false)}
                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
-                Annuler
+                {t("destination.itineraryCancel")}
               </button>
               <button
                 type="button"
@@ -4594,7 +4739,7 @@ function DestinationGuideView({
                 disabled={itineraryLoading}
                 className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
-                {itineraryLoading ? "Génération…" : "Générer"}
+                {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerateShort")}
               </button>
             </div>
           </div>
@@ -4629,11 +4774,10 @@ function DestinationGuideView({
                   id="itinerary-premium-gate-title"
                   className="mt-5 text-lg font-semibold leading-snug tracking-tight text-slate-900"
                 >
-                  Fonctionnalité Premium
+                  {t("destination.premiumTitle")}
                 </h2>
                 <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-600">
-                  La génération de programme sur mesure est réservée au service Premium. Veuillez souscrire à un forfait
-                  Premium avant de pouvoir utiliser cette fonctionnalité.
+                  {t("destination.premiumBody")}
                 </p>
               </div>
               <button
@@ -4680,7 +4824,7 @@ function DestinationGuideView({
                   id="itinerary-quota-modal-title"
                   className="mt-5 text-lg font-semibold leading-snug tracking-tight text-slate-900"
                 >
-                  Service temporairement saturé
+                  {t("destination.quotaTitle")}
                 </h2>
                 <p className="mt-3 max-w-xs text-sm leading-relaxed text-slate-600">
                   Veuillez réessayer plus tard.
@@ -4707,7 +4851,9 @@ function DestinationGuideView({
           <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8">
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
-                Ajouter {String(displayGuide.city)}
+                {t("destination.addCityHeading", {
+                  city: displayCityForLocale(String(displayGuide.city), language),
+                })}
               </h2>
               <button
                 type="button"
@@ -4728,30 +4874,28 @@ function DestinationGuideView({
             </div>
             <div className="mt-5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-                Activités à inclure
+                {t("destination.addActivitiesTitle")}
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Coche les activités puis, pour chacune, choisis le <span className="font-medium text-slate-600">jour</span> du
-                séjour et l’<span className="font-medium text-slate-600">heure</span> — elles apparaissent ainsi dans le
-                calendrier.
+                {t("destination.addActivitiesHint")}
               </p>
               <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                Lieu et budget (ordres de grandeur) : une fois le voyage créé, ouvre le détail d’une activité dans le
-                calendrier via le bouton œil.
+                {t("destination.addActivitiesBudgetHint")}
               </p>
               <div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3">
                 {(displayGuide.suggestedActivities || []).length === 0 ? (
                   <p className="text-xs text-slate-500">
-                    Aucune activité proposée pour cette destination — tu pourras en ajouter dans le planning.
+                    {t("destination.noActivitiesProposed")}
                   </p>
                 ) : (
                   (displayGuide.suggestedActivities || []).map((a, i) => {
                     const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
-                    const label = cell.title;
+                    const rawLabel = cell.title;
+                    const displayLabel = displayActivityTitleForLocale(rawLabel, language);
                     const checked = pickedActivityIndices.has(i);
                     return (
                       <label
-                        key={`pick-act-${i}-${label.slice(0, 32)}`}
+                        key={`pick-act-${i}-${rawLabel.slice(0, 32)}`}
                         className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-100 transition hover:bg-slate-50/90"
                       >
                         <input
@@ -4765,14 +4909,14 @@ function DestinationGuideView({
                                 pickedActivityLabelsRef.current.delete(i);
                               } else {
                                 n.add(i);
-                                pickedActivityLabelsRef.current.set(i, label);
+                                pickedActivityLabelsRef.current.set(i, rawLabel);
                               }
                               return n;
                             });
                           }}
                           className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
-                        <span className="min-w-0 text-sm font-medium leading-snug text-slate-900">{label}</span>
+                        <span className="min-w-0 text-sm font-medium leading-snug text-slate-900">{displayLabel}</span>
                       </label>
                     );
                   })
@@ -4781,10 +4925,10 @@ function DestinationGuideView({
               {sortedPickedIndices.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90">
-                    Jour & heure dans le calendrier
+                    {t("destination.scheduleTitle")}
                   </p>
                   {tripDatesForModal.length === 0 ? (
-                    <p className="mt-2 text-xs text-rose-600">Indique des dates de séjour valides (début ≤ fin).</p>
+                    <p className="mt-2 text-xs text-rose-600">{t("destination.scheduleDatesError")}</p>
                   ) : (
                     <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
                       {sortedPickedIndices.map((actIndex, j) => {
@@ -4792,9 +4936,10 @@ function DestinationGuideView({
                           (displayGuide.suggestedActivities || [])[actIndex],
                           displayGuide.city
                         );
-                        const label = String(
+                        const rawPick = String(
                           pickedActivityLabelsRef.current.get(actIndex) || cell.title || ""
                         );
+                        const label = displayActivityTitleForLocale(rawPick, language);
                         const defDate =
                           tripDatesForModal[j % tripDatesForModal.length] || startDate;
                         const defTime =
@@ -4813,7 +4958,7 @@ function DestinationGuideView({
                             </span>
                             <div className="flex shrink-0 flex-wrap items-center gap-2">
                               <select
-                                aria-label={`Jour pour ${label}`}
+                                aria-label={t("destination.dayFor", { label })}
                                 value={dateVal}
                                 onChange={(e) =>
                                   setActivitySchedule((prev) => ({
@@ -4828,7 +4973,7 @@ function DestinationGuideView({
                               >
                                 {tripDatesForModal.map((d) => (
                                   <option key={d} value={d}>
-                                    {new Date(`${d}T12:00:00`).toLocaleDateString("fr-FR", {
+                                    {new Date(`${d}T12:00:00`).toLocaleDateString(getAppDateLocale(), {
                                       weekday: "short",
                                       day: "numeric",
                                       month: "short",
@@ -4837,7 +4982,7 @@ function DestinationGuideView({
                                 ))}
                               </select>
                               <select
-                                aria-label={`Heure pour ${label}`}
+                                aria-label={t("destination.hourFor", { label })}
                                 value={timeVal}
                                 onChange={(e) =>
                                   setActivitySchedule((prev) => ({
@@ -4913,7 +5058,7 @@ function DestinationGuideView({
               className={`mt-5 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
               style={GLASS_ACCENT_STYLE}
             >
-              {creatingVoyage ? "Creation…" : "Creer ce voyage"}
+              {creatingVoyage ? t("destination.creating") : t("destination.createTrip")}
             </button>
           </div>
         </div>
@@ -4923,14 +5068,15 @@ function DestinationGuideView({
 }
 
 function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip }) {
+  const { t } = useI18n();
   const sections = classifyTrips(trips);
   return (
     <section className="space-y-8">
       <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-emerald-700">Maintenant</h2>
+          <h2 className="text-xs uppercase tracking-[0.4em] text-emerald-700">{t("home.now")}</h2>
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
-            En cours
+            {t("trips.badgeInProgress")}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -4947,15 +5093,15 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   muted={false}
                 />
               ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">Aucun voyage en cours.</p>}
+            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("home.noCurrentTrip")}</p>}
         </div>
       </div>
 
       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-sky-700">Prochainement</h2>
+          <h2 className="text-xs uppercase tracking-[0.4em] text-sky-700">{t("home.upcoming")}</h2>
           <span className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-700">
-            A venir
+            {t("trips.badgeUpcoming")}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -4972,15 +5118,15 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   muted={false}
                 />
               ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">Aucun voyage a venir.</p>}
+            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("trips.noUpcomingList")}</p>}
         </div>
       </div>
 
       <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-600">Souvenirs</h2>
+          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-600">{t("trips.memories")}</h2>
           <span className="rounded-full bg-slate-200 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-            Passes
+            {t("trips.badgePast")}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -4997,7 +5143,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   muted
                 />
               ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">Aucun souvenir.</p>}
+            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("trips.noMemories")}</p>}
         </div>
       </div>
     </section>
@@ -5019,6 +5165,15 @@ function PlannerView({
   monthCursor,
   setMonthCursor,
 }) {
+  const { t, language } = useI18n();
+  const plannerWeekdayLabels = useMemo(() => {
+    const tag = getAppDateLocale();
+    const monday = new Date(2024, 0, 1);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      return d.toLocaleDateString(tag, { weekday: "narrow" });
+    });
+  }, [language]);
   const [activityModalOpen, setActivityModalOpen] = useState(false);
   const [editActivityModalOpen, setEditActivityModalOpen] = useState(false);
   const [activityDetailsOpen, setActivityDetailsOpen] = useState(false);
@@ -5093,15 +5248,17 @@ function PlannerView({
               {"<"}
             </button>
             <h2 className="min-w-0 truncate px-1 text-center text-[10px] uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.4em]">
-              {monthCursor.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+              {monthCursor.toLocaleDateString(getAppDateLocale(), { month: "long", year: "numeric" })}
             </h2>
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
               {">"}
             </button>
           </div>
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 sm:gap-2 sm:text-xs">
-            {["L", "M", "M", "J", "V", "S", "D"].map((x, i) => (
-              <div key={`${x}-${i}`} className="py-2">{x}</div>
+            {plannerWeekdayLabels.map((x, i) => (
+              <div key={`wd-${i}-${x}`} className="py-2">
+                {x}
+              </div>
             ))}
             {days.map((d, i) => {
               if (!d) return <div key={`empty-${i}`} className="h-10 rounded-lg bg-slate-50 sm:h-12 sm:rounded-xl" />;
@@ -5149,14 +5306,13 @@ function PlannerView({
               );
             })}
           </div>
-          <p className="mt-3 text-center text-[10px] leading-relaxed text-slate-500">
-            Chiffre en haut à droite d&apos;une case = nombre d&apos;activités ce jour. Le point en bas = jour inclus dans
-            un voyage (pas forcément d&apos;activité).
-          </p>
+          <p className="mt-3 text-center text-[10px] leading-relaxed text-slate-500">{t("planner.calendarLegend")}</p>
         </div>
 
         <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
-          <h3 className="mb-3 break-all text-xs uppercase tracking-[0.4em] text-slate-500">{selectedDate}</h3>
+          <h3 className="mb-3 break-all text-xs uppercase tracking-[0.4em] text-slate-500">
+            {formatDate(selectedDate)}
+          </h3>
           <button
             onClick={() => {
               setActivityFormError("");
@@ -5169,7 +5325,7 @@ function PlannerView({
             className={`mb-4 rounded-2xl px-4 py-2 text-white ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            + Ajouter une activite
+            {t("planner.addActivity")}
           </button>
           <div className="space-y-3">
             {dayActivities && dayActivities.length > 0 ? dayActivities.map((a) => (
@@ -5182,7 +5338,11 @@ function PlannerView({
                     <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                       {String(a.time || "--:--")}
                     </p>
-                    <p className="truncate font-medium text-slate-900">{String(a?.title || a?.name || "Activite")}</p>
+                    <p className="truncate font-medium text-slate-900">
+                      {String(a?.title || a?.name || "").trim()
+                        ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
+                        : t("planner.activityNamePlaceholder")}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2 px-4 py-3">
@@ -5192,14 +5352,19 @@ function PlannerView({
                       setActivityDetailsOpen(true);
                     }}
                     className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    title="Voir les details"
+                    title={t("planner.viewDetails")}
                   >
                     <Eye size={14} />
                   </button>
                   <button
                     onClick={() => {
                       setEditingActivity(a);
-                      setTitle(String(a?.title || a?.name || ""));
+                      const rawAct = String(a?.title || a?.name || "").trim();
+                      setTitle(
+                        rawAct
+                          ? displayActivityTitleForLocale(rawAct, language)
+                          : ""
+                      );
                       setDescription(String(a?.description || ""));
                       setLocation(String(a?.location || ""));
                       setCost(String(a?.cost ?? ""));
@@ -5207,14 +5372,14 @@ function PlannerView({
                       setEditActivityModalOpen(true);
                     }}
                     className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    title="Modifier"
+                    title={t("tripCard.edit")}
                   >
                     <Pencil size={14} />
                   </button>
                   <button
                     onClick={() => setActivityToDelete(a)}
                     className="rounded-full border border-rose-100 bg-white p-2 text-rose-700 shadow-sm transition hover:bg-rose-50"
-                    title="Supprimer"
+                    title={t("tripCard.delete")}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -5222,7 +5387,7 @@ function PlannerView({
               </div>
             )) : (
               <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
-                <p className="font-medium text-slate-700">Aucune activité à cette date.</p>
+                <p className="font-medium text-slate-700">{t("planner.noActivitiesThisDate")}</p>
               </div>
             )}
           </div>
@@ -5233,7 +5398,7 @@ function PlannerView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
           <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
             <div className="mb-5 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Nouvelle activite</h2>
+              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.newActivityTitle")}</h2>
               <button
                 onClick={() => {
                   setActivityModalOpen(false);
@@ -5254,13 +5419,13 @@ function PlannerView({
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Activite"
+                placeholder={t("planner.activityNamePlaceholder")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optionnel)"
+                placeholder={t("planner.descriptionPlaceholder")}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
@@ -5273,7 +5438,7 @@ function PlannerView({
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                placeholder="Lieu"
+                placeholder={t("planner.locationPlaceholder")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <div className="relative">
@@ -5284,7 +5449,7 @@ function PlannerView({
                   inputMode="decimal"
                   value={cost}
                   onChange={(e) => setCost(e.target.value)}
-                  placeholder="Cout"
+                  placeholder={t("planner.costPlaceholder")}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
                 />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
@@ -5319,10 +5484,7 @@ function PlannerView({
                         result && typeof result === "object" && String(result.error || "").trim()
                           ? String(result.error).trim()
                           : "";
-                      setActivityFormError(
-                        detail ||
-                          "Enregistrement refuse. Verifie aussi le bandeau en haut de la page (message rouge), l'URL / la cle Supabase dans l'app, et les contraintes (FK trip_id → trips.id)."
-                      );
+                      setActivityFormError(detail || t("planner.activitySaveRejected"));
                     }
                   } finally {
                     setSavingNewActivity(false);
@@ -5331,7 +5493,7 @@ function PlannerView({
                 className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
                 style={GLASS_ACCENT_STYLE}
               >
-                {savingNewActivity ? "Enregistrement…" : "Ajouter"}
+                {savingNewActivity ? t("planner.saving") : t("planner.addButton")}
               </button>
             </div>
           </div>
@@ -5342,7 +5504,7 @@ function PlannerView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
           <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7">
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">Details activite</h2>
+              <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">{t("planner.detailsTitle")}</h2>
               <button
                 onClick={() => {
                   setActivityDetailsOpen(false);
@@ -5354,40 +5516,45 @@ function PlannerView({
               </button>
             </div>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Activite</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("planner.activityFieldLabel")}</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">
-                {String(viewingActivity?.title || viewingActivity?.name || "Activite")}
+                {String(viewingActivity?.title || viewingActivity?.name || "").trim()
+                  ? displayActivityTitleForLocale(
+                      String(viewingActivity?.title || viewingActivity?.name || ""),
+                      language
+                    )
+                  : t("planner.activityNamePlaceholder")}
               </p>
             </div>
             <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Date</p>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.dateField")}</p>
                 <p className="mt-1 break-all text-sm font-medium text-slate-900">
-                  {String(viewingActivity?.date || "-")}
+                  {viewingActivity?.date ? formatDate(viewingActivity.date) : "-"}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Heure</p>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.timeField")}</p>
                 <p className="mt-1 text-sm font-medium text-slate-900">
                   {String(viewingActivity?.time || "--:--")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Budget</p>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.budgetField")}</p>
                 <p className="mt-1 text-sm font-medium text-slate-900">
-                  {Number(viewingActivity?.cost || 0).toFixed(2)} EUR
+                  {Number(viewingActivity?.cost || 0).toFixed(2)} {t("planner.currencyEur")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4 sm:col-span-2">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Lieu</p>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.locationField")}</p>
                 <p className="mt-1 break-words text-sm font-medium text-slate-900">
                   {String(viewingActivity?.location || "-")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:col-span-2 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Description</p>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.descriptionField")}</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">
-                  {String(viewingActivity?.description || "").trim() || "Aucune description"}
+                  {String(viewingActivity?.description || "").trim() || t("planner.noDescriptionYet")}
                 </p>
               </div>
             </div>
@@ -5399,7 +5566,7 @@ function PlannerView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
           <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
             <div className="mb-5 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Modifier activite</h2>
+              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.editActivityTitle")}</h2>
               <button
                 onClick={() => {
                   setEditActivityModalOpen(false);
@@ -5415,13 +5582,13 @@ function PlannerView({
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Activite"
+                placeholder={t("planner.activityNamePlaceholder")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optionnel)"
+                placeholder={t("planner.descriptionPlaceholder")}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
@@ -5434,7 +5601,7 @@ function PlannerView({
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                placeholder="Lieu"
+                placeholder={t("planner.locationPlaceholder")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
               />
               <div className="relative">
@@ -5445,7 +5612,7 @@ function PlannerView({
                   inputMode="decimal"
                   value={cost}
                   onChange={(e) => setCost(e.target.value)}
-                  placeholder="Cout"
+                  placeholder={t("planner.costPlaceholder")}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
                 />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
@@ -5454,9 +5621,13 @@ function PlannerView({
               </div>
               <button
                 onClick={() => {
+                  const rawStored = String(editingActivity?.title || editingActivity?.name || "");
+                  const titleOut =
+                    activityTitleSaveValue(rawStored, title, language) ||
+                    t("planner.activityNamePlaceholder");
                   onUpdateActivity({
                     ...editingActivity,
-                    title,
+                    title: titleOut,
                     description,
                     location,
                     cost,
@@ -5473,7 +5644,7 @@ function PlannerView({
                 className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
-                Enregistrer
+                {t("common.save")}
               </button>
             </div>
           </div>
@@ -5483,16 +5654,23 @@ function PlannerView({
       {activityToDelete ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
           <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
-            <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">Confirmation</h2>
+            <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.confirmTitle")}</h2>
             <p className="mb-6 break-words text-sm text-slate-700">
-              Supprimer l'activite <span className="font-semibold">{String(activityToDelete?.title || activityToDelete?.name || "Activite")}</span> ?
+              {t("planner.deleteActivityQuestion", {
+                name: String(activityToDelete?.title || activityToDelete?.name || "").trim()
+                  ? displayActivityTitleForLocale(
+                      String(activityToDelete?.title || activityToDelete?.name || ""),
+                      language
+                    )
+                  : t("planner.activityNamePlaceholder"),
+              })}
             </p>
             <div className={MODAL_GRID_2}>
               <button
                 onClick={() => setActivityToDelete(null)}
                 className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm hover:bg-slate-100 sm:px-4"
               >
-                Annuler
+                {t("common.cancel")}
               </button>
               <button
                 onClick={() => {
@@ -5502,7 +5680,7 @@ function PlannerView({
                 className="min-w-0 rounded-2xl px-2 py-3 text-sm text-white sm:px-4"
                 style={{ backgroundColor: "#e11d48" }}
               >
-                Supprimer
+                {t("tripCard.delete")}
               </button>
             </div>
           </div>
@@ -5536,6 +5714,7 @@ function normalizeTripExpenseRow(row) {
 }
 
 function GroupExpenseModal({ open, onClose, trip, participants, displayForParticipant, initial, onSave, saving }) {
+  const { t } = useI18n();
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [paidBy, setPaidBy] = useState("Moi");
@@ -5583,9 +5762,14 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h3 className="min-w-0 flex-1 text-xs uppercase tracking-[0.35em] text-slate-500">
-            {initial?.id ? "Modifier la dépense" : "Nouvelle dépense"}
+            {initial?.id ? t("budget.editExpense") : t("budget.newExpenseModal")}
           </h3>
-          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-full p-2 hover:bg-slate-100"
+            aria-label={t("menu.closeMenu")}
+          >
             <X size={18} />
           </button>
         </div>
@@ -5593,7 +5777,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Libellé (ex. Courses, Taxi, Hôtel)"
+            placeholder={t("budget.expenseTitlePh")}
             className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm sm:px-4"
           />
           <div className={MODAL_GRID_2}>
@@ -5605,7 +5789,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="Montant"
+                placeholder={t("budget.amountPh")}
                 className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-9 text-sm sm:px-4 sm:pr-10"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 sm:right-4">
@@ -5619,7 +5803,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             />
           </div>
           <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Payé par</p>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("budget.paidBySection")}</p>
             <select
               value={paidBy}
               onChange={(e) => setPaidBy(e.target.value)}
@@ -5633,8 +5817,8 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             </select>
           </div>
           <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Partagé entre</p>
-            <p className="mb-2 text-[11px] text-slate-500">Coche les personnes concernées par cette dépense (équitable).</p>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("budget.splitBetween")}</p>
+            <p className="mb-2 text-[11px] text-slate-500">{t("budget.splitBetweenHint")}</p>
             <div className="flex flex-wrap gap-2">
               {parts.map((p) => (
                 <label
@@ -5667,7 +5851,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
               onSave({
                 id: initial?.id,
                 trip_id: trip.id,
-                title: String(title || "").trim() || "Dépense",
+                title: String(title || "").trim() || t("budget.expenseDefaultTitle"),
                 amount: amt,
                 paid_by: paidBy,
                 split_between: splitArr.length === parts.length ? [] : splitArr,
@@ -5677,7 +5861,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             className={`w-full rounded-2xl px-4 py-3 text-sm font-medium text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            {saving ? "Enregistrement…" : "Enregistrer"}
+            {saving ? t("planner.saving") : t("common.save")}
           </button>
         </div>
       </div>
@@ -5686,11 +5870,13 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
 }
 
 function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesEnabled, onOpenDetail }) {
+  const { t, language } = useI18n();
   const acts = (activities || []).filter((a) => String(a.trip_id) === String(trip.id));
   const exps = (groupExpenses || []).filter((e) => String(e.trip_id) === String(trip.id));
   const totalPlanner = acts.reduce((s, a) => s + Number(a.cost || 0), 0);
   const totalGroup = exps.reduce((s, e) => s + Number(e.amount || 0), 0);
-  const label = String(trip?.destination || trip?.title || "Voyage").trim();
+  const rawLabel = String(trip?.destination || trip?.title || "").trim();
+  const label = rawLabel ? displayCityForLocale(rawLabel, language) : t("modals.tripDefault");
   const imageTitle = String(trip?.destination || trip?.title || "voyage");
   const dr =
     trip?.start_date && trip?.end_date
@@ -5715,25 +5901,25 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
             {groupExpensesEnabled ? (
               <div className="mt-2.5 flex flex-col gap-1 text-xs text-white/88 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
                 <span className="min-w-0">
-                  <span className="text-white/75">Dépenses partagées</span>{" "}
+                  <span className="text-white/75">{t("budget.sharedExpensesLabel")}</span>{" "}
                   <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
                 </span>
                 <span className="hidden text-white/40 sm:inline" aria-hidden>
                   ·
                 </span>
                 <span className="min-w-0">
-                  <span className="text-white/75">Réf. planning</span>{" "}
+                  <span className="text-white/75">{t("budget.plannerRefLabel")}</span>{" "}
                   <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
                 </span>
               </div>
             ) : (
               <p className="mt-2.5 text-xs text-white/88">
-                <span className="text-white/75">Réf. planning</span>{" "}
+                <span className="text-white/75">{t("budget.plannerRefLabel")}</span>{" "}
                 <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
               </p>
             )}
             <p className="mt-2 text-[11px] font-medium text-white/95 underline decoration-white/35 underline-offset-2">
-              Ouvrir le budget du voyage
+              {t("budget.openTripBudget")}
             </p>
           </div>
           <ChevronRight className="mt-0.5 h-5 w-5 shrink-0 text-white/75" strokeWidth={2} aria-hidden />
@@ -5744,8 +5930,10 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
 }
 
 function BudgetTripDetailShell({ trip, onClose, children }) {
+  const { t, language } = useI18n();
   if (!trip) return null;
-  const label = String(trip?.destination || trip?.title || "Voyage").trim();
+  const rawLabel = String(trip?.destination || trip?.title || "").trim();
+  const label = rawLabel ? displayCityForLocale(rawLabel, language) : t("modals.tripDefault");
   const dr =
     trip?.start_date && trip?.end_date
       ? `${String(trip.start_date)} — ${String(trip.end_date)}`
@@ -5766,7 +5954,7 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
       >
         <div className="flex shrink-0 items-start justify-between gap-2 border-b border-slate-100 px-4 pb-3 pt-4 sm:gap-3 sm:px-6">
           <div className="min-w-0 flex-1 pr-1">
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Budget du voyage</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{t("budget.tripDetailTitle")}</p>
             <h2
               id="budget-trip-detail-title"
               className="mt-1 line-clamp-2 break-words text-lg font-semibold leading-snug text-slate-900"
@@ -5779,7 +5967,7 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
             type="button"
             onClick={onClose}
             className="shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-100"
-            aria-label="Fermer"
+            aria-label={t("menu.closeMenu")}
           >
             <X size={22} />
           </button>
@@ -5803,6 +5991,7 @@ function TripExpenseDetail({
   onUpdateGroupExpense,
   onDeleteGroupExpense,
 }) {
+  const { t, language } = useI18n();
   const [editingActivity, setEditingActivity] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editLocation, setEditLocation] = useState("");
@@ -5830,7 +6019,8 @@ function TripExpenseDetail({
   const settlements = useMemo(() => simplifyTricountDebts(balances), [balances]);
   const balanceEntries = useMemo(() => Object.entries(balances).sort((a, b) => a[0].localeCompare(b[0])), [balances]);
 
-  const tripLabel = String(trip?.destination || trip?.title || "Voyage").trim();
+  const tripLabelRaw = String(trip?.destination || trip?.title || "").trim();
+  const tripLabel = tripLabelRaw ? displayCityForLocale(tripLabelRaw, language) : t("modals.tripDefault");
   const dateRange =
     trip?.start_date && trip?.end_date
       ? `${String(trip.start_date)} → ${String(trip.end_date)}`
@@ -5868,17 +6058,15 @@ function TripExpenseDetail({
             className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
           >
             <Users size={18} className="text-slate-600" strokeWidth={2} />
-            Participants
+            {t("budget.participants")}
           </button>
         </div>
 
         {!groupExpensesEnabled ? (
           <div className="mb-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-            <p className="font-medium">Dépenses partagées non disponibles</p>
+            <p className="font-medium">{t("budget.groupDisabledTitle")}</p>
             <p className="mt-1 text-xs leading-relaxed text-amber-900/85">
-              Pour activer les dépenses de groupe (qui a payé, partage entre participants, soldes, remboursements), exécute le script SQL{' '}
-              <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">supabase/sql/trip_expenses.sql</code> dans Supabase → SQL Editor,
-              puis recharge l’app.
+              {t("budget.groupDisabledBody")}
             </p>
           </div>
         ) : null}
@@ -5887,26 +6075,20 @@ function TripExpenseDetail({
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50/80 px-4 py-3.5 ring-1 ring-indigo-200/50">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-800/80">Total dépenses partagées</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-800/80">{t("budget.totalShared")}</p>
                 <p className="mt-1.5 text-2xl font-semibold tabular-nums text-indigo-950">{formatEuroFR(totalGroup)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-indigo-900/70">
-                  Somme des dépenses enregistrées ici avec payeur et répartition.
-                </p>
+                <p className="mt-1 text-[11px] leading-snug text-indigo-900/70">{t("budget.totalSharedHint")}</p>
               </div>
               <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-3.5 ring-1 ring-slate-200/60">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Réf. planning</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{t("budget.plannerRefLabel")}</p>
                 <p className="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{formatEuroFR(totalPlanner)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-slate-500">
-                  Coûts des activités du calendrier (indépendant des lignes ci‑dessus).
-                </p>
+                <p className="mt-1 text-[11px] leading-snug text-slate-500">{t("budget.plannerRefHint")}</p>
               </div>
             </div>
 
             <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Soldes</p>
-              <p className="mt-1 text-[11px] text-slate-500">
-                Positif = on vous doit de l’argent ; négatif = vous devez rembourser.
-              </p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.balances")}</p>
+              <p className="mt-1 text-[11px] text-slate-500">{t("budget.balancesHint")}</p>
               <ul className="mt-3 space-y-2">
                 {balanceEntries.map(([person, bal]) => {
                   const b = Number(bal) || 0;
@@ -5934,8 +6116,8 @@ function TripExpenseDetail({
 
             {settlements.length > 0 ? (
               <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/50 px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800">Remboursements suggérés</p>
-                <p className="mt-1 text-[11px] text-emerald-900/70">Pour équilibrer tout le monde avec un minimum de virements.</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800">{t("budget.settlementsTitle")}</p>
+                <p className="mt-1 text-[11px] text-emerald-900/70">{t("budget.settlementsHint")}</p>
                 <ul className="mt-3 space-y-2">
                   {settlements.map((s, i) => (
                     <li
@@ -5962,7 +6144,7 @@ function TripExpenseDetail({
                 style={GLASS_ACCENT_STYLE}
               >
                 <Plus size={18} />
-                Nouvelle dépense
+                {t("budget.newExpense")}
               </button>
               <button
                 type="button"
@@ -5975,7 +6157,11 @@ function TripExpenseDetail({
                       const ymd = toYMDLoose(a?.date_key || a?.date);
                       await onAddGroupExpense({
                         trip_id: trip.id,
-                        title: `Planning : ${String(a?.title || a?.name || "Activité")}`,
+                        title: t("budget.importLineTitle", {
+                          activity: String(a?.title || a?.name || "").trim()
+                            ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
+                            : t("planner.activityNamePlaceholder"),
+                        }),
                         amount: Number(a.cost || 0),
                         paid_by: "Moi",
                         split_between: [],
@@ -5988,14 +6174,16 @@ function TripExpenseDetail({
                 }}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {importingPlanner ? "Import…" : `Importer le planning (${plannerWithCost.length})`}
+                {importingPlanner
+                  ? t("budget.importingPlanner")
+                  : t("budget.importPlanner", { count: plannerWithCost.length })}
               </button>
             </div>
 
             <div className="mb-6 border-t border-slate-100 pt-4">
               <div className="mb-3 flex items-center gap-2">
                 <Receipt size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Liste des dépenses</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.expenseList")}</p>
               </div>
               {sortedGroup.length > 0 ? (
                 <ul className="space-y-2">
@@ -6012,9 +6200,10 @@ function TripExpenseDetail({
                         <div className="min-w-0 flex-1">
                           <p className="break-words font-medium text-slate-900">{e.title}</p>
                           <p className="mt-0.5 break-words text-xs text-slate-500">
-                            Payé par <span className="font-medium text-slate-700">{displayName(e.paid_by)}</span>
+                            {t("budget.paidBy")}{" "}
+                            <span className="font-medium text-slate-700">{displayName(e.paid_by)}</span>
                             {" · "}
-                            Part : {splitLabel}
+                            {t("budget.splitLabel")} {splitLabel}
                           </p>
                           {e.expense_date ? (
                             <p className="mt-1 text-[10px] text-slate-400">{e.expense_date}</p>
@@ -6027,7 +6216,7 @@ function TripExpenseDetail({
                               type="button"
                               onClick={() => setGroupModal({ mode: "edit", expense: e })}
                               className="rounded-full p-1.5 text-slate-600 transition hover:bg-slate-200"
-                              title="Modifier"
+                              title={t("tripCard.edit")}
                             >
                               <Pencil size={14} />
                             </button>
@@ -6035,7 +6224,7 @@ function TripExpenseDetail({
                               type="button"
                               onClick={() => onDeleteGroupExpense(e)}
                               className="rounded-full p-1.5 text-rose-700 transition hover:bg-rose-100"
-                              title="Supprimer"
+                              title={t("tripCard.delete")}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -6047,7 +6236,7 @@ function TripExpenseDetail({
                 </ul>
               ) : (
                 <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
-                  Aucune dépense groupe. Utilise « Nouvelle dépense » ou importe depuis le planning.
+                  {t("budget.noGroupExpenses")}
                 </p>
               )}
             </div>
@@ -6057,7 +6246,7 @@ function TripExpenseDetail({
         <div className={groupExpensesEnabled ? "border-t border-slate-100 pt-4" : ""}>
           <div className="mb-3 flex items-center gap-2">
             <Calendar size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Activités du planning</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.plannerActivities")}</p>
           </div>
           {sortedActivities && sortedActivities.length > 0 ? (
             <ul className="space-y-2">
@@ -6067,8 +6256,14 @@ function TripExpenseDetail({
                   className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-900">{String(a?.title || a?.name || "Activité")}</p>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">{String(a?.location || "Lieu non renseigné")}</p>
+                    <p className="font-medium text-slate-900">
+                      {String(a?.title || a?.name || "").trim()
+                        ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
+                        : t("planner.activityNamePlaceholder")}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">
+                      {String(a?.location || t("budget.locationUnknown"))}
+                    </p>
                     <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
                       {a?.date ? (
                         <span className="rounded-md bg-white px-2 py-0.5 font-medium ring-1 ring-slate-200/80">
@@ -6085,13 +6280,18 @@ function TripExpenseDetail({
                         type="button"
                         onClick={() => {
                           setEditingActivity(a);
-                          setEditTitle(String(a?.title || a?.name || "Activité"));
+                          const rawA = String(a?.title || a?.name || "").trim();
+                          setEditTitle(
+                            rawA
+                              ? displayActivityTitleForLocale(rawA, language)
+                              : t("planner.activityNamePlaceholder")
+                          );
                           setEditLocation(String(a?.location || ""));
                           setEditCost(String(a?.cost ?? 0));
                           setEditTime(String(a?.time || ""));
                         }}
                         className="rounded-full p-1.5 text-slate-600 transition hover:bg-slate-200"
-                        title="Modifier le montant ou les infos"
+                        title={t("budget.editActivityCostHint")}
                       >
                         <Pencil size={14} />
                       </button>
@@ -6099,7 +6299,7 @@ function TripExpenseDetail({
                         type="button"
                         onClick={() => onDeleteActivity(a)}
                         className="rounded-full p-1.5 text-rose-700 transition hover:bg-rose-100"
-                        title="Retirer du planning"
+                        title={t("budget.removeFromPlannerHint")}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -6110,7 +6310,7 @@ function TripExpenseDetail({
             </ul>
           ) : (
             <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
-              Aucune activité. Ajoute-en dans l’onglet <span className="font-medium text-slate-700">Planning</span>.
+              {t("budget.noActivitiesPlanner", { plannerTab: t("nav.planner") })}
             </p>
           )}
         </div>
@@ -6146,7 +6346,7 @@ function TripExpenseDetail({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h3 className="min-w-0 text-xs uppercase tracking-[0.35em] text-slate-500">Modifier l&apos;activité</h3>
+              <h3 className="min-w-0 text-xs uppercase tracking-[0.35em] text-slate-500">{t("planner.editActivityTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setEditingActivity(null)}
@@ -6159,13 +6359,13 @@ function TripExpenseDetail({
               <input
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="Nom de l&apos;activité"
+                placeholder={t("planner.activityNamePlaceholder")}
                 className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
               <input
                 value={editLocation}
                 onChange={(e) => setEditLocation(e.target.value)}
-                placeholder="Lieu (optionnel)"
+                placeholder={t("budget.locationOptionalPh")}
                 className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
               <div className={MODAL_GRID_2}>
@@ -6183,7 +6383,7 @@ function TripExpenseDetail({
                     inputMode="decimal"
                     value={editCost}
                     onChange={(e) => setEditCost(e.target.value)}
-                    placeholder="Coût"
+                    placeholder={t("planner.costPlaceholder")}
                     className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-9 text-sm sm:px-4 sm:pr-10"
                   />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 sm:right-4">
@@ -6194,9 +6394,13 @@ function TripExpenseDetail({
               <button
                 type="button"
                 onClick={async () => {
+                  const rawStored = String(editingActivity?.title || editingActivity?.name || "");
+                  const titleOut =
+                    activityTitleSaveValue(rawStored, editTitle, language) ||
+                    t("planner.activityNamePlaceholder");
                   await onUpdateActivity({
                     ...editingActivity,
-                    title: String(editTitle || "Activité"),
+                    title: titleOut,
                     location: String(editLocation || ""),
                     cost: Number(editCost || 0),
                     time: String(editTime || ""),
@@ -6206,7 +6410,7 @@ function TripExpenseDetail({
                 className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
-                Enregistrer
+                {t("common.save")}
               </button>
             </div>
           </div>
@@ -6229,6 +6433,7 @@ function ChatHubView({
   votes,
   onVote,
 }) {
+  const { t, language } = useI18n();
   const currentUserDisplayName = getCurrentUserDisplayName(session);
   const messagesContainerRef = useRef(null);
   const sortedTrips = useMemo(() => {
@@ -6240,7 +6445,7 @@ function ChatHubView({
     });
   }, [trips]);
 
-  const activeTrip = sortedTrips.find((t) => String(t.id) === String(chatTripId)) || null;
+  const activeTrip = sortedTrips.find((tr) => String(tr.id) === String(chatTripId)) || null;
   const tripActivities = (activities || [])
     .filter((a) => String(a.trip_id) === String(chatTripId))
     .sort((a, b) => {
@@ -6281,7 +6486,7 @@ function ChatHubView({
   return (
     <section className="space-y-5">
       <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70 sm:p-5">
-        <h2 className="text-xs uppercase tracking-[0.35em] text-slate-500">Groupes voyages</h2>
+        <h2 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("chat.groupsTitle")}</h2>
         <div className="mt-3 grid min-w-0 gap-2 md:grid-cols-2">
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
@@ -6307,7 +6512,9 @@ function ChatHubView({
                       active ? "border-white/55" : "border-white/42"
                     }`}
                   >
-                    <p className="font-medium">{String(trip.title)}</p>
+                    <p className="font-medium">
+                      {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
+                    </p>
                     <p className="text-xs text-white/85">
                       {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
                     </p>
@@ -6330,7 +6537,7 @@ function ChatHubView({
               );
             })
           ) : (
-            <p className="text-sm text-slate-500">Aucun voyage disponible.</p>
+            <p className="text-sm text-slate-500">{t("chat.noTrips")}</p>
           )}
         </div>
       </div>
@@ -6349,7 +6556,7 @@ function ChatHubView({
                   id="tp-chat-hub-title"
                   className="break-words text-base font-semibold leading-snug tracking-tight text-slate-900 sm:text-lg"
                 >
-                  {String(activeTrip.title)}
+                  {displayCityForLocale(String(activeTrip.title || ""), language) || t("modals.tripDefault")}
                 </h2>
                 <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                   {formatDate(activeTrip.start_date)} — {formatDate(activeTrip.end_date)}
@@ -6359,8 +6566,8 @@ function ChatHubView({
                 type="button"
                 onClick={() => setChatTripId("")}
                 className="shrink-0 rounded-full p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                title="Fermer"
-                aria-label="Fermer la conversation"
+                title={t("chat.closeShort")}
+                aria-label={t("chat.closeLabel")}
               >
                 <X size={20} strokeWidth={2} aria-hidden />
               </button>
@@ -6369,7 +6576,7 @@ function ChatHubView({
             <div className="shrink-0 px-3 pb-2 pt-2 sm:px-4 sm:pt-3">
               <div
                 role="tablist"
-                aria-label="Discussion ou votes sur les activités"
+                aria-label={`${t("chat.tabDiscussion")} / ${t("chat.tabVotesLong")}`}
                 className="flex gap-1.5 rounded-2xl bg-slate-100/95 p-1.5 ring-1 ring-slate-200/80 sm:gap-2"
               >
                 <button
@@ -6384,7 +6591,7 @@ function ChatHubView({
                   }`}
                 >
                   <MessageCircle size={18} className="shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate">Discussion</span>
+                  <span className="truncate">{t("chat.tabDiscussion")}</span>
                 </button>
                 <button
                   type="button"
@@ -6398,8 +6605,8 @@ function ChatHubView({
                   }`}
                 >
                   <ThumbsUp size={18} className="shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate sm:hidden">Votes</span>
-                  <span className="hidden truncate sm:inline">Votes activités</span>
+                  <span className="truncate sm:hidden">{t("chat.tabVotesShort")}</span>
+                  <span className="hidden truncate sm:inline">{t("chat.tabVotesLong")}</span>
                   {tripActivities.length > 0 ? (
                     <span
                       className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
@@ -6416,7 +6623,9 @@ function ChatHubView({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-0 sm:px-4 sm:pb-4">
               {hubSubView === "chat" ? (
                 <>
-                  <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">Messages</h3>
+                  <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">
+                    {t("chat.messagesHeading")}
+                  </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
                       {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
                         .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
@@ -6471,7 +6680,7 @@ function ChatHubView({
                           );
                         })
                       ) : (
-                        <p className="text-sm text-slate-500">Aucun message pour ce voyage.</p>
+                        <p className="text-sm text-slate-500">{t("chat.noMessages")}</p>
                       )}
                     </div>
                     <div className="mt-3 flex min-w-0 shrink-0 gap-2">
@@ -6484,7 +6693,7 @@ function ChatHubView({
                             onSendMessage();
                           }
                         }}
-                        placeholder="Ecrire un message..."
+                        placeholder={t("chat.writePlaceholder")}
                         className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[16px] md:px-4 md:text-sm"
                       />
                       <button
@@ -6493,16 +6702,14 @@ function ChatHubView({
                         className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
                         style={GLASS_ACCENT_STYLE}
                       >
-                        Envoyer
+                        {t("chat.send")}
                       </button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes sur les activités</h3>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                      Indique si tu es pour ou contre chaque activité du planning — le groupe voit les tendances.
-                    </p>
+                    <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("chat.votesHeading")}</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">{t("chat.votesHint")}</p>
                     <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
                       {tripActivities.length > 0 ? (
                         tripActivities.map((activity) => {
@@ -6512,6 +6719,7 @@ function ChatHubView({
                           const mineValue = Number(mine?.value || 0);
                           const votedFor = list.filter((v) => Number(v?.value || 0) === 1);
                           const votedAgainst = list.filter((v) => Number(v?.value || 0) === -1);
+                          const scoreDisplay = score > 0 ? `+${score}` : String(score);
                           return (
                             <div
                               key={String(activity.id)}
@@ -6520,13 +6728,21 @@ function ChatHubView({
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <p className="break-words text-sm font-semibold text-slate-900">
-                                    {String(activity?.title || activity?.name || "Activite")}
+                                    {String(activity?.title || activity?.name || "").trim()
+                                      ? displayActivityTitleForLocale(
+                                          String(activity?.title || activity?.name || ""),
+                                          language
+                                        )
+                                      : t("planner.activityNamePlaceholder")}
                                   </p>
                                   <p className="text-xs text-slate-500">
                                     {String(activity?.date || "")} {String(activity?.time || "")}
                                   </p>
                                   <p className="mt-0.5 text-xs font-medium text-slate-700">
-                                    Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
+                                    {t("chat.activityBudget", {
+                                      amount: Number(activity?.cost || 0).toFixed(2),
+                                      currency: t("planner.currencyEur"),
+                                    })}
                                   </p>
                                 </div>
                                 <span
@@ -6538,7 +6754,7 @@ function ChatHubView({
                                         : "bg-slate-200 text-slate-700"
                                   }`}
                                 >
-                                  Score {score > 0 ? `+${score}` : score}
+                                  {t("chat.voteScore", { score: scoreDisplay })}
                                 </span>
                               </div>
                               <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
@@ -6551,7 +6767,7 @@ function ChatHubView({
                                       : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
                                   }`}
                                 >
-                                  👍 Je vote pour
+                                  {t("chat.voteButtonFor")}
                                 </button>
                                 <button
                                   type="button"
@@ -6562,35 +6778,35 @@ function ChatHubView({
                                       : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
                                   }`}
                                 >
-                                  👎 Je vote contre
+                                  {t("chat.voteButtonAgainst")}
                                 </button>
                               </div>
                               <p className="mt-2 text-[11px] text-slate-500">
                                 {mineValue === 1
-                                  ? "Ton vote: pour"
+                                  ? t("chat.yourVoteFor")
                                   : mineValue === -1
-                                    ? "Ton vote: contre"
-                                    : "Tu n'as pas encore vote"}
+                                    ? t("chat.yourVoteAgainst")
+                                    : t("chat.notVotedYet")}
                               </p>
                               <div className="mt-2 space-y-1 break-words">
                                 <p className="text-[11px] text-emerald-700">
-                                  Pour:{" "}
+                                  {t("chat.talliesFor")}{" "}
                                   {votedFor.length > 0
                                     ? votedFor.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                    : "-"}
+                                    : t("chat.talliesDash")}
                                 </p>
                                 <p className="text-[11px] text-rose-700">
-                                  Contre:{" "}
+                                  {t("chat.talliesAgainst")}{" "}
                                   {votedAgainst.length > 0
                                     ? votedAgainst.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                    : "-"}
+                                    : t("chat.talliesDash")}
                                 </p>
                               </div>
                             </div>
                           );
                         })
                       ) : (
-                        <p className="text-sm text-slate-500">Aucune activite a voter.</p>
+                        <p className="text-sm text-slate-500">{t("chat.noActivities")}</p>
                       )}
                     </div>
                   </>
@@ -6600,7 +6816,7 @@ function ChatHubView({
         </div>
       ) : (
         <div className="rounded-[2rem] border border-slate-200/70 bg-white/92 px-5 py-6 text-sm text-slate-600 shadow-[0_10px_30px_rgba(2,6,23,0.06)]">
-          Selectionne un voyage dans la liste "Groupes voyages" pour ouvrir sa conversation.
+          {t("chat.selectTrip")}
         </div>
       )}
     </section>
@@ -6681,6 +6897,7 @@ function monthCursorFromPlannerDate(ymd) {
 
 // Main App
 export default function App() {
+  const { t, language } = useI18n();
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() => readStoredActiveTab());
@@ -6747,14 +6964,14 @@ export default function App() {
     trips.find((t) => normTripId(t.id) === normTripId(selectedTripId)) || null;
   const uiTitle =
     activeTab === "trips"
-      ? "Mes Voyages"
+      ? t("nav.trips")
       : activeTab === "planner"
-        ? "Planning"
+        ? t("nav.planning")
         : activeTab === "chat"
-          ? "Chat"
-        : activeTab === "destination"
-          ? "Recherche"
-          : "Budget";
+          ? t("nav.chat")
+          : activeTab === "destination"
+            ? t("nav.search")
+            : t("nav.budget");
 
   const openPlannerToday = (tripToOpen = null) => {
     const today = getTodayStr();
@@ -7497,11 +7714,11 @@ export default function App() {
   const createTrip = async (payload) => {
     const safeTitle = formatCityName(payload?.title || "");
     if (!safeTitle) {
-      setNotice("Destination obligatoire.");
+      setNotice(t("notices.destinationRequired"));
       return false;
     }
     if (String(payload.start_date || "") > String(payload.end_date || "")) {
-      setNotice("Date de debut invalide.");
+      setNotice(t("notices.invalidStartDate"));
       return false;
     }
     const newStart = toYMD(String(payload.start_date || getTodayStr()), getTodayStr());
@@ -7513,7 +7730,7 @@ export default function App() {
       return false;
     }
     if (createTripInFlightRef.current) {
-      setNotice("Creation du voyage en cours…");
+      setNotice(t("notices.tripCreating"));
       return false;
     }
     createTripInFlightRef.current = true;
@@ -7691,7 +7908,7 @@ export default function App() {
         throw error;
       }
     } catch (e) {
-      setNotice(String(e?.message || "Erreur creation voyage"));
+      setNotice(String(e?.message || t("modals.tripCreateError")));
     } finally {
       createTripInFlightRef.current = false;
     }
@@ -7700,13 +7917,13 @@ export default function App() {
 
   const formatSupabaseClientError = (e) => {
     const parts = [e?.message, e?.details, e?.hint, e?.code].filter(Boolean).map(String);
-    return parts.length ? parts.join(" — ") : "Erreur inconnue";
+    return parts.length ? parts.join(" — ") : t("modals.unknownError");
   };
 
   const addActivity = async (input) => {
     const tid = normTripId(selectedTripId);
     if (!tid) {
-      const msg = "Selectionne un voyage.";
+      const msg = t("modals.selectTripFirst");
       setNotice(msg);
       return { ok: false, error: msg };
     }
@@ -7834,17 +8051,13 @@ export default function App() {
       }
       const fallbackMsg = lastInsertError
         ? formatSupabaseClientError(lastInsertError)
-        : "Echec apres plusieurs essais (colonnes / contraintes). Verifie le schema de la table activities.";
+        : t("modals.activityAddFallback");
       setNotice(fallbackMsg);
       return { ok: false, error: fallbackMsg };
     } catch (e) {
-      const m = formatSupabaseClientError(e) || "Erreur ajout activite";
-      const rlsHint = /row-level security|RLS|permission denied|42501/i.test(m)
-        ? " Ouvre Supabase → Table activities → Policies : autorise INSERT/SELECT pour les utilisateurs concernes."
-        : "";
-      const fkHint = /foreign key|violates foreign key|23503/i.test(m)
-        ? " Verifie que le voyage existe bien dans trips (meme projet Supabase) et que trip_id correspond a trips.id."
-        : "";
+      const m = formatSupabaseClientError(e) || t("modals.activityAddError");
+      const rlsHint = /row-level security|RLS|permission denied|42501/i.test(m) ? t("modals.hintRlsSuffix") : "";
+      const fkHint = /foreign key|violates foreign key|23503/i.test(m) ? t("modals.hintFkSuffix") : "";
       const full = m + rlsHint + fkHint;
       setNotice(full);
       return { ok: false, error: full };
@@ -8073,11 +8286,11 @@ export default function App() {
   const updateTrip = async (trip) => {
     const safeTitle = formatCityName(trip?.title || "");
     if (!safeTitle) {
-      setNotice("Destination obligatoire.");
+      setNotice(t("notices.destinationRequired"));
       return;
     }
     if (String(trip.start_date || "") > String(trip.end_date || "")) {
-      setNotice("Date de debut invalide.");
+      setNotice(t("notices.invalidStartDate"));
       return;
     }
     try {
@@ -8272,11 +8485,11 @@ export default function App() {
   };
 
   const tabs = [
-    { id: "trips", icon: Briefcase, label: "Mes Voyages" },
-    { id: "planner", icon: Calendar, label: "Calendrier" },
-    { id: "destination", icon: Search, label: "Recherche" },
-    { id: "budget", icon: DollarSign, label: "Budget" },
-    { id: "chat", icon: MessageCircle, label: "Chat" },
+    { id: "trips", icon: Briefcase, label: t("nav.trips") },
+    { id: "planner", icon: Calendar, label: t("nav.planner") },
+    { id: "destination", icon: Search, label: t("nav.search") },
+    { id: "budget", icon: DollarSign, label: t("nav.budget") },
+    { id: "chat", icon: MessageCircle, label: t("nav.chat") },
   ];
 
   /** Efface seulement les notices ; la ville / la recherche reste (persistée + après refresh). */
@@ -8306,18 +8519,14 @@ export default function App() {
 
     const nstem = normalizeTextForSearch(trimmed);
     if (isExclusiveCountryIntent(nstem)) {
-      setDestinationInvalidMessage(
-        "Pour un pays, choisissez une ville dans les suggestions (par ex. Paris, Lyon, Nice pour la France)."
-      );
+      setDestinationInvalidMessage(t("destination.invalidCountry"));
       setDestinationInvalidModalOpen(true);
       return;
     }
 
-    const resolved = await resolveValidatedDestination(raw);
+    const resolved = await resolveValidatedDestination(raw, language);
     if (!resolved) {
-      setDestinationInvalidMessage(
-        "Cette destination n’existe pas ou n’est pas reconnue. Vérifiez l’orthographe ou choisissez une ville dans la liste."
-      );
+      setDestinationInvalidMessage(t("destination.invalidUnknown"));
       setDestinationInvalidModalOpen(true);
       return;
     }
@@ -8329,7 +8538,7 @@ export default function App() {
     return (
       <div className="min-h-screen grid place-items-center" style={{ background: BG, color: TEXT }}>
         <div className="rounded-[3.5rem] bg-white/80 px-6 py-4 shadow-2xl backdrop-blur-xl">
-          Connexion...
+          {t("app.loading")}
         </div>
       </div>
     );
@@ -8390,24 +8599,28 @@ export default function App() {
             <div className="rounded-[2rem] bg-white/92 p-3 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70 sm:p-5">
               {selectedTrip ? (
                 <TripLiquidGlassShell
-                  imageTitle={String(selectedTrip?.destination || selectedTrip?.title || "voyage")}
+                  imageTitle={String(
+                    selectedTrip?.destination || selectedTrip?.title || t("modals.tripDefault")
+                  )}
                   active
                   className="rounded-2xl border border-white/50 shadow-[0_12px_28px_rgba(2,6,23,0.12)]"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
                     <div className="min-w-0 max-w-full flex-1">
-                      <p className="text-[10px] uppercase tracking-[0.34em] text-white/80">Voyage actif</p>
+                      <p className="text-[10px] uppercase tracking-[0.34em] text-white/80">{t("planner.activeTrip")}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white"
                           style={{ backgroundColor: ACCENT }}
                         >
                           <MapPin size={10} className="mr-1 shrink-0" />
-                          Destination
+                          {t("destination.badgeDestination")}
                         </span>
                       </div>
                       <h3 className="mt-2 break-words text-xl font-extrabold uppercase leading-tight tracking-[0.02em] text-white drop-shadow-sm sm:text-2xl sm:leading-none">
-                        {String(selectedTrip.title || "Voyage")}
+                        {selectedTrip.title
+                          ? displayCityForLocale(String(selectedTrip.title), language)
+                          : t("modals.tripDefault")}
                       </h3>
                       <p className="mt-1 break-all text-xs text-white/85">
                         {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
@@ -8434,7 +8647,7 @@ export default function App() {
                       <button
                         onClick={() => setPlannerInviteOpen(true)}
                         className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
-                        title="Inviter par email"
+                        title={t("modals.inviteByEmailTitle")}
                       >
                         <Mail size={16} />
                       </button>
@@ -8442,7 +8655,7 @@ export default function App() {
                   </div>
                 </TripLiquidGlassShell>
               ) : (
-                <p className="text-sm text-slate-500">Aucun voyage en cours.</p>
+                <p className="text-sm text-slate-500">{t("home.noCurrentTrip")}</p>
               )}
             </div>
             <PlannerView
@@ -8470,14 +8683,8 @@ export default function App() {
                   <Wallet className="h-6 w-6" strokeWidth={2} aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-semibold tracking-tight text-slate-900">Budget des voyages</h2>
-                  <p className="mt-2 break-words text-sm leading-relaxed text-slate-600">
-                    Touche un voyage pour ouvrir son budget :{' '}
-                    <span className="font-medium text-slate-800">dépenses partagées</span> (qui a payé, entre qui),{' '}
-                    <span className="font-medium text-slate-800">soldes</span> et{' '}
-                    <span className="font-medium text-slate-800">remboursements suggérés</span>, plus les{' '}
-                    <span className="font-medium text-slate-800">activités du planning</span> en bas de la fiche.
-                  </p>
+                  <h2 className="text-lg font-semibold tracking-tight text-slate-900">{t("budget.title")}</h2>
+                  <p className="mt-2 break-words text-sm leading-relaxed text-slate-600">{t("budget.intro")}</p>
                 </div>
               </div>
             </div>
@@ -8498,12 +8705,12 @@ export default function App() {
                   <>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
-                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-emerald-700">En cours</h3>
-                        <p className="mb-3 text-[11px] text-emerald-900/60">Voyages dont les dates incluent aujourd&apos;hui.</p>
+                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-emerald-700">{t("trips.badgeInProgress")}</h3>
+                        <p className="mb-3 text-[11px] text-emerald-900/60">{t("trips.nowSectionHint")}</p>
                         <div className="grid gap-4">
                         {sections.now.length > 0
                           ? sections.now.map(renderBudgetTrip)
-                          : <p className="text-sm text-slate-500">Aucun voyage en cours.</p>}
+                          : <p className="text-sm text-slate-500">{t("home.noCurrentTrip")}</p>}
                         </div>
                       </div>
                     </div>
@@ -8515,9 +8722,9 @@ export default function App() {
                           className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
                         >
                           <div>
-                            <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">À venir</h3>
+                            <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">{t("trips.badgeUpcoming")}</h3>
                             <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-sky-800/55">
-                              Départs futurs
+                              {t("trips.upcomingSubtitle")}
                             </p>
                           </div>
                           {budgetUpcomingOpen ? (
@@ -8530,7 +8737,7 @@ export default function App() {
                           <div className="grid gap-4">
                             {sections.upcoming.length > 0
                               ? sections.upcoming.map(renderBudgetTrip)
-                              : <p className="text-sm text-slate-500">Aucun voyage a venir.</p>}
+                              : <p className="text-sm text-slate-500">{t("trips.noUpcomingList")}</p>}
                           </div>
                         ) : null}
                       </div>
@@ -8543,9 +8750,9 @@ export default function App() {
                           className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
                         >
                           <div>
-                            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">Passés</h3>
+                            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">{t("trips.badgePast")}</h3>
                             <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-slate-500">
-                              Voyages terminés
+                              {t("trips.pastSubtitle")}
                             </p>
                           </div>
                           {budgetMemoriesOpen ? (
@@ -8558,7 +8765,7 @@ export default function App() {
                           <div className="grid gap-4">
                             {sections.memories.length > 0
                               ? sections.memories.map(renderBudgetTrip)
-                              : <p className="text-sm text-slate-500">Aucun souvenir.</p>}
+                              : <p className="text-sm text-slate-500">{t("trips.noMemories")}</p>}
                           </div>
                         ) : null}
                       </div>
@@ -8713,7 +8920,7 @@ export default function App() {
         >
           <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
             <h3 id="tp-dest-invalid-title" className="text-lg font-semibold text-slate-900">
-              Destination introuvable
+              {t("destination.modalTitle")}
             </h3>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">{destinationInvalidMessage}</p>
             <button
@@ -8721,7 +8928,7 @@ export default function App() {
               className="mt-6 w-full rounded-2xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
               onClick={() => setDestinationInvalidModalOpen(false)}
             >
-              OK
+              {t("common.ok")}
             </button>
           </div>
         </div>
@@ -8735,19 +8942,21 @@ export default function App() {
         >
           <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
             <h3 id="tp-trip-date-conflict-title" className="text-lg font-semibold text-slate-900">
-              Dates déjà réservées
+              {t("modals.tripDateTitle")}
             </h3>
-            <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              Ces dates se chevauchent avec un voyage déjà prévu. Change les dates du nouveau voyage ou modifie
-              l’existant.
-            </p>
+            <p className="mt-3 text-sm leading-relaxed text-slate-600">{t("modals.tripDateIntro")}</p>
             <ul className="mt-4 max-h-48 list-disc space-y-2 overflow-y-auto pl-5 text-sm text-slate-800">
-              {tripDateConflictTrips.map((t) => (
-                <li key={String(t.id)}>
-                  <span className="font-medium">{tripDestinationDisplayName(t)}</span>
+              {tripDateConflictTrips.map((tripRow) => (
+                <li key={String(tripRow.id)}>
+                  <span className="font-medium">
+                    {displayCityForLocale(
+                      tripDestinationDisplayName(tripRow) || t("modals.tripDefault"),
+                      language
+                    )}
+                  </span>
                   <span className="text-slate-600">
                     {" "}
-                    — du {formatDate(t.start_date)} au {formatDate(t.end_date)}
+                    — {formatDate(tripRow.start_date)} – {formatDate(tripRow.end_date)}
                   </span>
                 </li>
               ))}
@@ -8760,7 +8969,7 @@ export default function App() {
                 setTripDateConflictTrips([]);
               }}
             >
-              OK
+              {t("common.ok")}
             </button>
           </div>
         </div>

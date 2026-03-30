@@ -168,6 +168,35 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+/** Aligné sur les codes langue de l’app (I18nContext). */
+const GEMINI_UI_LANG_RULES = {
+  fr:
+    "Langue de sortie : tout texte destiné au voyageur (champs title, location, description, costNote ; noms dans places ; phrases dans tips et bullets) doit être en français.",
+  en:
+    "Output language: all traveler-facing strings (title, location, description, costNote; place names in places; tips and bullets) must be in English.",
+  de:
+    "Ausgabesprache: alle für Reisende sichtbaren Texte (title, location, description, costNote; Ortsnamen in places; tips und bullets) müssen auf Deutsch sein.",
+  es:
+    "Idioma de salida: todo el texto para el viajero (title, location, description, costNote; nombres en places; tips y bullets) debe estar en español.",
+  it:
+    "Lingua di output: tutto il testo per il viaggiatore (title, location, description, costNote; nomi in places; tips e bullets) deve essere in italiano.",
+  zh:
+    "输出语言：所有面向旅行者的文案（title、location、description、costNote、places 中的名称、tips 与 bullets）必须使用简体中文。",
+};
+
+function resolveGeminiUiLanguage(parsed) {
+  let c = String(parsed?.language || "fr")
+    .trim()
+    .toLowerCase();
+  if (c.includes("-")) c = c.split("-")[0];
+  c = c.slice(0, 2);
+  return GEMINI_UI_LANG_RULES[c] ? c : "fr";
+}
+
+function geminiLangRuleParagraph(code) {
+  return GEMINI_UI_LANG_RULES[code] || GEMINI_UI_LANG_RULES.fr;
+}
+
 const GEMINI_429_HINT_FR =
   " — Quota gratuit Google : souvent un plafond par modèle (ex. 20 requêtes/jour pour gemini-2.5-flash-lite). " +
   "Dans .env.local, essaie GEMINI_MODEL=gemini-2.5-flash (sans -lite) ou GEMINI_MODEL=gemini-2.0-flash pour un autre compteur. " +
@@ -245,6 +274,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         return;
       }
 
+      const uiLang = resolveGeminiUiLanguage(parsed);
+      const langRule = geminiLangRuleParagraph(uiLang);
       const prompt =
         `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
         `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).\n` +
@@ -254,7 +285,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
         `- Chaque "bullets" : 2 ou 3 phrases courtes (pas de sous-liste). Pas de guillemet double à l'intérieur d'une phrase (utilise l'apostrophe ' pour l'élision).\n` +
         `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
-        `Français. Lieux réels pour cette destination.`;
+        `${langRule}\n` +
+        `Lieux réels pour cette destination (pas de lieux inventés).`;
 
       const itinerarySystem =
         "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
@@ -287,18 +319,22 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
         return;
       }
+      const uiLang = resolveGeminiUiLanguage(parsed);
+      const langRule = geminiLangRuleParagraph(uiLang);
       const prompt =
         `Tu es conseiller voyage. Destination : « ${destination} ».\n` +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, de la forme exacte :\n` +
         `{"suggestedActivities":[...]}\n` +
         `\n` +
+        `${langRule}\n` +
+        `\n` +
         `Tableau "suggestedActivities" : au moins 6 objets (pas de simples chaînes), chacun avec :\n` +
-        `- "title" : titre court en français.\n` +
-        `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, repère réel).\n` +
+        `- "title" : titre court dans la langue indiquée.\n` +
+        `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, repère réel), dans la même langue.\n` +
         `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), estimation en euros ; 0 si gratuit avéré.\n` +
-        `- "costNote" : courte précision (ex. billet adulte, gratuit, déjeuner moyen).\n` +
-        `- "description" : une phrase utile (durée, horaire type, conseil).\n` +
-        `Activités réalistes et visitables sur place. Texte en français.`;
+        `- "costNote" : courte précision dans la même langue (ex. billet adulte, gratuit, déjeuner moyen).\n` +
+        `- "description" : une phrase utile dans la même langue (durée, horaire type, conseil).\n` +
+        `Activités réalistes et visitables sur place.`;
       const systemInstruction =
         "Tu réponds uniquement par un objet JSON valide UTF-8. Le tableau suggestedActivities contient des activités touristiques concrètes dans la ville indiquée.";
       try {
@@ -329,6 +365,9 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       return;
     }
 
+    const uiLang = resolveGeminiUiLanguage(parsed);
+    const langRule = geminiLangRuleParagraph(uiLang);
+
     const prompt =
       `Tu agis comme un expert en voyage et conseiller touristique.\n` +
       `\n` +
@@ -352,12 +391,13 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `"tips.dont" : au moins 3 pièges ou erreurs à éviter, eux aussi ancrés dans « ${destination} » quand c’est possible.\n` +
       `\n` +
       `Tableau "suggestedActivities" — au moins 6 objets (pas de simples chaînes), chaque objet avec :\n` +
-      `- "title" : titre court de l’activité en français.\n` +
-      `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, adresse approximative ou point de repère réel, ex. "Alfama, Lisbonne" ou "Miradouro da Senhora do Monte").\n` +
+      `- "title" : titre court de l’activité.\n` +
+      `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, adresse approximative ou point de repère réel, ex. "Alfama, Lisbonne" ou "Miradouro da Senhora do Monte"), dans la langue de sortie.\n` +
       `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), entier ou une décimale, estimation réaliste en euros pour un visiteur type (billets, repas, transport local si pertinent) ; 0 seulement si gratuit avéré.\n` +
-      `- "costNote" : courte précision en français (ex. "billet adulte site officiel", "gratuit — vue panoramique", "déjeuner moyen").\n` +
-      `- "description" : une phrase utile (horaires types, durée, conseil pratique).\n` +
-      `Pas de dates inventées pour le séjour. Tout le texte en français.`;
+      `- "costNote" : courte précision dans la langue de sortie (ex. billet adulte, gratuit, déjeuner moyen).\n` +
+      `- "description" : une phrase utile (horaires types, durée, conseil pratique) dans la langue de sortie.\n` +
+      `Pas de dates inventées pour le séjour.\n` +
+      `${langRule}`;
 
     const systemInstruction =
       "Tu réponds uniquement par un objet JSON valide UTF-8. " +
