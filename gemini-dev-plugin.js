@@ -111,6 +111,40 @@ function countInclusiveTripDays(startYmd, endYmd) {
   return { ok: true, days, error: "" };
 }
 
+/** Retire les blocs ```json … ``` parfois renvoyés malgré responseMimeType JSON. */
+function stripMarkdownJsonFences(text) {
+  let t = String(text || "").trim();
+  if (t.startsWith("```")) {
+    t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+  }
+  return t.trim();
+}
+
+/**
+ * Extrait et parse le JSON renvoyé par Gemini (troncature, guillemets typographiques, etc.).
+ */
+function parseGeminiJsonLenient(rawText, contextLabel = "réponse") {
+  let t = stripMarkdownJsonFences(rawText);
+  t = t.replace(/[\u201C\u201D\u00AB\u00BB]/g, '"').replace(/[\u2018\u2019]/g, "'");
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) t = t.slice(start, end + 1);
+  try {
+    return JSON.parse(t);
+  } catch (e1) {
+    try {
+      return JSON.parse(t.replace(/,\s*([}\]])/g, "$1"));
+    } catch (_e2) {
+      const hint = t.length > 280 ? `${t.slice(0, 140)}…${t.slice(-120)}` : t;
+      const msg = e1 instanceof Error ? e1.message : String(e1);
+      throw new Error(
+        `JSON Gemini invalide (${contextLabel}) : ${msg}. ` +
+          `Si le programme est long, réessaie avec moins de jours ou change de modèle (GEMINI_MODEL). Extrait : ${hint}`
+      );
+    }
+  }
+}
+
 async function runGeminiJson({ key, modelId, prompt, generationConfigExtra = {}, systemInstruction }) {
   const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const genAI = new GoogleGenerativeAI(key);
@@ -125,7 +159,7 @@ async function runGeminiJson({ key, modelId, prompt, generationConfigExtra = {},
   const model = genAI.getGenerativeModel(params);
   const result = await model.generateContent(prompt);
   const text = String(result.response?.text() || "").trim();
-  return JSON.parse(text);
+  return parseGeminiJsonLenient(text, "API");
 }
 
 function sendJson(res, status, obj) {
@@ -134,11 +168,15 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+const GEMINI_429_HINT_FR =
+  " — Quota gratuit Google : souvent un plafond par modèle (ex. 20 requêtes/jour pour gemini-2.5-flash-lite). " +
+  "Dans .env.local, essaie GEMINI_MODEL=gemini-2.5-flash (sans -lite) ou GEMINI_MODEL=gemini-2.0-flash pour un autre compteur. " +
+  "Sinon attends le délai indiqué, le lendemain, ou active la facturation sur https://aistudio.google.com/ (voir https://ai.google.dev/gemini-api/docs/rate-limits ).";
+
 function formatError(e) {
   let msg = String(e?.message || e || "Erreur Gemini");
   if (/429|Too Many Requests|quota|Quota exceeded/i.test(msg)) {
-    msg +=
-      " — Essaie dans .env.local : GEMINI_MODEL=gemini-2.5-flash-lite ou gemini-1.5-flash, attends quelques minutes, ou active la facturation sur Google AI / Cloud.";
+    msg += GEMINI_429_HINT_FR;
   }
   return msg;
 }
@@ -180,7 +218,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       return;
     }
 
-    const modelId = String(env.GEMINI_MODEL || "gemini-2.5-flash-lite").trim();
+    /** Défaut : gemini-2.5-flash (quota souvent distinct de gemini-2.5-flash-lite, très limité en gratuit). */
+    const modelId = String(env.GEMINI_MODEL || "gemini-2.5-flash").trim();
 
     if (isItinerary) {
       const premiumOnly = isTruthyEnv(env.GEMINI_ITINERARY_PREMIUM_ONLY);
@@ -209,13 +248,30 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       const prompt =
         `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
         `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).\n` +
-        `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, de la forme:\n` +
-        `{"dayIdeas":[{"day":1,"title":"titre court du thème du jour","bullets":["Matin : ...","Après-midi : ...","Soir : ... (optionnel)"]}, ...]}\n` +
-        `Il doit y avoir exactement ${days} entrées dans dayIdeas, avec day = 1, 2, … ${days}.\n` +
-        `Français. Lieux et activités réalistes pour cette destination.`;
+        `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
+        `{"dayIdeas":[{"day":1,"title":"titre court","bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+        `Règles STRICTES pour que le JSON soit valide :\n` +
+        `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+        `- Chaque "bullets" : 2 ou 3 phrases courtes (pas de sous-liste). Pas de guillemet double à l'intérieur d'une phrase (utilise l'apostrophe ' pour l'élision).\n` +
+        `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+        `Français. Lieux réels pour cette destination.`;
+
+      const itinerarySystem =
+        "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
+        "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets.";
 
       try {
-        const data = await runGeminiJson({ key, modelId, prompt });
+        const data = await runGeminiJson({
+          key,
+          modelId,
+          prompt,
+          systemInstruction: itinerarySystem,
+          generationConfigExtra: {
+            temperature: 0.2,
+            topP: 0.85,
+            maxOutputTokens: Math.min(8192, 2048 + days * 500),
+          },
+        });
         const list = Array.isArray(data?.dayIdeas) ? data.dayIdeas : [];
         sendJson(res, 200, { ok: true, data: { dayIdeas: list, tripDays: days, startDate, endDate } });
       } catch (e) {
@@ -290,7 +346,10 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `- Uniquement des monuments, musées, parcs, places, quartiers emblématiques, points de vue, sites classiques que les touristes vont réellement voir à « ${destination} ».\n` +
       `- Noms courts (2 à 8 mots), comme sur Google Maps ou un guide Lonely Planet pour CETTE ville.\n` +
       `\n` +
-      `"tips.do" : au moins 4 conseils pratiques. "tips.dont" : au moins 3 pièges à éviter.\n` +
+      `"tips.do" : exactement 3 chaînes — conseils d’expert PRATIQUES et SPÉCIFIQUES à « ${destination} » ` +
+      `(transports réels, monuments ou quartiers nommés, usages locaux, pièges typiques de cette ville). ` +
+      `Interdit : phrases génériques valables pour n’importe quelle ville (« réserve à l’avance » sans dire quoi, « respecte les locaux » sans contexte).\n` +
+      `"tips.dont" : au moins 3 pièges ou erreurs à éviter, eux aussi ancrés dans « ${destination} » quand c’est possible.\n` +
       `\n` +
       `Tableau "suggestedActivities" — au moins 6 objets (pas de simples chaînes), chaque objet avec :\n` +
       `- "title" : titre court de l’activité en français.\n` +

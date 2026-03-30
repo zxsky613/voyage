@@ -21,14 +21,14 @@ import {
   ChevronRight,
   Eye,
   ExternalLink,
-  CheckCircle2,
-  AlertTriangle,
   Sparkles,
+  Lightbulb,
   Lock,
   Wallet,
   Receipt,
   ArrowRight,
 } from "lucide-react";
+import { resolveTravelTips } from "./travelTipsData.js";
 import {
   fetchGeminiTripSuggestions,
   fetchGeminiSuggestedActivities,
@@ -44,10 +44,32 @@ import {
 } from "./cityDroneImagePrompt.js";
 import { WIKIMEDIA_CURATED_CITY_HEROES } from "./cityWikimediaHeroes.js";
 
-/** Si true : bouton programme masqué sauf créateur (VITE_CREATOR_ITINERARY=true). Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
-const SHOW_DESTINATION_ITINERARY_CTA =
-  import.meta.env.VITE_ITINERARY_PREMIUM_ONLY !== "true" ||
-  import.meta.env.VITE_CREATOR_ITINERARY === "true";
+/** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
+const VITE_ITINERARY_PREMIUM_ONLY =
+  import.meta.env.VITE_ITINERARY_PREMIUM_ONLY === "true" ||
+  import.meta.env.VITE_ITINERARY_PREMIUM_ONLY === "1";
+const VITE_CREATOR_ITINERARY =
+  import.meta.env.VITE_CREATOR_ITINERARY === "true" ||
+  import.meta.env.VITE_CREATOR_ITINERARY === "1";
+
+function isPremiumSubscriber(session) {
+  const u = session?.user;
+  if (!u) return false;
+  const m = u.user_metadata || {};
+  if (m.premium === true || m.premium === "true" || m.premium === 1) return true;
+  const tier = String(m.subscription_tier || m.plan || m.subscription || "").toLowerCase();
+  if (tier === "premium" || tier === "pro") return true;
+  const app = u.app_metadata || {};
+  if (app.premium === true || app.premium === "true") return true;
+  return false;
+}
+
+/** Accès à « Générer un programme » : ouvert à tous si pas de gate env ; sinon créateur (dev) ou abonné premium. */
+function userCanUseItineraryGeneration(session) {
+  if (!VITE_ITINERARY_PREMIUM_ONLY) return true;
+  if (VITE_CREATOR_ITINERARY) return true;
+  return isPremiumSubscriber(session);
+}
 
 /** Quand true : encarts quota Gemini, .env, détails techniques. À activer seulement dans .env.local du développeur — pas pour les utilisateurs finaux. */
 const SHOW_GEMINI_DEV_UI =
@@ -489,6 +511,12 @@ const GLASS_ACCENT_STYLE = {
     "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.92) 55%, rgba(15,23,42,0.96) 100%)",
 };
 
+/** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
+const MODAL_GRID_2 = "grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3";
+/** Champ date dans modale — même logique que Nouveau voyage. */
+const MODAL_DATE_INPUT_CLASS =
+  "min-w-0 w-full max-w-full box-border rounded-2xl border border-slate-200 bg-white px-2 py-2.5 text-[13px] leading-tight sm:px-4 sm:py-3 sm:text-base";
+
 function extractCityPrompt(destination) {
   const s = String(destination || "").trim();
   if (!s) return "";
@@ -843,19 +871,42 @@ function buildActivityImageQuery(activity) {
 }
 
 function buildTravelTips(city) {
-  const safeCity = String(city || "la destination");
-  return {
-    do: [
-      `Reserve les lieux populaires de ${safeCity} en avance.`,
-      "Utilise les transports locaux pour gagner du temps.",
-      "Garde une version hors-ligne de la carte de la ville.",
-    ],
-    dont: [
-      "Evite les zones ultra-touristiques aux heures de pointe.",
-      "Ne transporte pas tous tes documents originaux en meme temps.",
-      "Ne change pas de grosses sommes dans la rue.",
-    ],
-  };
+  const display = String(city || "").trim() || "la destination";
+  const canonical = resolveCanonicalCity(display);
+  const key = normalizeTextForSearch(canonical);
+  const label = String(canonical || display).trim() || display;
+  const places = getIconicPlacesFallback(display) || [];
+  return resolveTravelTips(key, label, places);
+}
+
+function dedupeTipLines(lines) {
+  const seen = new Set();
+  const out = [];
+  for (const x of lines || []) {
+    const s = String(x || "").trim();
+    if (!s) continue;
+    const k = s.slice(0, 120).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+/** Fusionne conseils Gemini + base catalogue ; garantit au moins 3 conseils « do » pertinents. */
+function mergeTipsDoFromGemini(baseDo, geminiDo, cityName) {
+  const g = dedupeTipLines(geminiDo);
+  const b = dedupeTipLines(baseDo);
+  let merged = dedupeTipLines([...g, ...b]);
+  if (merged.length < 3) {
+    const city = String(cityName || "").trim();
+    const canonical = resolveCanonicalCity(city);
+    const key = normalizeTextForSearch(canonical);
+    const label = String(canonical || city).trim() || city;
+    const fill = resolveTravelTips(key, label, getIconicPlacesFallback(city) || []).do;
+    merged = dedupeTipLines([...merged, ...fill]);
+  }
+  return merged.slice(0, 12);
 }
 
 function buildSuggestedActivitiesForCity(city) {
@@ -1506,7 +1557,7 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
     description: baseGuide.description,
     places: clampPlacesList(mergedPlaces, city),
     tips: {
-      do: geminiNorm.tips.do.length > 0 ? geminiNorm.tips.do : baseGuide.tips?.do || [],
+      do: mergeTipsDoFromGemini(baseGuide.tips?.do, geminiNorm.tips.do, city),
       dont: geminiNorm.tips.dont.length > 0 ? geminiNorm.tips.dont : baseGuide.tips?.dont || [],
     },
     suggestedActivities:
@@ -2156,7 +2207,7 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
     <div className={`fixed inset-0 z-40 transition ${open ? "pointer-events-auto" : "pointer-events-none"}`}>
       <div className={`absolute inset-0 bg-black/20 transition ${open ? "opacity-100" : "opacity-0"}`} onClick={onClose} />
       <aside
-        className={`absolute left-0 top-0 h-full w-[min(20rem,calc(100vw-1rem))] max-w-[100vw] bg-white/80 p-5 shadow-2xl backdrop-blur-xl transition sm:w-80 sm:p-6 ${
+        className={`absolute left-0 top-0 h-full w-[min(20rem,calc(100vw-1rem))] max-w-[100vw] overflow-x-hidden overflow-y-auto bg-white/80 p-5 shadow-2xl backdrop-blur-xl transition sm:w-80 sm:p-6 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -2374,8 +2425,8 @@ function AuthView() {
   };
 
   return (
-    <div className="min-h-screen px-5 py-8" style={{ background: BG, color: TEXT }}>
-      <div className="mx-auto mt-10 w-full max-w-lg rounded-[4.5rem] bg-white/80 p-8 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50">
+    <div className="min-h-screen overflow-x-hidden px-4 py-8 sm:px-5" style={{ background: BG, color: TEXT }}>
+      <div className="mx-auto mt-10 min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2.5rem] bg-white/80 p-4 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:rounded-[4.5rem] sm:p-8">
         <h1 className="mb-2 text-center text-xs uppercase tracking-[0.4em] text-slate-500">
           Travel Planner
         </h1>
@@ -2401,8 +2452,8 @@ function AuthView() {
               />
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Photo de profil (optionnel)</p>
-                <div className="flex items-center gap-3">
-                  <div className="h-11 w-11 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
                     {profilePhotoPreview ? (
                       <img src={profilePhotoPreview} alt="Apercu profil" className="h-full w-full object-cover" />
                     ) : (
@@ -2428,7 +2479,7 @@ function AuthView() {
                         setProfilePhotoPreview("");
                       }
                     }}
-                    className="w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                    className="min-w-0 flex-1 text-sm text-slate-700 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
                   />
                 </div>
               </div>
@@ -2495,25 +2546,25 @@ function AuthView() {
         ) : null}
       </div>
       {invitePromptOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[3rem] bg-white/95 p-6 shadow-2xl ring-1 ring-slate-200/70">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6">
             <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Invitation voyage</h3>
             <p className="mt-2 text-sm text-slate-700">
               {inviteTripName ? `Tu as ete invite(e) au voyage ${inviteTripName}.` : "Tu as ete invite(e) a un voyage."}
             </p>
-            <p className="mt-1 text-xs text-slate-500">Email invite: {String(inviteEmail || "-")}</p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <p className="mt-1 break-all text-xs text-slate-500">Email invite: {String(inviteEmail || "-")}</p>
+            <div className={`mt-4 ${MODAL_GRID_2}`}>
               <input
                 value={inviteFirstName}
                 onChange={(e) => setInviteFirstName(e.target.value)}
                 placeholder="Prenom"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
               <input
                 value={inviteLastName}
                 onChange={(e) => setInviteLastName(e.target.value)}
                 placeholder="Nom"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
             </div>
             <input
@@ -2569,41 +2620,31 @@ function TripFormModal({ open, onClose, onCreate }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[3.5rem] bg-white/85 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Nouveau voyage</h2>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-xl rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="mb-5 flex items-center justify-between gap-2">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Nouveau voyage</h2>
+          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Destination"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
-            />
-            <div className="flex items-center justify-center">
-              <div className="rounded-full bg-slate-100/90 p-2 text-slate-500 shadow-sm">
+          <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3">
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
+            <div className="flex shrink-0 justify-center px-0.5">
+              <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                 <Plane size={14} className="animate-bounce" />
               </div>
             </div>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
-            />
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
           </div>
-          <div className="flex gap-2">
+          <div className="flex min-w-0 gap-2">
             <input
               value={inviteInput}
               onChange={(e) => setInviteInput(e.target.value)}
@@ -2614,12 +2655,12 @@ function TripFormModal({ open, onClose, onCreate }) {
                 }
               }}
               placeholder="Ajouter un e-mail invite (ex: ami@mail.com)"
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
             <button
               type="button"
               onClick={addInvites}
-              className="rounded-2xl border border-slate-200 bg-white px-3 text-slate-700 shadow-sm transition hover:bg-slate-100"
+              className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 text-slate-700 shadow-sm transition hover:bg-slate-100"
               title="Ajouter aux invites"
             >
               <Plus size={18} />
@@ -2702,26 +2743,28 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-[3rem] bg-white/95 p-6 shadow-2xl ring-1 ring-slate-200/70">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-xs uppercase tracking-[0.32em] text-slate-500">{String(title || "Inviter des participants")}</h3>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h3 className="min-w-0 text-xs uppercase tracking-[0.32em] text-slate-500">
+            {String(title || "Inviter des participants")}
+          </h3>
+          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={16} />
           </button>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex min-w-0 gap-2">
           <input
             type="email"
             value={emailInput}
             onChange={(e) => setEmailInput(e.target.value)}
             placeholder="email@exemple.com"
-            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
           />
           <button
             onClick={addEmail}
-            className={`rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
             Ajouter
@@ -2774,33 +2817,33 @@ function EditTripModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[3.5rem] bg-white/85 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Modifier voyage</h2>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-xl rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="mb-5 flex items-center justify-between gap-2">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Modifier voyage</h2>
+          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Destination"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <div className="grid grid-cols-2 gap-3">
+          <div className={MODAL_GRID_2}>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className={MODAL_DATE_INPUT_CLASS}
             />
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className={MODAL_DATE_INPUT_CLASS}
             />
           </div>
           <input
@@ -2928,15 +2971,17 @@ function ShareModal({ open, onClose, trip }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-[3.5rem] bg-white/85 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Partager</h2>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Partager</h2>
+          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <pre className="mb-4 whitespace-pre-wrap rounded-2xl bg-slate-100 p-4 text-sm text-slate-700">{recap}</pre>
+        <pre className="mb-4 max-h-40 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-slate-100 p-3 text-xs text-slate-700 sm:max-h-none sm:p-4 sm:text-sm">
+          {recap}
+        </pre>
         {invitedEmails.length > 0 ? (
           <div className="mb-3 space-y-2">
             {invitedEmails.map((mail) => {
@@ -2952,10 +2997,10 @@ function ShareModal({ open, onClose, trip }) {
                 <a
                   key={mail}
                   href={`mailto:${encodeURIComponent(mail)}?subject=${subject}&body=${body}`}
-                  className="flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-700 hover:bg-slate-200"
+                  className="flex min-w-0 items-center gap-2 rounded-2xl bg-slate-100 px-3 py-3 text-sm text-slate-700 hover:bg-slate-200 sm:px-4"
                 >
-                  <Mail size={14} />
-                  {String(mail)}
+                  <Mail size={14} className="shrink-0" />
+                  <span className="min-w-0 truncate">{String(mail)}</span>
                 </a>
               );
             })}
@@ -3009,8 +3054,8 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-[3.5rem] bg-white/85 p-8 shadow-2xl backdrop-blur-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Participants</h2>
@@ -3023,12 +3068,12 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
             <X size={18} />
           </button>
         </div>
-        <div className="mb-3 flex gap-2">
+        <div className="mb-3 flex min-w-0 gap-2">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="E-mail du participant"
-            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
           />
           <button
             onClick={() => {
@@ -3037,7 +3082,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
               setList((prev) => [...prev, v]);
               setName("");
             }}
-            className={`rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
+            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
             Ajouter
@@ -3046,8 +3091,11 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
         <div className="space-y-2">
           {list && list.length > 0
             ? list.map((p, idx) => (
-                <div key={`${String(p)}-${idx}`} className="flex items-center justify-between rounded-2xl bg-slate-100 px-4 py-3">
-                  <span>{String(p)}</span>
+                <div
+                  key={`${String(p)}-${idx}`}
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-2xl bg-slate-100 px-3 py-3 sm:px-4"
+                >
+                  <span className="min-w-0 break-all text-sm">{String(p)}</span>
                   <button onClick={() => setList((prev) => prev.filter((_, i) => i !== idx))} className="rounded-full p-1 hover:bg-slate-200">
                     <X size={16} />
                   </button>
@@ -3070,18 +3118,18 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
 function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
   if (!open || !trip) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
         <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">Confirmation</h2>
-        <p className="mb-6 text-sm text-slate-700">
+        <p className="mb-6 break-words text-sm text-slate-700">
           Supprimer le voyage <span className="font-semibold">{String(trip?.title || "Voyage")}</span> ?
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className={MODAL_GRID_2}>
           <button
             type="button"
             onClick={onCancel}
             disabled={deleting}
-            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
           >
             Annuler
           </button>
@@ -3089,7 +3137,7 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
             type="button"
             onClick={onConfirm}
             disabled={deleting}
-            className="rounded-2xl px-4 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="min-w-0 rounded-2xl px-2 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
             style={{ backgroundColor: "#e11d48" }}
           >
             {deleting ? "Suppression…" : "Supprimer"}
@@ -3124,29 +3172,29 @@ function AccountModal({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Mon compte</h2>
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Mon compte</h2>
+          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="min-w-0 space-y-3">
+          <div className={MODAL_GRID_2}>
             <input
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               placeholder="Prenom"
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
             <input
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               placeholder="Nom"
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
           </div>
           <input
@@ -3154,7 +3202,7 @@ function AccountModal({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Adresse mail"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <input
             type="password"
@@ -3507,10 +3555,18 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   );
 }
 
+/** Quota / limite de requêtes API Gemini (message utilisateur : « Veuillez réessayer plus tard »). */
+function isGeminiQuotaError(raw) {
+  const full = String(raw || "").trim();
+  return /429|Too Many Requests|quota exceeded|Quota exceeded|exceeded your current quota|generate_content_free_tier/i.test(
+    full
+  );
+}
+
 /** Affichage lisible des erreurs Gemini (429 / quota vs autres). */
 function getGeminiErrorUi(raw) {
   const full = String(raw || "").trim();
-  const quota = /429|Too Many Requests|quota exceeded|Quota exceeded|exceeded your current quota/i.test(full);
+  const quota = isGeminiQuotaError(full);
   const modelMatch = full.match(/models\/([^/:]+)/i);
   const modelName = modelMatch ? modelMatch[1] : "";
   if (quota) {
@@ -3520,7 +3576,7 @@ function getGeminiErrorUi(raw) {
       subtitle: "Ce n’est pas un bug de l’app : Google limite les requêtes (gratuit ou par minute).",
       bullets: [
         modelName ? `Modèle actuel : ${modelName}.` : null,
-        "Attends 1 à 2 minutes puis recharge la page, ou change de modèle dans .env.local : GEMINI_MODEL=gemini-2.5-flash-lite (ou gemini-2.5-flash).",
+        "En gratuit, le quota est souvent par modèle (ex. flash-lite ~20 req/j). Dans .env.local : GEMINI_MODEL=gemini-2.5-flash ou gemini-2.0-flash, redémarre npm run dev, puis réessaie. Sinon attends ou active la facturation sur Google AI Studio.",
         "Si tu utilises souvent l’IA : facturation / forfait sur Google AI Studio ou Cloud.",
       ].filter(Boolean),
       technical: full,
@@ -3535,16 +3591,41 @@ function getGeminiErrorUi(raw) {
   };
 }
 
-/** Message court pour le programme (hors mode dev). */
+/** Message court pour le programme (affiché à tous les utilisateurs). */
 function userFacingItineraryErrorMessage(raw) {
   const s = String(raw || "");
   if (/403|premium|réservée/i.test(s)) {
-    return "Cette fonction n’est pas disponible avec ton compte.";
+    return "Cette fonctionnalité est réservée au service Premium. Veuillez souscrire à un forfait Premium pour l’utiliser.";
   }
-  if (/429|quota|Too Many Requests|503|502|GEMINI_API_KEY|fetch/i.test(s)) {
+  if (isGeminiQuotaError(s)) {
+    return "Veuillez réessayer plus tard.";
+  }
+  if (/503|502|GEMINI_API_KEY|fetch/i.test(s)) {
     return "Génération indisponible pour le moment. Réessaie plus tard.";
   }
+  if (/JSON|invalide|guillemet|array element/i.test(s)) {
+    return "La réponse du modèle était incomplète ou mal formée. Réessaie, ou raccourcis la période (moins de jours).";
+  }
   return "Impossible de générer le programme. Réessaie plus tard.";
+}
+
+/** Bloc erreur programme : toujours le texte utilisateur ; détail brut seulement en mode dev (repliable). */
+function ItineraryErrorNotice({ raw }) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs leading-relaxed text-rose-600">{userFacingItineraryErrorMessage(text)}</p>
+      {SHOW_GEMINI_DEV_UI ? (
+        <details className="rounded-lg border border-rose-100 bg-rose-50/50 px-2 py-1.5 text-[10px] text-rose-900/80">
+          <summary className="cursor-pointer select-none font-medium text-rose-800/90">Détail technique (dev)</summary>
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono leading-snug text-rose-950/90">
+            {text.length > 4000 ? `${text.slice(0, 4000)}…` : text}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 /** Heures proposées dans le modal « Ajouter le voyage » (planning par activité). */
@@ -3585,6 +3666,7 @@ function pickNextDestinationGuideImgSrc(el, guide) {
 }
 
 function DestinationGuideView({
+  session,
   searchInput,
   onSearchInputChange,
   confirmedDestination,
@@ -3606,6 +3688,8 @@ function DestinationGuideView({
   /** Activités issues de /suggested-activities quand enrichissement complet désactivé. */
   const [geminiAiSuggestedActivities, setGeminiAiSuggestedActivities] = useState(null);
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
+  const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
+  const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
   const [programStartDate, setProgramStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [programEndDate, setProgramEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [itineraryLoading, setItineraryLoading] = useState(false);
@@ -3644,6 +3728,8 @@ function DestinationGuideView({
     setGeneratedDayIdeas(null);
     setItineraryError("");
     setItineraryModalOpen(false);
+    setItineraryPremiumGateOpen(false);
+    setItineraryQuotaModalOpen(false);
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
@@ -3753,6 +3839,11 @@ function DestinationGuideView({
   }, [confirmedDestination]);
 
   async function handleGenerateItinerary() {
+    if (!userCanUseItineraryGeneration(session)) {
+      setItineraryPremiumGateOpen(true);
+      setItineraryModalOpen(false);
+      return;
+    }
     const dest = String(displayGuide?.city || "").trim();
     if (!dest) return;
     const { ok, error } = countInclusiveTripDaysClient(programStartDate, programEndDate);
@@ -3775,7 +3866,15 @@ function DestinationGuideView({
         setItineraryError("Le programme renvoyé est vide.");
       }
     } catch (e) {
-      setItineraryError(String(e?.message || e));
+      const msg = String(e?.message || e);
+      setItineraryError(msg);
+      if (isGeminiQuotaError(msg)) {
+        setItineraryQuotaModalOpen(true);
+        setItineraryModalOpen(false);
+      } else if (/403|premium|réservée/i.test(msg)) {
+        setItineraryPremiumGateOpen(true);
+        setItineraryModalOpen(false);
+      }
     } finally {
       setItineraryLoading(false);
     }
@@ -3910,6 +4009,10 @@ function DestinationGuideView({
                         </div>
                       );
                     })()
+                  ) : isGeminiQuotaError(geminiError) ? (
+                    <p className="mt-3 text-[15px] leading-relaxed text-slate-600" role="status">
+                      Veuillez réessayer plus tard.
+                    </p>
                   ) : null
                 ) : null}
                 <button
@@ -3948,49 +4051,51 @@ function DestinationGuideView({
                 </div>
               </section>
 
-              <div className="grid gap-4 md:grid-cols-2 md:gap-5">
-                <section className="flex flex-col rounded-[1.75rem] border border-emerald-200/60 bg-gradient-to-br from-emerald-50/95 to-white p-5 shadow-[0_8px_28px_rgba(5,150,105,0.07)] sm:p-6">
-                  <div className="flex items-center gap-2.5 border-b border-emerald-100/90 pb-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/70">
-                      <CheckCircle2 className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
-                    </span>
-                    <div>
-                      <h4 className="text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-950/90">À faire</h4>
-                      <p className="text-[11px] text-emerald-800/70">Conseils experts</p>
+              {(() => {
+                const doList = (displayGuide.tips?.do || []).map(String).filter(Boolean);
+                const cityLabel = String(displayGuide.city || "").trim();
+                const canonical = resolveCanonicalCity(cityLabel);
+                const fill = resolveTravelTips(
+                  normalizeTextForSearch(canonical),
+                  String(canonical || cityLabel).trim() || cityLabel,
+                  getIconicPlacesFallback(cityLabel) || []
+                ).do;
+                const expertTips = dedupeTipLines([...doList, ...fill]).slice(0, 3);
+                const threeTips = expertTips;
+                return (
+                  <section
+                    className="rounded-[2rem] border border-slate-700/40 bg-slate-900 p-6 shadow-[0_16px_48px_rgba(15,23,42,0.22)] sm:p-8"
+                    aria-labelledby="destination-expert-tips-heading"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 border-b border-slate-700/60 pb-4">
+                      <Lightbulb
+                        className="h-5 w-5 shrink-0 text-amber-400"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                      <h4
+                        id="destination-expert-tips-heading"
+                        className="text-[11px] font-bold uppercase tracking-[0.32em] text-slate-300"
+                      >
+                        Conseils
+                      </h4>
+                      <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" strokeWidth={2} aria-hidden />
+                      <span className="sr-only">Trois conseils d’expert pour la destination</span>
                     </div>
-                  </div>
-                  <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-800">
-                    {(displayGuide.tips?.do || []).map((tip, i) => (
-                      <li key={`do-${i}-${String(tip).slice(0, 20)}`} className="flex gap-2.5">
-                        <span
-                          className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                          aria-hidden
-                        />
-                        <span>{String(tip)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-                <section className="flex flex-col rounded-[1.75rem] border border-amber-200/60 bg-gradient-to-br from-amber-50/90 to-white p-5 shadow-[0_8px_28px_rgba(217,119,6,0.08)] sm:p-6">
-                  <div className="flex items-center gap-2.5 border-b border-amber-100/90 pb-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-800 ring-1 ring-amber-200/70">
-                      <AlertTriangle className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
-                    </span>
-                    <div>
-                      <h4 className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-950/90">À éviter</h4>
-                      <p className="text-[11px] text-amber-800/75">Pièges & bonnes pratiques</p>
-                    </div>
-                  </div>
-                  <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-800">
-                    {(displayGuide.tips?.dont || []).map((tip, i) => (
-                      <li key={`dont-${i}-${String(tip).slice(0, 20)}`} className="flex gap-2.5">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-                        <span>{String(tip)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              </div>
+                    <ul className="mt-6 space-y-6 text-sm leading-relaxed text-slate-100">
+                      {threeTips.map((tip, i) => (
+                        <li key={`expert-${i}-${String(tip).slice(0, 24)}`} className="flex gap-4">
+                          <span
+                            className="mt-2 h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                            aria-hidden
+                          />
+                          <span>{tip}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })()}
 
               <section className="rounded-[1.75rem] border border-indigo-200/50 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/40 p-5 shadow-[0_8px_32px_rgba(67,56,202,0.06)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-indigo-100/80 pb-3">
@@ -4017,88 +4122,72 @@ function DestinationGuideView({
                 </div>
               </section>
 
-              {SHOW_DESTINATION_ITINERARY_CTA ? (
-                <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
-                  <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 ring-1 ring-slate-200/80">
-                        <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
-                      </span>
-                      <div>
-                        <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
-                          Programme sur mesure
-                        </h4>
-                        <p className="text-[11px] text-slate-500">
-                          Indique tes dates sur place — génération à la demande (max. 14 jours).
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItineraryError("");
-                        setItineraryModalOpen(true);
-                      }}
-                      disabled={itineraryLoading}
-                      className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
-                    >
-                      {itineraryLoading ? "Génération…" : "Générer un programme"}
-                    </button>
-                  </div>
-                  {itineraryError && !itineraryModalOpen ? (
-                    <p className="mt-3 text-xs text-rose-600">
-                      {SHOW_GEMINI_DEV_UI ? itineraryError : userFacingItineraryErrorMessage(itineraryError)}
-                    </p>
-                  ) : null}
-                  {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
-                    <ul className="mt-5 space-y-4">
-                      {generatedDayIdeas.map((d) => (
-                        <li
-                          key={String(d?.day) + String(d?.title)}
-                          className="relative overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/50 py-4 pl-4 pr-4 shadow-sm ring-1 ring-slate-100/90 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-2xl before:bg-gradient-to-b before:from-sky-500 before:to-indigo-500 before:content-['']"
-                        >
-                          <p className="text-sm font-semibold text-slate-900">
-                            Jour {Number(d?.day) || "?"} — {String(d?.title || "")}
-                          </p>
-                          {Array.isArray(d?.bullets) && d.bullets.length > 0 ? (
-                            <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3 text-sm text-slate-700">
-                              {d.bullets.map((b, j) => (
-                                <li key={j} className="flex gap-2 pl-0.5">
-                                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" aria-hidden />
-                                  <span className="leading-relaxed">{String(b)}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : generatedDayIdeas === null ? (
-                    <p className="mt-4 text-center text-xs text-slate-400">
-                      Clique sur « Générer un programme », choisis tes dates, puis valide.
-                    </p>
-                  ) : null}
-                </section>
-              ) : (
-                <section className="rounded-[1.75rem] border border-dashed border-slate-300/90 bg-slate-50/80 p-5 sm:p-6">
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-200/80 text-slate-600">
-                      <Lock className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+              <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
+                <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 ring-1 ring-slate-200/80">
+                      <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                     </span>
                     <div>
-                      <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-700">
-                        Programme sur mesure — Premium
+                      <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                        Programme sur mesure
+                        {VITE_ITINERARY_PREMIUM_ONLY ? (
+                          <span className="ml-2 font-sans text-[10px] font-semibold normal-case tracking-normal text-amber-800/90">
+                            Premium
+                          </span>
+                        ) : null}
                       </h4>
-                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                        Cette fonction sera réservée aux abonnés Premium. Pour le développement, active{" "}
-                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">VITE_CREATOR_ITINERARY=true</code> et{" "}
-                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">GEMINI_CREATOR_ITINERARY=true</code> dans{" "}
-                        <code className="rounded bg-white px-1 ring-1 ring-slate-200">.env.local</code>.
+                      <p className="text-[11px] text-slate-500">
+                        Indique tes dates sur place — génération à la demande (max. 14 jours).
                       </p>
                     </div>
                   </div>
-                </section>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItineraryError("");
+                      if (!userCanUseItineraryGeneration(session)) {
+                        setItineraryPremiumGateOpen(true);
+                        return;
+                      }
+                      setItineraryModalOpen(true);
+                    }}
+                    disabled={itineraryLoading}
+                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    {itineraryLoading ? "Génération…" : "Générer un programme"}
+                  </button>
+                </div>
+                {itineraryError && !itineraryModalOpen ? <ItineraryErrorNotice raw={itineraryError} /> : null}
+                {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
+                  <ul className="mt-5 space-y-4">
+                    {generatedDayIdeas.map((d) => (
+                      <li
+                        key={String(d?.day) + String(d?.title)}
+                        className="relative overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/50 py-4 pl-4 pr-4 shadow-sm ring-1 ring-slate-100/90 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-2xl before:bg-gradient-to-b before:from-sky-500 before:to-indigo-500 before:content-['']"
+                      >
+                        <p className="text-sm font-semibold text-slate-900">
+                          Jour {Number(d?.day) || "?"} — {String(d?.title || "")}
+                        </p>
+                        {Array.isArray(d?.bullets) && d.bullets.length > 0 ? (
+                          <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3 text-sm text-slate-700">
+                            {d.bullets.map((b, j) => (
+                              <li key={j} className="flex gap-2 pl-0.5">
+                                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" aria-hidden />
+                                <span className="leading-relaxed">{String(b)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : generatedDayIdeas === null ? (
+                  <p className="mt-4 text-center text-xs text-slate-400">
+                    Clique sur « Générer un programme », choisis tes dates, puis valide.
+                  </p>
+                ) : null}
+              </section>
             </div>
           </>
         ) : (
@@ -4131,47 +4220,47 @@ function DestinationGuideView({
         )}
       </div>
 
-      {itineraryModalOpen && displayGuide && SHOW_DESTINATION_ITINERARY_CTA ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+      {itineraryModalOpen && displayGuide ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="itinerary-modal-title"
-            className="w-full max-w-md rounded-[2rem] border border-slate-200/80 bg-white p-6 shadow-2xl sm:p-8"
+            className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-2xl sm:p-8"
           >
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 id="itinerary-modal-title" className="text-sm font-semibold text-slate-900">
+              <h2 id="itinerary-modal-title" className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-900">
                 Programme à {String(displayGuide.city)}
               </h2>
               <button
                 type="button"
                 onClick={() => setItineraryModalOpen(false)}
-                className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+                className="shrink-0 rounded-full p-2 text-slate-500 hover:bg-slate-100"
                 aria-label="Fermer"
               >
                 <X size={18} />
               </button>
             </div>
-            <p className="mb-4 text-xs text-slate-600">
+            <p className="mb-4 text-xs leading-relaxed text-slate-600">
               Choisis la période de ton séjour sur place. Nous générons un fil jour par jour (jusqu’à 14 jours).
             </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                 Début
                 <input
                   type="date"
                   value={programStartDate}
                   onChange={(e) => setProgramStartDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  className={`mt-1 ${MODAL_DATE_INPUT_CLASS}`}
                 />
               </label>
-              <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
+              <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                 Fin
                 <input
                   type="date"
                   value={programEndDate}
                   onChange={(e) => setProgramEndDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  className={`mt-1 ${MODAL_DATE_INPUT_CLASS}`}
                 />
               </label>
             </div>
@@ -4185,16 +4274,12 @@ function DestinationGuideView({
                 </p>
               );
             })()}
-            {itineraryError ? (
-              <p className="mt-3 text-xs leading-relaxed text-rose-600">
-                {SHOW_GEMINI_DEV_UI ? itineraryError : userFacingItineraryErrorMessage(itineraryError)}
-              </p>
-            ) : null}
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
+            {itineraryError ? <ItineraryErrorNotice raw={itineraryError} /> : null}
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => setItineraryModalOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
                 Annuler
               </button>
@@ -4202,7 +4287,7 @@ function DestinationGuideView({
                 type="button"
                 onClick={handleGenerateItinerary}
                 disabled={itineraryLoading}
-                className="rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50"
+                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
                 {itineraryLoading ? "Génération…" : "Générer"}
               </button>
@@ -4211,36 +4296,139 @@ function DestinationGuideView({
         </div>
       ) : null}
 
+      {itineraryPremiumGateOpen ? (
+        <div
+          className="fixed inset-0 z-[65] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setItineraryPremiumGateOpen(false);
+              setItineraryError("");
+            }
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="itinerary-premium-gate-title"
+            className="min-w-0 w-full max-w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.12)] ring-1 ring-slate-100/80 sm:max-w-md"
+          >
+            <div className="bg-gradient-to-b from-amber-50/90 via-white to-white px-5 pb-8 pt-9 sm:px-9 sm:pb-9 sm:pt-10">
+              <div className="flex flex-col items-center text-center">
+                <span
+                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] ring-1 ring-amber-200/70"
+                  aria-hidden
+                >
+                  <Lock className="h-7 w-7" strokeWidth={1.75} />
+                </span>
+                <h2
+                  id="itinerary-premium-gate-title"
+                  className="mt-5 text-lg font-semibold leading-snug tracking-tight text-slate-900"
+                >
+                  Fonctionnalité Premium
+                </h2>
+                <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-600">
+                  La génération de programme sur mesure est réservée au service Premium. Veuillez souscrire à un forfait
+                  Premium avant de pouvoir utiliser cette fonctionnalité.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setItineraryPremiumGateOpen(false);
+                  setItineraryError("");
+                }}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                J’ai compris
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {itineraryQuotaModalOpen ? (
+        <div
+          className="fixed inset-0 z-[66] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setItineraryQuotaModalOpen(false);
+              setItineraryError("");
+            }
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="itinerary-quota-modal-title"
+            className="min-w-0 w-full max-w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.12)] ring-1 ring-slate-100/80 sm:max-w-md"
+          >
+            <div className="bg-gradient-to-b from-sky-50/90 via-white to-white px-5 pb-8 pt-9 sm:px-9 sm:pb-9 sm:pt-10">
+              <div className="flex flex-col items-center text-center">
+                <span
+                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-100 to-indigo-100 text-sky-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] ring-1 ring-sky-200/70"
+                  aria-hidden
+                >
+                  <Sparkles className="h-7 w-7" strokeWidth={1.75} />
+                </span>
+                <h2
+                  id="itinerary-quota-modal-title"
+                  className="mt-5 text-lg font-semibold leading-snug tracking-tight text-slate-900"
+                >
+                  Service temporairement saturé
+                </h2>
+                <p className="mt-3 max-w-xs text-sm leading-relaxed text-slate-600">
+                  Veuillez réessayer plus tard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setItineraryQuotaModalOpen(false);
+                  setItineraryError("");
+                }}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                J’ai compris
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {addModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-          <div className="max-h-[min(90vh,40rem)] w-full max-w-lg overflow-y-auto rounded-[3rem] bg-white/95 p-6 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+          <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-lg overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+            <div className="mb-5 flex items-center justify-between gap-2">
+              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
                 Ajouter {String(displayGuide.city)}
               </h2>
               <button
                 type="button"
                 onClick={() => setAddModalOpen(false)}
-                className="rounded-full p-2 hover:bg-slate-100"
+                className="shrink-0 rounded-full p-2 hover:bg-slate-100"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3">
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className={MODAL_DATE_INPUT_CLASS}
               />
-              <div className="rounded-full bg-slate-100/90 p-2 text-slate-500 shadow-sm">
-                <Plane size={14} className="animate-bounce" />
+              <div className="flex shrink-0 justify-center px-0.5">
+                <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
+                  <Plane size={14} className="animate-bounce" />
+                </div>
               </div>
               <input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className={MODAL_DATE_INPUT_CLASS}
               />
             </div>
             <div className="mt-5">
@@ -4747,17 +4935,17 @@ function PlannerView({
       </div>
 
       {activityModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Nouvelle activite</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+            <div className="mb-5 flex items-center justify-between gap-2">
+              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Nouvelle activite</h2>
               <button
                 onClick={() => {
                   setActivityModalOpen(false);
                   setActivityTime("");
                   setActivityFormError("");
                 }}
-                className="rounded-full p-2 hover:bg-slate-100"
+                className="shrink-0 rounded-full p-2 hover:bg-slate-100"
               >
                 <X size={18} />
               </button>
@@ -4856,16 +5044,16 @@ function PlannerView({
       ) : null}
 
       {activityDetailsOpen && viewingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[2.5rem] bg-white/95 p-6 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:p-7">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-[11px] uppercase tracking-[0.38em] text-slate-500">Details activite</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">Details activite</h2>
               <button
                 onClick={() => {
                   setActivityDetailsOpen(false);
                   setViewingActivity(null);
                 }}
-                className="rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-100"
+                className="shrink-0 rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-100"
               >
                 <X size={18} />
               </button>
@@ -4876,34 +5064,34 @@ function PlannerView({
                 {String(viewingActivity?.title || viewingActivity?.name || "Activite")}
               </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
                 <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Date</p>
-                <p className="mt-1 text-sm font-medium text-slate-900">
+                <p className="mt-1 break-all text-sm font-medium text-slate-900">
                   {String(viewingActivity?.date || "-")}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
                 <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Heure</p>
                 <p className="mt-1 text-sm font-medium text-slate-900">
                   {String(viewingActivity?.time || "--:--")}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
                 <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Budget</p>
                 <p className="mt-1 text-sm font-medium text-slate-900">
                   {Number(viewingActivity?.cost || 0).toFixed(2)} EUR
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:col-span-2">
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4 sm:col-span-2">
                 <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Lieu</p>
-                <p className="mt-1 text-sm font-medium text-slate-900">
+                <p className="mt-1 break-words text-sm font-medium text-slate-900">
                   {String(viewingActivity?.location || "-")}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:col-span-2">
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:col-span-2 sm:px-4">
                 <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Description</p>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">
                   {String(viewingActivity?.description || "").trim() || "Aucune description"}
                 </p>
               </div>
@@ -4913,17 +5101,17 @@ function PlannerView({
       ) : null}
 
       {editActivityModalOpen && editingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Modifier activite</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+            <div className="mb-5 flex items-center justify-between gap-2">
+              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Modifier activite</h2>
               <button
                 onClick={() => {
                   setEditActivityModalOpen(false);
                   setEditingActivity(null);
                   setActivityTime("");
                 }}
-                className="rounded-full p-2 hover:bg-slate-100"
+                className="shrink-0 rounded-full p-2 hover:bg-slate-100"
               >
                 <X size={18} />
               </button>
@@ -4998,16 +5186,16 @@ function PlannerView({
       ) : null}
 
       {activityToDelete ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-[3.5rem] bg-white/90 p-8 shadow-2xl backdrop-blur-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+          <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
             <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">Confirmation</h2>
-            <p className="mb-6 text-sm text-slate-700">
+            <p className="mb-6 break-words text-sm text-slate-700">
               Supprimer l'activite <span className="font-semibold">{String(activityToDelete?.title || activityToDelete?.name || "Activite")}</span> ?
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className={MODAL_GRID_2}>
               <button
                 onClick={() => setActivityToDelete(null)}
-                className="rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
+                className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm hover:bg-slate-100 sm:px-4"
               >
                 Annuler
               </button>
@@ -5016,7 +5204,7 @@ function PlannerView({
                   onDeleteActivity(activityToDelete);
                   setActivityToDelete(null);
                 }}
-                className="rounded-2xl px-4 py-3 text-sm text-white"
+                className="min-w-0 rounded-2xl px-2 py-3 text-sm text-white sm:px-4"
                 style={{ backgroundColor: "#e11d48" }}
               >
                 Supprimer
@@ -5096,25 +5284,25 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-slate-200/80 sm:p-7">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7">
         <div className="mb-4 flex items-start justify-between gap-3">
-          <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">
+          <h3 className="min-w-0 flex-1 text-xs uppercase tracking-[0.35em] text-slate-500">
             {initial?.id ? "Modifier la dépense" : "Nouvelle dépense"}
           </h3>
-          <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100" aria-label="Fermer">
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Libellé (ex. Courses, Taxi, Hôtel)"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm sm:px-4"
           />
-          <div className="grid grid-cols-2 gap-3">
-            <div className="relative">
+          <div className={MODAL_GRID_2}>
+            <div className="relative min-w-0">
               <input
                 type="number"
                 min="0"
@@ -5123,15 +5311,17 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="Montant"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-sm"
+                className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-9 text-sm sm:px-4 sm:pr-10"
               />
-              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">€</span>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 sm:right-4">
+                €
+              </span>
             </div>
             <input
               type="date"
               value={expenseDate}
               onChange={(e) => setExpenseDate(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
+              className={`${MODAL_DATE_INPUT_CLASS} text-sm`}
             />
           </div>
           <div>
@@ -5654,40 +5844,44 @@ function TripExpenseDetail({
 
       {editingActivity ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4"
           onClick={() => setEditingActivity(null)}
         >
           <div
-            className="w-full max-w-lg rounded-[3rem] bg-white/90 p-6 shadow-2xl backdrop-blur-xl"
+            className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3rem] sm:p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Modifier l&apos;activité</h3>
-              <button type="button" onClick={() => setEditingActivity(null)} className="rounded-full p-2 hover:bg-slate-100">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h3 className="min-w-0 text-xs uppercase tracking-[0.35em] text-slate-500">Modifier l&apos;activité</h3>
+              <button
+                type="button"
+                onClick={() => setEditingActivity(null)}
+                className="shrink-0 rounded-full p-2 hover:bg-slate-100"
+              >
                 <X size={16} />
               </button>
             </div>
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <input
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
                 placeholder="Nom de l&apos;activité"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
               <input
                 value={editLocation}
                 onChange={(e) => setEditLocation(e.target.value)}
                 placeholder="Lieu (optionnel)"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
               />
-              <div className="grid grid-cols-2 gap-3">
+              <div className={MODAL_GRID_2}>
                 <input
                   type="time"
                   value={editTime}
                   onChange={(e) => setEditTime(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                  className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-2 py-3 text-sm sm:px-4"
                 />
-                <div className="relative">
+                <div className="relative min-w-0">
                   <input
                     type="number"
                     min="0"
@@ -5696,9 +5890,9 @@ function TripExpenseDetail({
                     value={editCost}
                     onChange={(e) => setEditCost(e.target.value)}
                     placeholder="Coût"
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
+                    className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-9 text-sm sm:px-4 sm:pr-10"
                   />
-                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 sm:right-4">
                     €
                   </span>
                 </div>
@@ -5840,8 +6034,8 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
-          <div className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-6xl flex-col overflow-hidden sm:max-h-[88vh]">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
+          <div className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-6xl flex-col overflow-hidden overflow-x-hidden sm:max-h-[88vh]">
             <button
               type="button"
               onClick={() => setChatTripId("")}
@@ -7741,6 +7935,7 @@ export default function App() {
 
         {activeTab === "destination" ? (
           <DestinationGuideView
+            session={session}
             searchInput={destinationInput}
             onSearchInputChange={handleDestinationSearchChange}
             confirmedDestination={destinationConfirmed}
