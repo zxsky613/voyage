@@ -27,6 +27,7 @@ import {
   Wallet,
   Receipt,
   ArrowRight,
+  ThumbsUp,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
@@ -365,18 +366,211 @@ const CITY_SEARCH_ENTRIES = CITY_CATALOG.flatMap((canonical) => {
   return [{ label: canonical, canonical }, ...aliases.map((alias) => ({ label: alias, canonical }))];
 });
 
+/**
+ * Requête « pays » → villes du catalogue (suggestions). Clés = normalizeTextForSearch (sans accents).
+ */
+/**
+ * Requête type « pays » : `match` / `cities` comme avant.
+ * `geoCountries` = libellés pays renvoyés par Open-Meteo (language=fr), normalisés comme normalizeTextForSearch.
+ */
+const COUNTRY_QUERY_GROUPS = [
+  {
+    match: ["france", "republique francaise"],
+    cities: ["Paris", "Lyon", "Marseille", "Nice", "Monaco", "Bordeaux", "Toulouse", "Lille", "Nantes"],
+    geoCountries: ["france"],
+  },
+  {
+    match: ["italie", "italy"],
+    cities: ["Rome", "Milan", "Venise", "Florence", "Naples", "Turin", "Palermo"],
+    geoCountries: ["italie", "italy", "italia"],
+  },
+  { match: ["espagne", "spain"], cities: ["Barcelona", "Madrid"], geoCountries: ["espagne", "spain", "espana"] },
+  {
+    match: ["royaume-uni", "united kingdom", "angleterre", "england", "ecosse", "scotland"],
+    cities: ["London"],
+    geoCountries: ["royaume-uni", "united kingdom", "angleterre", "england", "ecosse", "scotland"],
+  },
+  {
+    match: ["allemagne", "germany", "deutschland"],
+    cities: ["Berlin"],
+    geoCountries: ["allemagne", "germany", "deutschland"],
+  },
+  {
+    match: ["pays-bas", "netherlands", "hollande", "holland"],
+    cities: ["Amsterdam"],
+    geoCountries: ["pays-bas", "netherlands", "hollande", "holland"],
+  },
+  { match: ["belgique", "belgium"], cities: ["Bruxelles"], geoCountries: ["belgique", "belgium"] },
+  {
+    match: ["suisse", "switzerland", "schweiz"],
+    cities: ["Berne"],
+    geoCountries: ["suisse", "switzerland", "schweiz"],
+  },
+  { match: ["portugal"], cities: ["Lisbonne", "Porto"], geoCountries: ["portugal"] },
+  {
+    match: ["autriche", "austria", "osterreich"],
+    cities: ["Vienne"],
+    geoCountries: ["autriche", "austria", "osterreich"],
+  },
+  {
+    match: ["tchequie", "czechia", "czech republic", "republique tcheque"],
+    cities: ["Prague"],
+    geoCountries: ["tchequie", "czechia", "republique tcheque", "czech republic"],
+  },
+  { match: ["hongrie", "hungary"], cities: ["Budapest"], geoCountries: ["hongrie", "hungary"] },
+  { match: ["grece", "greece", "hellas"], cities: ["Athènes"], geoCountries: ["grece", "greece", "hellas"] },
+  {
+    match: ["turquie", "turkey", "turkiye"],
+    cities: ["Istanbul"],
+    geoCountries: ["turquie", "turkey", "turkiye"],
+  },
+  {
+    match: ["emirats arabes unis", "uae", "emirats"],
+    cities: ["Dubai", "Abu Dhabi"],
+    geoCountries: ["emirats arabes unis", "united arab emirates"],
+  },
+  { match: ["qatar"], cities: ["Doha"], geoCountries: ["qatar"] },
+  { match: ["egypte", "egypt"], cities: ["Le Caire"], geoCountries: ["egypte", "egypt"] },
+  { match: ["maroc", "morocco"], cities: ["Marrakech"], geoCountries: ["maroc", "morocco"] },
+  { match: ["tunisie", "tunisia"], cities: ["Tunis"], geoCountries: ["tunisie", "tunisia"] },
+  { match: ["algerie", "algeria"], cities: ["Alger"], geoCountries: ["algerie", "algeria"] },
+  { match: ["japon", "japan", "nihon"], cities: ["Tokyo", "Kyoto", "Osaka"], geoCountries: ["japon", "japan"] },
+  {
+    match: ["coree du sud", "south korea", "korea", "coree"],
+    cities: ["Seoul"],
+    geoCountries: ["coree du sud", "south korea", "korea"],
+  },
+  { match: ["thailande", "thailand", "siam"], cities: ["Bangkok", "Phuket"], geoCountries: ["thailande", "thailand"] },
+  { match: ["singapour", "singapore"], cities: ["Singapore"], geoCountries: ["singapour", "singapore"] },
+  { match: ["indonesie", "indonesia"], cities: ["Bali", "Jakarta"], geoCountries: ["indonesie", "indonesia"] },
+  { match: ["chine", "china", "rpc"], cities: ["Beijing", "Shanghai", "Guangzhou"], geoCountries: ["chine", "china"] },
+  {
+    match: ["etats-unis", "usa", "united states", "amerique", "u.s.a", "us"],
+    cities: ["New York", "Los Angeles", "San Francisco", "Miami", "Chicago"],
+    geoCountries: ["etats-unis", "united states of america", "united states", "usa"],
+  },
+  { match: ["canada"], cities: ["Toronto", "Vancouver"], geoCountries: ["canada"] },
+  { match: ["australie", "australia"], cities: ["Sydney", "Melbourne"], geoCountries: ["australie", "australia"] },
+  {
+    match: ["nouvelle-zelande", "new zealand", "aotearoa"],
+    cities: ["Auckland"],
+    geoCountries: ["nouvelle-zelande", "new zealand"],
+  },
+  {
+    match: ["afrique du sud", "south africa"],
+    cities: ["Cape Town"],
+    geoCountries: ["afrique du sud", "south africa"],
+  },
+  {
+    match: ["bresil", "brazil", "brasil"],
+    cities: ["Rio de Janeiro", "Sao Paulo"],
+    geoCountries: ["bresil", "brazil", "brasil"],
+  },
+  { match: ["mexique", "mexico"], cities: [], geoCountries: ["mexique", "mexico"] },
+  { match: ["inde", "india"], cities: [], geoCountries: ["inde", "india"] },
+  { match: ["vietnam"], cities: [], geoCountries: ["vietnam", "viet nam"] },
+  { match: ["philippines"], cities: [], geoCountries: ["philippines"] },
+  { match: ["malaisie", "malaysia"], cities: ["Singapore"], geoCountries: ["malaisie", "malaysia"] },
+];
+
+function stripLeadingCountryArticle(nstem) {
+  return String(nstem || "")
+    .replace(/^(le |la |les |l'|the )/, "")
+    .trim();
+}
+
+/** Entrée Entrée seule sur un nom de pays : pas de fiche — il faut choisir une ville. */
+function isExclusiveCountryIntent(nstem) {
+  const n = stripLeadingCountryArticle(nstem);
+  for (const g of COUNTRY_QUERY_GROUPS) {
+    for (const m of g.match) {
+      if (n !== m) continue;
+      if (m.length >= 4) return true;
+      if (m === "usa" || m === "uae" || m === "us" || m === "uk" || m === "rpc") return true;
+    }
+  }
+  return false;
+}
+
+/** Groupes pays dont la saisie `q` (déjà normalisée) correspond au nom du pays. */
+function countryGroupsMatchingQuery(q) {
+  if (!q || q.length < 2) return [];
+  const out = [];
+  for (const g of COUNTRY_QUERY_GROUPS) {
+    let hit = false;
+    for (const m of g.match) {
+      if (m.length < 2) continue;
+      if (
+        m === q ||
+        (q.length >= 3 && m.startsWith(q)) ||
+        (m.length >= 3 && q.startsWith(m) && q.length <= m.length + 2)
+      ) {
+        hit = true;
+        break;
+      }
+    }
+    if (hit) out.push(g);
+  }
+  return out;
+}
+
+/** Villes à proposer quand la saisie ressemble à un pays. */
+function citiesForCountrySearchQuery(q) {
+  if (!q || q.length < 2) return [];
+  const seen = new Set();
+  const out = [];
+  for (const g of countryGroupsMatchingQuery(q)) {
+    for (const c of g.cities) {
+      const k = normalizeTextForSearch(c);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+function geoCountryHintsSet(groups) {
+  const set = new Set();
+  for (const g of groups) {
+    const hints =
+      Array.isArray(g.geoCountries) && g.geoCountries.length > 0 ? g.geoCountries : [g.match[0]];
+    for (const h of hints) {
+      const n = normalizeTextForSearch(h);
+      if (n) set.add(n);
+    }
+  }
+  return set;
+}
+
+/** Exclut « Italie, Italie » : le lieu a le même libellé que le pays. */
+function isGeoRowNameSameAsCountry(row) {
+  const nn = normalizeTextForSearch(row.name);
+  const nc = normalizeTextForSearch(row.country);
+  return Boolean(nn && nc && nn === nc);
+}
+
+/**
+ * Quand la requête est un pays : ne garder que les lignes Open-Meteo dans ce pays,
+ * et pas le pays lui-même comme « ville ».
+ */
+function filterOpenMeteoRowsForCountrySearchQuery(qNormalized, rows) {
+  const groups = countryGroupsMatchingQuery(qNormalized);
+  if (!groups.length) return rows;
+  const hints = geoCountryHintsSet(groups);
+  return (rows || []).filter((row) => {
+    const cn = normalizeTextForSearch(row.country);
+    if (!hints.has(cn)) return false;
+    if (isGeoRowNameSameAsCountry(row)) return false;
+    return true;
+  });
+}
+
 function resolveCanonicalCity(value) {
   const q = normalizeTextForSearch(value);
   if (!q) return normalizeCityInput(value);
   const exact = CITY_SEARCH_ENTRIES.find((entry) => normalizeTextForSearch(entry.label) === q);
   return exact ? exact.canonical : normalizeCityInput(value);
-}
-
-/** Première partie "ville" avant virgule, puis canon catalogue si possible. */
-function normalizeDestinationConfirm(raw) {
-  const step = extractCityPrompt(raw) || String(raw || "").trim();
-  if (step.length < 2) return "";
-  return resolveCanonicalCity(step);
 }
 
 function levenshteinDistance(a, b) {
@@ -428,6 +622,17 @@ function mergeCitySuggestionLists(localList, remoteList, max = 10) {
 function getCitySuggestions(input) {
   const q = normalizeTextForSearch(input);
   if (q.length < 2) return [];
+  const groupsHit = countryGroupsMatchingQuery(q);
+  const fromCountry = citiesForCountrySearchQuery(q);
+  /** Pas de fuzzy global sur le catalogue quand on tape un pays : évite Bali pour « italie », etc. */
+  if (groupsHit.length > 0) {
+    const exactCanon = [
+      ...new Set(
+        CITY_SEARCH_ENTRIES.filter((e) => normalizeTextForSearch(e.label) === q).map((e) => e.canonical)
+      ),
+    ];
+    return mergeCitySuggestionLists(fromCountry, exactCanon, 12);
+  }
   const ranked = CITY_SEARCH_ENTRIES.map((entry) => {
     const c = normalizeTextForSearch(entry.label);
     let score = 0;
@@ -445,49 +650,104 @@ function getCitySuggestions(input) {
   }).sort((a, b) => b.score - a.score);
 
   const strict = [...new Set(ranked.filter((x) => x.score >= 45).map((x) => x.city))].slice(0, 8);
-
-  if (strict.length > 0) return strict;
+  const mergedStrict = mergeCitySuggestionLists(fromCountry, strict, 12);
+  if (mergedStrict.length > 0) return mergedStrict;
 
   // Fallback: always keep a few closest results, to avoid empty suggestion list.
-  return [...new Set(ranked.filter((x) => x.score > 0).map((x) => x.city))].slice(0, 5);
+  const loose = [...new Set(ranked.filter((x) => x.score > 0).map((x) => x.city))].slice(0, 5);
+  return mergeCitySuggestionLists(fromCountry, loose, 12);
 }
 
-const WORLD_CITY_SUGGESTIONS_CACHE = {};
+const OPEN_METEO_ROWS_CACHE = {};
 
-async function fetchWorldwideCitySuggestions(input, limit = 8) {
+async function queryOpenMeteoLocations(input, limit = 12) {
   const q = normalizeCityInput(input);
   if (q.length < 2) return [];
-  const cacheKey = `${normalizeTextForSearch(q)}::${Number(limit)}`;
-  if (WORLD_CITY_SUGGESTIONS_CACHE[cacheKey]) {
-    return WORLD_CITY_SUGGESTIONS_CACHE[cacheKey];
-  }
-
+  const lim = Math.min(Math.max(Number(limit) || 12, 1), 20);
+  const cacheKey = `${normalizeTextForSearch(q)}::${lim}`;
+  if (OPEN_METEO_ROWS_CACHE[cacheKey]) return OPEN_METEO_ROWS_CACHE[cacheKey];
   try {
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
       q
-    )}&count=${Math.min(Math.max(Number(limit) || 8, 1), 12)}&language=fr&format=json`;
+    )}&count=${lim}&language=fr&format=json`;
     const resp = await fetch(url);
-    if (!resp.ok) return [];
+    if (!resp.ok) {
+      OPEN_METEO_ROWS_CACHE[cacheKey] = [];
+      return [];
+    }
     const json = await resp.json();
     const rows = Array.isArray(json?.results) ? json.results : [];
     const mapped = rows
       .map((row) => {
-        const city = String(row?.name || "").trim();
-        if (!city) return "";
-        const admin = String(row?.admin1 || "").trim();
-        const country = String(row?.country || "").trim();
-        const parts = [city];
-        if (admin && normalizeTextForSearch(admin) !== normalizeTextForSearch(city)) parts.push(admin);
-        if (country) parts.push(country);
-        return parts.join(", ");
+        const name = String(row?.name || "").trim();
+        if (!name) return null;
+        return {
+          name,
+          admin1: String(row?.admin1 || "").trim(),
+          country: String(row?.country || "").trim(),
+        };
       })
       .filter(Boolean);
-    const unique = [...new Set(mapped)].slice(0, Math.max(1, Number(limit) || 8));
-    WORLD_CITY_SUGGESTIONS_CACHE[cacheKey] = unique;
-    return unique;
+    OPEN_METEO_ROWS_CACHE[cacheKey] = mapped;
+    return mapped;
   } catch (_e) {
+    OPEN_METEO_ROWS_CACHE[cacheKey] = [];
     return [];
   }
+}
+
+function formatGeoResultLabel(row) {
+  const parts = [row.name];
+  if (row.admin1 && normalizeTextForSearch(row.admin1) !== normalizeTextForSearch(row.name)) parts.push(row.admin1);
+  if (row.country) parts.push(row.country);
+  return parts.join(", ");
+}
+
+async function fetchWorldwideCitySuggestions(input, limit = 8) {
+  const q = normalizeCityInput(input);
+  if (q.length < 2) return [];
+  const qn = normalizeTextForSearch(q);
+  const lim = Math.min(Math.max(Number(limit) || 8, 1), 12);
+  const countryHit = countryGroupsMatchingQuery(qn).length > 0;
+  const fetchCount = Math.min(20, Math.max(lim, 10) + (countryHit ? 14 : 0));
+  const rows = await queryOpenMeteoLocations(input, fetchCount);
+  const filtered = filterOpenMeteoRowsForCountrySearchQuery(qn, rows);
+  const labels = [...new Set(filtered.map(formatGeoResultLabel))];
+  return labels.slice(0, lim);
+}
+
+/**
+ * Valide une saisie libre (Entrée) : catalogue, suggestions locales, puis Open-Meteo.
+ * Retourne une chaîne exploitable par le guide, ou null si rien n’est reconnu.
+ */
+async function resolveValidatedDestination(raw) {
+  const stem = extractCityPrompt(raw) || normalizeCityInput(raw);
+  const trimmed = normalizeCityInput(stem);
+  if (trimmed.length < 2) return null;
+  const nstem = normalizeTextForSearch(trimmed);
+
+  if (isExclusiveCountryIntent(nstem)) return null;
+
+  const catHit = CITY_SEARCH_ENTRIES.find((e) => normalizeTextForSearch(e.label) === nstem);
+  if (catHit) return catHit.canonical;
+
+  const localMerged = mergeCitySuggestionLists(citiesForCountrySearchQuery(nstem), getCitySuggestions(raw), 16);
+  const localExact = localMerged.find((c) => normalizeTextForSearch(extractCityPrompt(c) || c) === nstem);
+  if (localExact) return resolveCanonicalCity(localExact);
+
+  const rowsRaw = await queryOpenMeteoLocations(trimmed, 14);
+  const rows = filterOpenMeteoRowsForCountrySearchQuery(nstem, rowsRaw);
+  if (!rows.length) return null;
+
+  const exactGeo = rows.find((r) => normalizeTextForSearch(r.name) === nstem);
+  if (exactGeo) return formatGeoResultLabel(exactGeo);
+
+  const top = rows[0];
+  const tn = normalizeTextForSearch(top.name);
+  if (nstem.length >= 3 && tn.startsWith(nstem)) return formatGeoResultLabel(top);
+  if (nstem.length >= 4 && levenshteinDistance(nstem, tn) <= 1) return formatGeoResultLabel(top);
+
+  return null;
 }
 
 /** Fond écrans auth / chargement — aligné bleu-gris carte */
@@ -1840,6 +2100,39 @@ function toYMDLoose(value) {
   }
   if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   return "";
+}
+
+/** Chevauchement de plages [début, fin] inclusives (AAAA-MM-JJ). */
+function ymdRangesOverlap(startA, endA, startB, endB) {
+  const a0 = String(startA || "").slice(0, 10);
+  const a1 = String(endA || a0).slice(0, 10);
+  const b0 = String(startB || "").slice(0, 10);
+  const b1 = String(endB || b0).slice(0, 10);
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(a0) || !re.test(a1) || !re.test(b0) || !re.test(b1)) return false;
+  return a0 <= b1 && b0 <= a1;
+}
+
+/** Voyages dont la plage de dates croise [startYmd, endYmd] (exclut excludeTripId si fourni). */
+function findTripsOverlappingDateRange(tripList, startYmd, endYmd, excludeTripId = null) {
+  const s = String(startYmd || "").slice(0, 10);
+  const e = String(endYmd || s).slice(0, 10);
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(s) || !re.test(e)) return [];
+  return (tripList || []).filter((t) => {
+    if (excludeTripId != null && String(t?.id) === String(excludeTripId)) return false;
+    const ts = toYMD(t?.start_date, "");
+    const te = toYMD(t?.end_date, ts);
+    if (!ts || !te) return false;
+    return ymdRangesOverlap(s, e, ts, te);
+  });
+}
+
+function tripDestinationDisplayName(trip) {
+  const d = String(trip?.destination || "").trim();
+  const ti = String(trip?.title || "").trim();
+  const n = String(trip?.name || "").trim();
+  return d || ti || n || "Voyage";
 }
 
 /** Évite qu'un refetch juste après insertion écrase les activités (latence lecture / temps réel). */
@@ -3325,6 +3618,7 @@ function CitySearchBox({
   showSuggestions = true,
 }) {
   const [focused, setFocused] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   /** `key` = requête normalisée à laquelle `list` correspond (ignore si différent du champ → liste locale seule, immédiat). */
   const [remotePack, setRemotePack] = useState(() => ({ key: "", list: [] }));
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -3374,17 +3668,24 @@ function CitySearchBox({
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
+          onKeyDown={async (e) => {
             if (e.key !== "Enter" || !onConfirm) return;
             const q = normalizeCityInput(value);
             if (q.length < 2) return;
             e.preventDefault();
-            onConfirm(value);
+            if (confirmBusy) return;
+            setConfirmBusy(true);
+            try {
+              await Promise.resolve(onConfirm(value));
+            } finally {
+              setConfirmBusy(false);
+            }
           }}
           onFocus={() => setFocused(true)}
           onBlur={() => setTimeout(() => setFocused(false), 120)}
           placeholder={placeholder}
-          className="w-full bg-transparent text-sm outline-none"
+          disabled={confirmBusy}
+          className="w-full bg-transparent text-sm outline-none disabled:opacity-60"
         />
       </div>
       {show ? (
@@ -5960,14 +6261,22 @@ function ChatHubView({
     return map;
   }, [votes]);
 
+  /** Une seule vue à la fois : discussion d’abord, votes via l’onglet (surtout mobile). */
+  const [hubSubView, setHubSubView] = useState("chat");
+
   const currentUserId = String(session?.user?.id || "");
 
   useEffect(() => {
+    setHubSubView("chat");
+  }, [chatTripId]);
+
+  useEffect(() => {
     if (!activeTrip) return;
+    if (hubSubView !== "chat") return;
     const el = messagesContainerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [chatMessages, activeTrip]);
+  }, [chatMessages, activeTrip, hubSubView]);
 
   return (
     <section className="space-y-5">
@@ -6027,187 +6336,265 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/45 p-2 backdrop-blur-[2px] sm:p-4">
-          <div className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-6xl flex-col overflow-hidden overflow-x-hidden sm:max-h-[88vh]">
-            <button
-              type="button"
-              onClick={() => setChatTripId("")}
-              className="absolute right-1 top-1 z-10 rounded-full bg-white p-2 text-slate-700 shadow-md ring-1 ring-slate-200 hover:bg-slate-50 sm:-top-2 sm:right-0"
-              title="Fermer la conversation"
-            >
-              <X size={16} />
-            </button>
-            <div className="mt-10 grid min-h-0 min-w-0 flex-1 gap-3 overflow-y-auto overscroll-contain pb-2 lg:mt-0 lg:h-full lg:grid-cols-[1.2fr_1fr] lg:gap-4 lg:overflow-hidden lg:pb-0">
-              <div className="flex min-h-[min(40vh,22rem)] min-w-0 flex-col rounded-[2rem] bg-white p-3 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:min-h-0 sm:p-5 lg:h-full lg:min-h-0 lg:max-h-none">
-            <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">
-              Discussion - {String(activeTrip.title)}
-            </h3>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
-                .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
-                .map((label) => (
-                  <span
-                    key={`active-${String(label)}`}
-                    title={String(label)}
-                    className="inline-grid h-7 w-7 place-items-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
-                  >
-                    {initialsFromLabel(label)}
-                  </span>
-                ))}
-            </div>
-            <div
-              ref={messagesContainerRef}
-              className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
-            >
-              {(chatMessages || []).length > 0 ? (
-                chatMessages.map((msg, idx) => {
-                  const mine =
-                    (currentUserId && String(msg?.author_id || "") === currentUserId) ||
-                    (!!session?.user?.email &&
-                      String(msg?.author_email || "").toLowerCase() === String(session?.user?.email || "").toLowerCase());
-                  const authorLabel = String(msg?.author_name || msg?.author_email || (mine ? "Moi" : "Membre"));
-                  return (
-                    <div
-                      key={`${String(msg?.id || "m")}-${idx}`}
-                      className={`flex ${mine ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`min-w-0 max-w-[min(78%,100%)] ${mine ? "items-end" : "items-start"} flex flex-col`}
-                      >
-                        <p className={`mb-1 max-w-full truncate px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}>
-                          {authorLabel}
-                        </p>
-                        <div
-                          className={`max-w-full break-words rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
-                            mine
-                              ? "rounded-br-md bg-[#0A84FF] text-white"
-                              : "rounded-bl-md bg-slate-200 text-slate-900"
-                          }`}
-                        >
-                          {String(msg?.content || "")}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-sm text-slate-500">Aucun message pour ce voyage.</p>
-              )}
-            </div>
-            <div className="mt-3 flex min-w-0 gap-2">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    onSendMessage();
-                  }
-                }}
-                placeholder="Ecrire un message..."
-                className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[16px] md:px-4 md:text-sm"
-              />
+        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/45 p-3 backdrop-blur-[2px] sm:p-4">
+          <div
+            className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-[0_24px_64px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/90 sm:max-h-[88vh]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tp-chat-hub-title"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 pb-3 pt-4 sm:px-5 sm:pb-3.5 sm:pt-5">
+              <div className="min-w-0 flex-1 pr-1">
+                <h2
+                  id="tp-chat-hub-title"
+                  className="break-words text-base font-semibold leading-snug tracking-tight text-slate-900 sm:text-lg"
+                >
+                  {String(activeTrip.title)}
+                </h2>
+                <p className="mt-1 text-xs text-slate-500 sm:text-sm">
+                  {formatDate(activeTrip.start_date)} — {formatDate(activeTrip.end_date)}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={onSendMessage}
-                className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                onClick={() => setChatTripId("")}
+                className="shrink-0 rounded-full p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                title="Fermer"
+                aria-label="Fermer la conversation"
               >
-                Envoyer
+                <X size={20} strokeWidth={2} aria-hidden />
               </button>
             </div>
-              </div>
 
-              <div className="flex min-h-[min(36vh,20rem)] min-w-0 flex-col rounded-[2rem] bg-white p-3 shadow-[0_18px_40px_rgba(2,6,23,0.16)] ring-1 ring-slate-200 sm:min-h-0 sm:p-5 lg:h-full lg:min-h-0 lg:max-h-none">
-                <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes activites</h3>
-                <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden space-y-2 pr-1">
+            <div className="shrink-0 px-3 pb-2 pt-2 sm:px-4 sm:pt-3">
+              <div
+                role="tablist"
+                aria-label="Discussion ou votes sur les activités"
+                className="flex gap-1.5 rounded-2xl bg-slate-100/95 p-1.5 ring-1 ring-slate-200/80 sm:gap-2"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={hubSubView === "chat"}
+                  onClick={() => setHubSubView("chat")}
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-medium transition sm:px-4 sm:py-2.5 ${
+                    hubSubView === "chat"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "bg-transparent text-slate-600 hover:bg-slate-100/80"
+                  }`}
+                >
+                  <MessageCircle size={18} className="shrink-0 opacity-90" aria-hidden />
+                  <span className="truncate">Discussion</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={hubSubView === "votes"}
+                  onClick={() => setHubSubView("votes")}
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-medium transition sm:px-4 sm:py-2.5 ${
+                    hubSubView === "votes"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "bg-transparent text-slate-600 hover:bg-slate-100/80"
+                  }`}
+                >
+                  <ThumbsUp size={18} className="shrink-0 opacity-90" aria-hidden />
+                  <span className="truncate sm:hidden">Votes</span>
+                  <span className="hidden truncate sm:inline">Votes activités</span>
                   {tripActivities.length > 0 ? (
-                    tripActivities.map((activity) => {
-                      const list = votesByActivity[String(activity.id)] || [];
-                      const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
-                      const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
-                      const mineValue = Number(mine?.value || 0);
-                      const votedFor = list.filter((v) => Number(v?.value || 0) === 1);
-                      const votedAgainst = list.filter((v) => Number(v?.value || 0) === -1);
-                      return (
-                        <div key={String(activity.id)} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <p className="break-words text-sm font-semibold text-slate-900">
-                                {String(activity?.title || activity?.name || "Activite")}
-                              </p>
-                              <p className="text-xs text-slate-500">
-                                {String(activity?.date || "")} {String(activity?.time || "")}
-                              </p>
-                              <p className="mt-0.5 text-xs font-medium text-slate-700">
-                                Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
-                              </p>
-                            </div>
-                            <span
-                              className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                score > 0
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : score < 0
-                                    ? "bg-rose-100 text-rose-700"
-                                    : "bg-slate-200 text-slate-700"
-                              }`}
-                            >
-                              Score {score > 0 ? `+${score}` : score}
-                            </span>
-                          </div>
-                          <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => onVote(String(activity.id), 1)}
-                              className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
-                                mineValue === 1
-                                  ? "bg-emerald-600 text-white shadow-sm"
-                                  : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              👍 Je vote pour
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onVote(String(activity.id), -1)}
-                              className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
-                                mineValue === -1
-                                  ? "bg-rose-600 text-white shadow-sm"
-                                  : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              👎 Je vote contre
-                            </button>
-                          </div>
-                          <p className="mt-2 text-[11px] text-slate-500">
-                            {mineValue === 1
-                              ? "Ton vote: pour"
-                              : mineValue === -1
-                                ? "Ton vote: contre"
-                                : "Tu n'as pas encore vote"}
-                          </p>
-                          <div className="mt-2 space-y-1 break-words">
-                            <p className="text-[11px] text-emerald-700">
-                              Pour:{" "}
-                              {votedFor.length > 0
-                                ? votedFor.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                : "-"}
-                            </p>
-                            <p className="text-[11px] text-rose-700">
-                              Contre:{" "}
-                              {votedAgainst.length > 0
-                                ? votedAgainst.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                : "-"}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <p className="text-sm text-slate-500">Aucune activite a voter.</p>
-                  )}
-                </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                        hubSubView === "votes" ? "bg-white/20 text-white" : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {tripActivities.length}
+                    </span>
+                  ) : null}
+                </button>
               </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-0 sm:px-4 sm:pb-4">
+              {hubSubView === "chat" ? (
+                <>
+                  <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">Messages</h3>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                      {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
+                        .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
+                        .map((label) => (
+                          <span
+                            key={`active-${String(label)}`}
+                            title={String(label)}
+                            className="inline-grid h-7 w-7 place-items-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
+                          >
+                            {initialsFromLabel(label)}
+                          </span>
+                        ))}
+                    </div>
+                    <div
+                      ref={messagesContainerRef}
+                      className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1"
+                    >
+                      {(chatMessages || []).length > 0 ? (
+                        chatMessages.map((msg, idx) => {
+                          const mine =
+                            (currentUserId && String(msg?.author_id || "") === currentUserId) ||
+                            (!!session?.user?.email &&
+                              String(msg?.author_email || "").toLowerCase() ===
+                                String(session?.user?.email || "").toLowerCase());
+                          const authorLabel = String(
+                            msg?.author_name || msg?.author_email || (mine ? "Moi" : "Membre")
+                          );
+                          return (
+                            <div
+                              key={`${String(msg?.id || "m")}-${idx}`}
+                              className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                            >
+                              <div
+                                className={`min-w-0 max-w-[min(78%,100%)] ${mine ? "items-end" : "items-start"} flex flex-col`}
+                              >
+                                <p
+                                  className={`mb-1 max-w-full truncate px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}
+                                >
+                                  {authorLabel}
+                                </p>
+                                <div
+                                  className={`max-w-full break-words rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
+                                    mine
+                                      ? "rounded-br-md bg-[#0A84FF] text-white"
+                                      : "rounded-bl-md bg-slate-200 text-slate-900"
+                                  }`}
+                                >
+                                  {String(msg?.content || "")}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="text-sm text-slate-500">Aucun message pour ce voyage.</p>
+                      )}
+                    </div>
+                    <div className="mt-3 flex min-w-0 shrink-0 gap-2">
+                      <input
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            onSendMessage();
+                          }
+                        }}
+                        placeholder="Ecrire un message..."
+                        className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[16px] md:px-4 md:text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={onSendMessage}
+                        className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
+                        style={GLASS_ACCENT_STYLE}
+                      >
+                        Envoyer
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">Votes sur les activités</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                      Indique si tu es pour ou contre chaque activité du planning — le groupe voit les tendances.
+                    </p>
+                    <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
+                      {tripActivities.length > 0 ? (
+                        tripActivities.map((activity) => {
+                          const list = votesByActivity[String(activity.id)] || [];
+                          const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
+                          const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
+                          const mineValue = Number(mine?.value || 0);
+                          const votedFor = list.filter((v) => Number(v?.value || 0) === 1);
+                          const votedAgainst = list.filter((v) => Number(v?.value || 0) === -1);
+                          return (
+                            <div
+                              key={String(activity.id)}
+                              className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="break-words text-sm font-semibold text-slate-900">
+                                    {String(activity?.title || activity?.name || "Activite")}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {String(activity?.date || "")} {String(activity?.time || "")}
+                                  </p>
+                                  <p className="mt-0.5 text-xs font-medium text-slate-700">
+                                    Budget: {Number(activity?.cost || 0).toFixed(2)} EUR
+                                  </p>
+                                </div>
+                                <span
+                                  className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                    score > 0
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : score < 0
+                                        ? "bg-rose-100 text-rose-700"
+                                        : "bg-slate-200 text-slate-700"
+                                  }`}
+                                >
+                                  Score {score > 0 ? `+${score}` : score}
+                                </span>
+                              </div>
+                              <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => onVote(String(activity.id), 1)}
+                                  className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
+                                    mineValue === 1
+                                      ? "bg-emerald-600 text-white shadow-sm"
+                                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  👍 Je vote pour
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onVote(String(activity.id), -1)}
+                                  className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
+                                    mineValue === -1
+                                      ? "bg-rose-600 text-white shadow-sm"
+                                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  👎 Je vote contre
+                                </button>
+                              </div>
+                              <p className="mt-2 text-[11px] text-slate-500">
+                                {mineValue === 1
+                                  ? "Ton vote: pour"
+                                  : mineValue === -1
+                                    ? "Ton vote: contre"
+                                    : "Tu n'as pas encore vote"}
+                              </p>
+                              <div className="mt-2 space-y-1 break-words">
+                                <p className="text-[11px] text-emerald-700">
+                                  Pour:{" "}
+                                  {votedFor.length > 0
+                                    ? votedFor.map((v) => resolveVoterLabel(v, session)).join(", ")
+                                    : "-"}
+                                </p>
+                                <p className="text-[11px] text-rose-700">
+                                  Contre:{" "}
+                                  {votedAgainst.length > 0
+                                    ? votedAgainst.map((v) => resolveVoterLabel(v, session)).join(", ")
+                                    : "-"}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="text-sm text-slate-500">Aucune activite a voter.</p>
+                      )}
+                    </div>
+                  </>
+                )}
             </div>
           </div>
         </div>
@@ -6312,6 +6699,10 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
+  const [destinationInvalidModalOpen, setDestinationInvalidModalOpen] = useState(false);
+  const [destinationInvalidMessage, setDestinationInvalidMessage] = useState("");
+  const [tripDateConflictModalOpen, setTripDateConflictModalOpen] = useState(false);
+  const [tripDateConflictTrips, setTripDateConflictTrips] = useState([]);
 
   const [trips, setTrips] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -7113,6 +7504,14 @@ export default function App() {
       setNotice("Date de debut invalide.");
       return false;
     }
+    const newStart = toYMD(String(payload.start_date || getTodayStr()), getTodayStr());
+    const newEnd = toYMD(String(payload.end_date || newStart), newStart);
+    const dateConflicts = findTripsOverlappingDateRange(trips, newStart, newEnd, null);
+    if (dateConflicts.length > 0) {
+      setTripDateConflictTrips(dateConflicts);
+      setTripDateConflictModalOpen(true);
+      return false;
+    }
     if (createTripInFlightRef.current) {
       setNotice("Creation du voyage en cours…");
       return false;
@@ -7683,6 +8082,19 @@ export default function App() {
     }
     try {
       const currentTrip = (trips || []).find((t) => String(t?.id) === String(trip?.id)) || trip || {};
+      const newStart = toYMD(String(trip.start_date || getTodayStr()), getTodayStr());
+      const newEnd = toYMD(String(trip.end_date || newStart), newStart);
+      const prevStart = toYMD(currentTrip?.start_date, newStart);
+      const prevEnd = toYMD(currentTrip?.end_date, prevStart);
+      const datesChanged = prevStart !== newStart || prevEnd !== newEnd;
+      if (datesChanged) {
+        const dateConflicts = findTripsOverlappingDateRange(trips, newStart, newEnd, trip.id);
+        if (dateConflicts.length > 0) {
+          setTripDateConflictTrips(dateConflicts);
+          setTripDateConflictModalOpen(true);
+          return;
+        }
+      }
       const previousInvitedEmails = Array.isArray(currentTrip?.invited_emails) ? currentTrip.invited_emails : [];
       const previousInvitedSet = new Set(previousInvitedEmails.map((m) => String(m || "").toLowerCase().trim()).filter(Boolean));
 
@@ -7887,9 +8299,28 @@ export default function App() {
     setDestinationInput(v);
   };
 
-  const handleConfirmDestination = (raw) => {
-    const resolved = normalizeDestinationConfirm(raw);
-    if (!resolved) return;
+  const handleConfirmDestination = async (raw) => {
+    const stem = extractCityPrompt(raw) || normalizeCityInput(raw);
+    const trimmed = normalizeCityInput(stem);
+    if (trimmed.length < 2) return;
+
+    const nstem = normalizeTextForSearch(trimmed);
+    if (isExclusiveCountryIntent(nstem)) {
+      setDestinationInvalidMessage(
+        "Pour un pays, choisissez une ville dans les suggestions (par ex. Paris, Lyon, Nice pour la France)."
+      );
+      setDestinationInvalidModalOpen(true);
+      return;
+    }
+
+    const resolved = await resolveValidatedDestination(raw);
+    if (!resolved) {
+      setDestinationInvalidMessage(
+        "Cette destination n’existe pas ou n’est pas reconnue. Vérifiez l’orthographe ou choisissez une ville dans la liste."
+      );
+      setDestinationInvalidModalOpen(true);
+      return;
+    }
     setDestinationConfirmed(resolved);
     setDestinationInput(resolved);
   };
@@ -8273,6 +8704,67 @@ export default function App() {
         deleting={deletingAccount}
         saving={savingAccount}
       />
+      {destinationInvalidModalOpen ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tp-dest-invalid-title"
+        >
+          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
+            <h3 id="tp-dest-invalid-title" className="text-lg font-semibold text-slate-900">
+              Destination introuvable
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-slate-600">{destinationInvalidMessage}</p>
+            <button
+              type="button"
+              className="mt-6 w-full rounded-2xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+              onClick={() => setDestinationInvalidModalOpen(false)}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {tripDateConflictModalOpen ? (
+        <div
+          className="fixed inset-0 z-[73] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tp-trip-date-conflict-title"
+        >
+          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
+            <h3 id="tp-trip-date-conflict-title" className="text-lg font-semibold text-slate-900">
+              Dates déjà réservées
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-slate-600">
+              Ces dates se chevauchent avec un voyage déjà prévu. Change les dates du nouveau voyage ou modifie
+              l’existant.
+            </p>
+            <ul className="mt-4 max-h-48 list-disc space-y-2 overflow-y-auto pl-5 text-sm text-slate-800">
+              {tripDateConflictTrips.map((t) => (
+                <li key={String(t.id)}>
+                  <span className="font-medium">{tripDestinationDisplayName(t)}</span>
+                  <span className="text-slate-600">
+                    {" "}
+                    — du {formatDate(t.start_date)} au {formatDate(t.end_date)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="mt-6 w-full rounded-2xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+              onClick={() => {
+                setTripDateConflictModalOpen(false);
+                setTripDateConflictTrips([]);
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
