@@ -513,9 +513,9 @@ const GLASS_ACCENT_STYLE = {
 
 /** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
 const MODAL_GRID_2 = "grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3";
-/** Champ date dans modale — même logique que Nouveau voyage. */
+/** Champ date dans modale — text-base sur mobile évite le zoom iOS ; largeur forcée pour WebKit. */
 const MODAL_DATE_INPUT_CLASS =
-  "min-w-0 w-full max-w-full box-border rounded-2xl border border-slate-200 bg-white px-2 py-2.5 text-[13px] leading-tight sm:px-4 sm:py-3 sm:text-base";
+  "min-w-0 w-full max-w-full box-border rounded-2xl border border-slate-200 bg-white px-2 py-2.5 text-base leading-tight sm:px-4 sm:py-3";
 
 function extractCityPrompt(destination) {
   const s = String(destination || "").trim();
@@ -2620,31 +2620,35 @@ function TripFormModal({ open, onClose, onCreate }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-xl rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Nouveau voyage</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <div className="min-w-0 space-y-3">
+        <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Destination"
-            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3">
+          {/*
+            Mobile : colonne (Safari iOS déborde si 2 date + icône en ligne).
+            sm+ : grille 3 colonnes comme avant.
+          */}
+          <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
-            <div className="flex shrink-0 justify-center px-0.5">
+            <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
               <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                 <Plane size={14} className="animate-bounce" />
               </div>
             </div>
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
           </div>
-          <div className="flex min-w-0 gap-2">
+          <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_2.75rem] items-stretch gap-2">
             <input
               value={inviteInput}
               onChange={(e) => setInviteInput(e.target.value)}
@@ -2654,13 +2658,13 @@ function TripFormModal({ open, onClose, onCreate }) {
                   addInvites();
                 }
               }}
-              placeholder="Ajouter un e-mail invite (ex: ami@mail.com)"
-              className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
+              placeholder="E-mail invité"
+              className="min-w-0 w-full max-w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
             <button
               type="button"
               onClick={addInvites}
-              className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 text-slate-700 shadow-sm transition hover:bg-slate-100"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-100"
               title="Ajouter aux invites"
             >
               <Plus size={18} />
@@ -2817,22 +2821,22 @@ function EditTripModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-xl rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Modifier voyage</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
-        <div className="min-w-0 space-y-3">
+        <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Destination"
-            className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <div className={MODAL_GRID_2}>
+          <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
             <input
               type="date"
               value={startDate}
@@ -4398,8 +4402,8 @@ function DestinationGuideView({
       ) : null}
 
       {addModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-          <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-lg overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
+          <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8">
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
                 Ajouter {String(displayGuide.city)}
@@ -4412,14 +4416,14 @@ function DestinationGuideView({
                 <X size={18} />
               </button>
             </div>
-            <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3">
+            <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 className={MODAL_DATE_INPUT_CLASS}
               />
-              <div className="flex shrink-0 justify-center px-0.5">
+              <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
                 <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                   <Plane size={14} className="animate-bounce" />
                 </div>
