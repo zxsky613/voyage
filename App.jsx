@@ -513,9 +513,21 @@ const GLASS_ACCENT_STYLE = {
 
 /** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
 const MODAL_GRID_2 = "grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3";
-/** Champ date dans modale — text-base sur mobile évite le zoom iOS ; largeur forcée pour WebKit. */
-const MODAL_DATE_INPUT_CLASS =
-  "min-w-0 w-full max-w-full box-border rounded-2xl border border-slate-200 bg-white px-2 py-2.5 text-base leading-tight sm:px-4 sm:py-3";
+/** Conteneur date : overflow-hidden + .modal-date-field (CSS) pour coins arrondis sur WebKit/iOS. */
+function ModalDateField({ value, onChange, className: wrapClass = "", inputClassName = "" }) {
+  return (
+    <div
+      className={`modal-date-field rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.05)] overflow-hidden ${wrapClass}`.trim()}
+    >
+      <input
+        type="date"
+        value={value}
+        onChange={onChange}
+        className={`min-w-0 w-full max-w-full border-0 bg-transparent px-4 py-3 text-base leading-normal outline-none focus:ring-0 focus-visible:outline-none [color-scheme:light] ${inputClassName}`.trim()}
+      />
+    </div>
+  );
+}
 
 function extractCityPrompt(destination) {
   const s = String(destination || "").trim();
@@ -2640,13 +2652,13 @@ function TripFormModal({ open, onClose, onCreate }) {
             sm+ : grille 3 colonnes comme avant.
           */}
           <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
+            <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
               <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                 <Plane size={14} className="animate-bounce" />
               </div>
             </div>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={MODAL_DATE_INPUT_CLASS} />
+            <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
           <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_2.75rem] items-stretch gap-2">
             <input
@@ -2837,18 +2849,8 @@ function EditTripModal({ open, onClose, trip, onSave }) {
             className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className={MODAL_DATE_INPUT_CLASS}
-            />
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className={MODAL_DATE_INPUT_CLASS}
-            />
+            <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
           <input
             value={fixedUrl}
@@ -4251,20 +4253,18 @@ function DestinationGuideView({
             <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                 Début
-                <input
-                  type="date"
+                <ModalDateField
+                  wrapClass="mt-1"
                   value={programStartDate}
                   onChange={(e) => setProgramStartDate(e.target.value)}
-                  className={`mt-1 ${MODAL_DATE_INPUT_CLASS}`}
                 />
               </label>
               <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                 Fin
-                <input
-                  type="date"
+                <ModalDateField
+                  wrapClass="mt-1"
                   value={programEndDate}
                   onChange={(e) => setProgramEndDate(e.target.value)}
-                  className={`mt-1 ${MODAL_DATE_INPUT_CLASS}`}
                 />
               </label>
             </div>
@@ -4417,23 +4417,13 @@ function DestinationGuideView({
               </button>
             </div>
             <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className={MODAL_DATE_INPUT_CLASS}
-              />
+              <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
                 <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                   <Plane size={14} className="animate-bounce" />
                 </div>
               </div>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className={MODAL_DATE_INPUT_CLASS}
-              />
+              <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             </div>
             <div className="mt-5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
@@ -5321,11 +5311,10 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 €
               </span>
             </div>
-            <input
-              type="date"
+            <ModalDateField
               value={expenseDate}
               onChange={(e) => setExpenseDate(e.target.value)}
-              className={`${MODAL_DATE_INPUT_CLASS} text-sm`}
+              inputClassName="text-sm"
             />
           </div>
           <div>

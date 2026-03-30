@@ -14,3 +14,23 @@ body,
 body {
   -webkit-text-size-adjust: 100%;
 }
+
+/* Champs date dans modales : le natif WebKit dessine un rectangle à droite ; on neutralise l’apparence
+   pour que le parent .modal-date-field (overflow + rounded-2xl) définisse toute la forme. */
+.modal-date-field input[type="date"] {
+  box-sizing: border-box;
+  min-height: 2.875rem;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.modal-date-field input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  margin-inline-start: 0.25rem;
+  opacity: 0.85;
+}
+
+.modal-date-field input[type="date"]::-webkit-datetime-edit,
+.modal-date-field input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+}
