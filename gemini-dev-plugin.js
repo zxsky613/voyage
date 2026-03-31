@@ -76,6 +76,77 @@ function hasEmptyGeminiKeyLine(envDir) {
   return false;
 }
 
+/** Lit une clé serveur (sans préfixe VITE_) depuis .env.local ou .env. */
+function readServerKey(envDir, keyName) {
+  for (const name of [".env.local", ".env"]) {
+    const fp = path.join(envDir, name);
+    try {
+      if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) continue;
+      const raw = fs.readFileSync(fp, "utf8").replace(/^\uFEFF/, "");
+      for (const line of raw.split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const eq = t.indexOf("=");
+        if (eq < 1) continue;
+        const k = t.slice(0, eq).trim();
+        if (k !== keyName) continue;
+        let v = t.slice(eq + 1).trim();
+        if (
+          (v.startsWith('"') && v.endsWith('"')) ||
+          (v.startsWith("'") && v.endsWith("'"))
+        ) {
+          v = v.slice(1, -1);
+        }
+        if (v) return v;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return "";
+}
+
+const readFoursquareKey = (envDir) => readServerKey(envDir, "FOURSQUARE_API_KEY");
+const readGroqKey      = (envDir) => readServerKey(envDir, "GROQ_API_KEY");
+
+/**
+ * Appelle l'API Groq (OpenAI-compatible) et parse la réponse JSON.
+ * Modèle par défaut : llama-3.3-70b-versatile (gratuit, 14 400 req/jour).
+ */
+async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2, model = "llama-3.3-70b-versatile" }) {
+  const messages = [];
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+  messages.push({ role: "user", content: prompt });
+
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Groq ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+  const json = await resp.json();
+  const text = String(json?.choices?.[0]?.message?.content || "").trim();
+  return parseGeminiJsonLenient(text, "Groq");
+}
+
+/**
+ * Catégories Foursquare v3 pertinentes pour le tourisme :
+ * 10000 Arts & Entertainment · 16000 Landmarks & Outdoors · 12000 Community & Government
+ */
+const FSQ_CATEGORIES = "10000,16000,12000";
+
 function resolveGeminiApiKey(mode, envDir) {
   const fromVite = loadEnv(mode, envDir, "GEMINI_");
   let key = String(fromVite.GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim();
@@ -197,6 +268,48 @@ function geminiLangRuleParagraph(code) {
   return GEMINI_UI_LANG_RULES[code] || GEMINI_UI_LANG_RULES.fr;
 }
 
+/**
+ * Retourne la fourchette de budget journalier en euros selon la préférence choisie.
+ * Utilisé pour calibrer l'estimation `costEur` dans le prompt.
+ */
+function budgetRangeHint(prefs) {
+  const tier = prefs?.budget;
+  if (tier === "low")    return "< 50 €/jour (activités économiques, peu de restaurants gastronomiques)";
+  if (tier === "medium") return "50–150 €/jour (restaurants mid-range, quelques musées, transports)";
+  if (tier === "high")   return "150–300 €/jour (restaurants gastronomiques, visites guidées, taxis)";
+  if (tier === "luxury") return "> 300 €/jour (expériences premium, hôtels luxueux, excursions privées)";
+  return "budget non précisé — estime un coût réaliste pour un touriste moyen";
+}
+
+/**
+ * Convertit les préférences utilisateur en bloc texte intégrable dans un prompt LLM.
+ * @param {object|null} prefs - { pace, styles, travelers, budget, wishes }
+ * @returns {string} - bloc texte ou chaîne vide si pas de prefs
+ */
+function formatPrefsForPrompt(prefs) {
+  if (!prefs) return "";
+  const lines = [];
+
+  const paceLabel = { relaxed: "Détendu (2-3 activités/jour)", moderate: "Modéré (3-4 activités/jour)", intensive: "Intensif (maximum d'activités)" };
+  if (prefs.pace) lines.push(`- Rythme : ${paceLabel[prefs.pace] || prefs.pace}`);
+
+  if (Array.isArray(prefs.styles) && prefs.styles.length > 0) {
+    const styleLabel = { cultural: "Culturel & Histoire", gastronomy: "Gastronomie", nature: "Nature & Randonnée", relaxation: "Détente & Bien-être", adventure: "Aventure & Sports", nightlife: "Vie nocturne", shopping: "Shopping" };
+    lines.push(`- Style(s) souhaité(s) : ${prefs.styles.map((s) => styleLabel[s] || s).join(", ")}`);
+  }
+
+  const travelersLabel = { solo: "Voyage en solo", couple: "Voyage en couple", family: "Voyage en famille (avec enfants)", friends: "Voyage entre amis" };
+  if (prefs.travelers) lines.push(`- Profil voyageur : ${travelersLabel[prefs.travelers] || prefs.travelers}`);
+
+  const budgetLabel = { low: "Économique (< 50€/jour)", medium: "Modéré (50–150€/jour)", high: "Confortable (150–300€/jour)", luxury: "Luxe (sans limite)" };
+  if (prefs.budget) lines.push(`- Budget activités : ${budgetLabel[prefs.budget] || prefs.budget}`);
+
+  if (prefs.wishes && String(prefs.wishes).trim()) lines.push(`- Souhaits spécifiques : « ${String(prefs.wishes).trim()} »`);
+
+  if (lines.length === 0) return "";
+  return `\nPréférences du voyageur :\n${lines.join("\n")}\nTiens ABSOLUMENT compte de ces préférences pour personnaliser chaque journée.`;
+}
+
 const GEMINI_429_HINT_FR =
   " — Quota gratuit Google : souvent un plafond par modèle (ex. 20 requêtes/jour pour gemini-2.5-flash-lite). " +
   "Dans .env.local, essaie GEMINI_MODEL=gemini-2.5-flash (sans -lite) ou GEMINI_MODEL=gemini-2.0-flash pour un autre compteur. " +
@@ -218,7 +331,186 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isSuggestions = pathname === "/api/gemini/suggestions";
     const isSuggestedActivities = pathname === "/api/gemini/suggested-activities";
     const isItinerary = pathname === "/api/gemini/itinerary";
-    if (!isSuggestions && !isSuggestedActivities && !isItinerary) return next();
+    const isFoursquare = pathname === "/api/foursquare/places";
+    const isGroqItinerary   = pathname === "/api/groq/itinerary";
+    const isGroqTips        = pathname === "/api/groq/tips";
+    const isGroqDescription = pathname === "/api/groq/description";
+    if (
+      !isSuggestions && !isSuggestedActivities && !isItinerary &&
+      !isFoursquare && !isGroqItinerary && !isGroqTips && !isGroqDescription
+    ) return next();
+
+    // ── Route Foursquare ──────────────────────────────────────────────────────
+    if (isFoursquare) {
+      const fsqKey = readFoursquareKey(envDir);
+      if (!fsqKey) {
+        sendJson(res, 503, {
+          error:
+            "FOURSQUARE_API_KEY est vide dans .env. " +
+            "Colle ta clé après le signe =, enregistre (Ctrl+S), puis redémarre npm run dev.",
+        });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      const lat = Number(body.lat);
+      const lon = Number(body.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
+        return;
+      }
+      const limit = Math.min(Number(body.limit) || 20, 50);
+      try {
+        const fsqUrl =
+          `https://api.foursquare.com/v3/places/search` +
+          `?ll=${lat},${lon}` +
+          `&categories=${FSQ_CATEGORIES}` +
+          `&sort=POPULARITY` +
+          `&limit=${limit}` +
+          `&radius=10000`;
+        const fsqResp = await fetch(fsqUrl, {
+          headers: { Authorization: fsqKey, Accept: "application/json" },
+        });
+        if (!fsqResp.ok) {
+          const errText = await fsqResp.text();
+          sendJson(res, fsqResp.status, {
+            error: `Foursquare ${fsqResp.status}: ${errText.slice(0, 300)}`,
+          });
+          return;
+        }
+        const fsqJson = await fsqResp.json();
+        sendJson(res, 200, { ok: true, results: fsqJson.results || [] });
+      } catch (e) {
+        sendJson(res, 502, { error: String(e?.message || e) });
+      }
+      return;
+    }
+
+    // ── Routes Groq ──────────────────────────────────────────────────────────
+    if (isGroqItinerary || isGroqTips || isGroqDescription) {
+      const groqKey = readGroqKey(envDir);
+      if (!groqKey) {
+        sendJson(res, 503, {
+          error:
+            "GROQ_API_KEY est vide dans .env.local. " +
+            "Récupère ta clé sur https://console.groq.com et ajoute GROQ_API_KEY=ta_clé, puis redémarre npm run dev.",
+        });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      const destination = String(body.destination || body.city || "").trim();
+      if (!destination || destination.length > 120) {
+        sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
+        return;
+      }
+      const uiLang = resolveGeminiUiLanguage(body);
+      const langRule = geminiLangRuleParagraph(uiLang);
+
+      // ── /api/groq/description ─────────────────────────────────────────────
+      if (isGroqDescription) {
+        const prompt =
+          `Tu es un guide de voyage passionné. Décris la ville "${destination}" en exactement 2 phrases.\n` +
+          `Règles STRICTES :\n` +
+          `- Mentionne une particularité unique, un trait culturel marquant OU une expérience concrète qu'on ne trouve qu'ici.\n` +
+          `- Donne envie de visiter sans être générique ("ville magnifique", "riche en culture", "incontournable" sont INTERDITS).\n` +
+          `- Pas de chiffres de population, pas de coordonnées, pas d'histoire ancienne.\n` +
+          `- 2 phrases courtes maximum, percutantes, comme dans un bon magazine de voyage.\n` +
+          `${langRule}\n` +
+          `Réponds UNIQUEMENT avec un JSON valide : {"description": "tes 2 phrases ici"}`;
+        const systemPrompt =
+          "Tu produis uniquement un objet JSON valide UTF-8 avec une seule clé \"description\". " +
+          "Pas de markdown, pas de texte avant ou après.";
+        try {
+          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.5 });
+          const desc = String(data?.description || "").trim();
+          if (!desc) {
+            sendJson(res, 200, { ok: false, description: "" });
+          } else {
+            sendJson(res, 200, { ok: true, description: desc });
+          }
+        } catch (e) {
+          sendJson(res, 502, { error: String(e?.message || e) });
+        }
+        return;
+      }
+
+      // ── /api/groq/tips ────────────────────────────────────────────────────
+      if (isGroqTips) {
+        const prompt =
+          `Tu es un expert voyage. Destination : "${destination}".\n` +
+          `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, de la forme exacte :\n` +
+          `{"tips":{"do":["conseil1","conseil2","conseil3"],"dont":["piege1","piege2","piege3"]}}\n` +
+          `\n` +
+          `"do" : exactement 3 conseils d'expert PRATIQUES et SPÉCIFIQUES à "${destination}" ` +
+          `(transports réels, monuments nommés, usages locaux, astuces terrain). ` +
+          `Interdit : phrases génériques valables pour n'importe quelle ville.\n` +
+          `"dont" : exactement 3 pièges ou erreurs concrètes à éviter, ancrés dans "${destination}".\n` +
+          `${langRule}`;
+        const systemPrompt =
+          "Tu produis uniquement un objet JSON valide UTF-8. " +
+          "Chaque conseil est une phrase courte, sans guillemet double non échappé.";
+        try {
+          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt });
+          sendJson(res, 200, { ok: true, data });
+        } catch (e) {
+          sendJson(res, 502, { error: String(e?.message || e) });
+        }
+        return;
+      }
+
+      // ── /api/groq/itinerary ───────────────────────────────────────────────
+      if (isGroqItinerary) {
+        const startDate = String(body.startDate || "").trim();
+        const endDate   = String(body.endDate   || "").trim();
+        const prefs     = body.prefs && typeof body.prefs === "object" ? body.prefs : null;
+        const { ok, days, error: dayErr } = countInclusiveTripDays(startDate, endDate);
+        if (!ok) {
+          sendJson(res, 400, { error: dayErr });
+          return;
+        }
+        const prefsBlock = formatPrefsForPrompt(prefs);
+        const budgetHint = budgetRangeHint(prefs);
+        const prompt =
+          `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
+          `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
+          `${prefsBlock}\n` +
+          `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
+          `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+          `Règles STRICTES :\n` +
+          `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+          `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
+          `- Chaque "bullets" : 2 ou 3 phrases courtes. Pas de guillemet double à l'intérieur d'une phrase.\n` +
+          `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+          `${langRule}\n` +
+          `Lieux réels pour cette destination (pas de lieux inventés).`;
+        const systemPrompt =
+          "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
+          "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
+          "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
+        try {
+          const data = await runGroqJson({
+            key: groqKey,
+            prompt,
+            systemPrompt,
+            temperature: 0.2,
+          });
+          const list = Array.isArray(data?.dayIdeas) ? data.dayIdeas : [];
+          sendJson(res, 200, { ok: true, data: { dayIdeas: list, tripDays: days, startDate, endDate } });
+        } catch (e) {
+          sendJson(res, 502, { error: String(e?.message || e) });
+        }
+        return;
+      }
+    }
 
     const { key, env } = resolveGeminiApiKey(mode, envDir);
     if (!key) {
@@ -264,6 +556,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       const destination = String(parsed.destination || "").trim();
       const startDate = String(parsed.startDate || "").trim();
       const endDate = String(parsed.endDate || "").trim();
+      const prefs = parsed.prefs && typeof parsed.prefs === "object" ? parsed.prefs : null;
       if (!destination || destination.length > 120) {
         sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
         return;
@@ -276,13 +569,17 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
 
       const uiLang = resolveGeminiUiLanguage(parsed);
       const langRule = geminiLangRuleParagraph(uiLang);
+      const prefsBlock = formatPrefsForPrompt(prefs);
+      const budgetHint = budgetRangeHint(prefs);
       const prompt =
         `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
-        `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).\n` +
+        `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
+        `${prefsBlock}\n` +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-        `{"dayIdeas":[{"day":1,"title":"titre court","bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+        `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
         `Règles STRICTES pour que le JSON soit valide :\n` +
         `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+        `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
         `- Chaque "bullets" : 2 ou 3 phrases courtes (pas de sous-liste). Pas de guillemet double à l'intérieur d'une phrase (utilise l'apostrophe ' pour l'élision).\n` +
         `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
         `${langRule}\n` +
@@ -290,7 +587,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
 
       const itinerarySystem =
         "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
-        "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets.";
+        "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets. " +
+        "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
 
       try {
         const data = await runGeminiJson({

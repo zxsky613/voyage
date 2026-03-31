@@ -29,15 +29,50 @@ export async function fetchGeminiSuggestedActivities({ destination, language = "
   return j;
 }
 
-export async function fetchGeminiItinerary({ destination, startDate, endDate, language = "fr" }) {
+export async function fetchGeminiItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
   const r = await fetch("/api/gemini/itinerary", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination, startDate, endDate, language }),
+    body: JSON.stringify({ destination, startDate, endDate, language, prefs }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(typeof j.error === "string" ? j.error : `Erreur ${r.status}`);
+  }
+  return j;
+}
+
+/**
+ * Génère un programme jour par jour via Groq (llama-3.3-70b-versatile).
+ * Groq est prioritaire sur Gemini pour l'itinéraire : plus rapide, free tier généreux.
+ * Fallback automatique sur Gemini si Groq est indisponible ou sans clé.
+ */
+export async function fetchGroqItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
+  const r = await fetch("/api/groq/itinerary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, startDate, endDate, language, prefs }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
+  }
+  return j;
+}
+
+/**
+ * Génère des conseils d'expert (do / don't) via Groq pour une destination.
+ * Retourne { ok, data: { tips: { do: string[], dont: string[] } } }.
+ */
+export async function fetchGroqTips({ destination, language = "fr" }) {
+  const r = await fetch("/api/groq/tips", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, language }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
   }
   return j;
 }

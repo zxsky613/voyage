@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
   Calendar,
@@ -34,6 +34,8 @@ import {
   fetchGeminiTripSuggestions,
   fetchGeminiSuggestedActivities,
   fetchGeminiItinerary,
+  fetchGroqItinerary,
+  fetchGroqTips,
 } from "./geminiClient.js";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
@@ -48,6 +50,13 @@ import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale } from "./i18n/cityDisplay.js";
 import { activityTitleSaveValue, displayActivityTitleForLocale } from "./i18n/activityDisplay.js";
+import {
+  OnboardingTour,
+  hasSeenOnboardingForUser,
+  markSignupExpectsOnboarding,
+  consumePendingOnboardingIntent,
+  clearSignupOnboardingMarkers,
+} from "./OnboardingTour.jsx";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -92,8 +101,8 @@ const GEMINI_DESTINATION_ENRICH =
 
 /** Si false : pas d’appel Gemini pour les seules activités proposées (économie max ; lieux/conseils déjà locaux). */
 const GEMINI_SUGGESTED_ACTIVITIES =
-  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES !== "false" &&
-  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES !== "0";
+  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES === "true" ||
+  import.meta.env.VITE_GEMINI_SUGGESTED_ACTIVITIES === "1";
 
 const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -1537,6 +1546,59 @@ function framingBboxForMiniMap(geojson, cityLat, cityLon, viewBbox) {
 
 const WIKI_LANG_CODES = { fr: "fr", en: "en", de: "de", es: "es", it: "it", zh: "zh" };
 
+/**
+ * Récupère la description de la ville depuis Wikivoyage (guide de voyage).
+ * Wikivoyage > Wikipedia pour un contexte voyage (culture, vibe, quartiers).
+ * Tente la langue UI, puis l'anglais, puis le français en fallback.
+ * Utilise l'API MediaWiki (exintro) pour obtenir le paragraphe d'intro complet.
+ */
+async function fetchWikivoyageSummaryText(safeCity, uiLang) {
+  const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
+  const norm = normalizeTextForSearch(safeCity);
+
+  // Candidates ordered by priority: UI language first, then en, then fr
+  const seen = new Set();
+  const candidates = [];
+  const addCandidate = (lang, title) => {
+    const key = `${lang}:${title}`;
+    if (!seen.has(key)) { seen.add(key); candidates.push({ lang, title }); }
+  };
+
+  if (wikiLang === "en") {
+    addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
+  } else if (wikiLang === "fr") {
+    addCandidate("fr", WIKI_FR_PAGE_TITLE[norm] || safeCity);
+    addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
+  } else {
+    const localTitle = displayCityForLocale(safeCity, wikiLang) || safeCity;
+    addCandidate(wikiLang, localTitle);
+    addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
+    addCandidate("fr", WIKI_FR_PAGE_TITLE[norm] || safeCity);
+  }
+
+  for (const { lang, title } of candidates) {
+    try {
+      const url =
+        `https://${lang}.wikivoyage.org/w/api.php` +
+        `?action=query&titles=${encodeURIComponent(title)}` +
+        `&prop=extracts&exintro=1&explaintext=1&format=json&origin=*&redirects=1`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const pages = json?.query?.pages || {};
+      const page = Object.values(pages)[0];
+      if (!page || page.missing !== undefined) continue;
+      // Wikivoyage prepends "CityName\n" as a title line — strip it
+      const raw = String(page.extract || "").trim();
+      const text = raw.replace(/^[^\n]+\n/, "").trim() || raw;
+      if (text.length > 80) return text;
+    } catch (_e) {
+      // try next candidate
+    }
+  }
+  return "";
+}
+
 async function fetchWikiSummaryForLang(safeCity, uiLang) {
   const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
   const norm = normalizeTextForSearch(safeCity);
@@ -1571,6 +1633,163 @@ async function fetchWikiSummaryForLang(safeCity, uiLang) {
   }
 }
 
+// ─── Foursquare Places — estimation de coût d'après les catégories ────────────
+function fsqEstimateCost(categories) {
+  const names = (categories || []).map((c) => String(c?.name || "").toLowerCase());
+  const has = (...kw) => names.some((n) => kw.some((k) => n.includes(k)));
+
+  // Gratuit / accès libre
+  if (has("park", "garden", "plaza", "square", "piazza", "beach", "promenade", "boardwalk",
+          "viewpoint", "lookout", "scenic", "church", "cathedral", "mosque", "temple",
+          "shrine", "chapel", "monastery", "market", "street art", "hiking", "trail"))
+    return 0;
+
+  // Gastronomie
+  if (has("restaurant", "bistro", "brasserie", "trattoria", "taverna", "steakhouse",
+          "sushi", "ramen", "dim sum", "tapas", "gastro"))
+    return 30;
+  if (has("café", "cafe", "coffee", "bakery", "patisserie", "boulangerie", "crêperie"))
+    return 10;
+  if (has("bar", "pub", "cocktail", "wine bar", "beer", "brewery", "taproom", "nightclub",
+          "lounge", "rooftop bar"))
+    return 18;
+  if (has("food tour", "culinary tour", "cooking class", "wine tasting", "degustation"))
+    return 55;
+
+  // Culture & patrimoine
+  if (has("museum", "gallery", "aquarium", "planetarium", "observatory"))
+    return 14;
+  if (has("historic site", "heritage", "monument", "castle", "palace", "ruins", "archaeological"))
+    return 10;
+  if (has("cultural", "art center", "exhibition", "expo"))
+    return 12;
+  if (has("theater", "theatre", "opera", "concert", "music venue", "cinema", "show"))
+    return 22;
+
+  // Divertissement
+  if (has("amusement park", "theme park", "water park", "fun park"))
+    return 35;
+  if (has("zoo", "safari", "wildlife", "botanical"))
+    return 20;
+  if (has("escape room", "bowling", "laser", "arcade", "virtual reality"))
+    return 20;
+
+  // Sport & nature
+  if (has("sport", "stadium", "arena", "tennis", "golf", "climbing", "diving", "surfing",
+          "kayak", "boat tour", "boat rental", "cycling", "bike tour", "ski"))
+    return 40;
+
+  // Bien-être
+  if (has("spa", "wellness", "massage", "hammam", "sauna", "thermal", "hot spring"))
+    return 65;
+
+  // Shopping
+  if (has("shopping", "boutique", "souvenir", "department store", "mall", "outlet"))
+    return 0;
+
+  // Tours & visites guidées
+  if (has("tour", "guided", "walking tour", "bus tour", "day trip", "excursion"))
+    return 35;
+
+  return 0;
+}
+
+/**
+ * Récupère les POIs Foursquare via le proxy serveur /api/foursquare/places.
+ * La clé API reste côté serveur (FOURSQUARE_API_KEY dans .env, sans préfixe VITE_).
+ * Retourne { places: string[], activities: ActivityObj[] }.
+ */
+async function fetchFoursquarePlaces(lat, lon) {
+  try {
+    const resp = await fetch("/api/foursquare/places", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lon, limit: 20 }),
+    });
+    if (!resp.ok) return { places: [], activities: [] };
+    const json = await resp.json();
+    if (!json.ok || !Array.isArray(json.results)) return { places: [], activities: [] };
+
+    // Dédupe par nom
+    const seen = new Set();
+    const valid = json.results.filter((r) => {
+      const name = String(r?.name || "").trim();
+      if (name.length < 3) return false;
+      const k = name.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    // Lieux incontournables : top 7
+    const places = valid.slice(0, 7).map((r) => String(r.name));
+
+    // Activités : top 6 avec coût estimé et localité
+    const activities = valid.slice(0, 6).map((r) => {
+      const cost = fsqEstimateCost(r.categories);
+      const names = (r.categories || []).map((c) => String(c?.name || "").toLowerCase());
+      const has = (...kw) => names.some((n) => kw.some((k) => n.includes(k)));
+      let costNote = "";
+      if (cost === 0 && has("park", "garden", "beach", "promenade", "viewpoint", "church",
+                             "cathedral", "mosque", "temple", "shrine", "plaza", "square")) {
+        costNote = "free";
+      } else if (cost > 0 && has("restaurant", "bistro", "brasserie", "café", "cafe", "sushi", "tapas")) {
+        costNote = "per person avg";
+      } else if (cost > 0 && has("tour", "guided", "walking tour", "bus tour", "excursion")) {
+        costNote = "per person";
+      }
+      return {
+        title: String(r.name),
+        estimatedCostEur: cost,
+        costNote,
+        location: String(r?.location?.locality || r?.location?.neighborhood || ""),
+      };
+    });
+
+    return { places, activities };
+  } catch (_e) {
+    return { places: [], activities: [] };
+  }
+}
+
+/**
+ * Génère une description courte et engageante via Groq (2 phrases, style magazine).
+ * Lancée en parallèle des appels Wikipedia/Wikivoyage → pas de latence supplémentaire.
+ * Retourne "" si Groq est indisponible ou sans clé (fallback Wikivoyage/Wikipedia).
+ */
+async function fetchGroqCityDescription(cityName, uiLang) {
+  try {
+    const resp = await fetch("/api/groq/description", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ city: cityName, language: uiLang }),
+    });
+    if (!resp.ok) return "";
+    const json = await resp.json();
+    return String(json?.description || "").trim();
+  } catch (_e) {
+    return "";
+  }
+}
+
+/**
+ * Tronque un texte à la dernière phrase complète avant maxChars.
+ * Évite les descriptions trop longues qui découragent la lecture.
+ */
+function truncateDescription(text, maxChars = 320) {
+  const s = String(text || "").trim();
+  if (s.length <= maxChars) return s;
+  const cut = s.slice(0, maxChars);
+  const lastEnd = Math.max(
+    cut.lastIndexOf(". "),
+    cut.lastIndexOf("! "),
+    cut.lastIndexOf("? "),
+    cut.lastIndexOf(".\n"),
+  );
+  if (lastEnd > 80) return s.slice(0, lastEnd + 1).trim();
+  return cut.trimEnd() + "…";
+}
+
 async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const cityStem = extractCityPrompt(city) || String(city || "").trim();
   if (cityStem.length < 2) return null;
@@ -1578,6 +1797,10 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   if (!safeCity || String(safeCity).trim().length < 2) return null;
 
   const wikiSummaryP = fetchWikiSummaryForLang(safeCity, uiLanguage);
+  // Wikivoyage : description orientée voyage (prioritaire sur Wikipedia si disponible)
+  const wikivoyageP = fetchWikivoyageSummaryText(safeCity, uiLanguage);
+  // Groq : description courte + engageante (2 phrases style magazine) — lancée en parallèle
+  const groqDescP = fetchGroqCityDescription(safeCity, uiLanguage);
 
   /** Pas de titres Wikipédia bruts comme « lieux » (homonymes / hors sujet). Lieux = répertoire emblématique + repli exploration ; enrichissement IA optionnel via VITE_GEMINI_DESTINATION_ENRICH. */
   const wikiPlaceTitlesP = Promise.resolve([]);
@@ -1611,8 +1834,10 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const cachedImageP = getCachedCityImage(safeCity);
   const wikiHeroUrlsP = fetchWikipediaHeroImageUrls(safeCity);
 
-  const [summaryPack, places, geoPack, cachedCityImage, wikiHeroUrls] = await Promise.all([
+  const [summaryPack, wikivoyageText, groqDesc, places, geoPack, cachedCityImage, wikiHeroUrls] = await Promise.all([
     wikiSummaryP,
+    wikivoyageP,
+    groqDescP,
     wikiPlaceTitlesP,
     nominatimP,
     cachedImageP,
@@ -1628,7 +1853,15 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     }
   }
 
-  const summaryText = summaryPack.summaryText;
+  // Wikivoyage si disponible (description voyage > encyclopédie Wikipedia)
+  const summaryText = wikivoyageText || summaryPack.summaryText;
+
+  // Foursquare : POIs réels via proxy serveur (appel séquentiel — nécessite lat/lon)
+  const otmData =
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? await fetchFoursquarePlaces(latitude, longitude)
+      : { places: [], activities: [] };
+
   const bundledUrl = getBundledCityHeroPath(safeCity);
   const storageMirrorUrl = getStorageMirrorHeroUrl(safeCity);
   const commonsCandidates = getCityHeroImageCandidates(safeCity);
@@ -1677,7 +1910,11 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   ]);
 
   const tips = buildTravelTips(safeCity);
-  const suggestedActivities = buildSuggestedActivitiesForCity(safeCity);
+  // OTM en priorité si disponible, sinon données locales
+  const suggestedActivities =
+    otmData.activities.length > 0
+      ? otmData.activities
+      : buildSuggestedActivitiesForCity(safeCity);
 
   const displayCountry = String(geoPack.country || "").trim();
   const displayRegion = String(geoPack.region || "").trim();
@@ -1710,13 +1947,23 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
 
   return {
     city: safeCity,
-    description:
-      summaryText ||
-      `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`,
+    description: groqDesc
+      // Groq : 2 phrases engageantes style magazine (prioritaire)
+      ? groqDesc
+      // Wikivoyage / Wikipedia : tronqués si trop longs
+      : truncateDescription(
+          wikivoyageText ||
+          summaryPack.summaryText ||
+          `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`
+        ),
     places:
       places.length > 0
         ? places
-        : getIconicPlacesFallback(safeCity) ||
+        // 1) Foursquare — POIs réels triés par popularité (prioritaire)
+        : (otmData.places.length > 0 ? otmData.places : null) ||
+          // 2) Catalogue curé (iconicPlacesData.js) — fallback si Foursquare vide/indisponible
+          getIconicPlacesFallback(safeCity) ||
+          // 3) Texte générique — dernier recours
           buildExplorationPlacesFallback(safeCity) ||
           [],
     suggestedActivities,
@@ -2543,9 +2790,26 @@ function TopNav({ onMenu, onAdd, title }) {
   );
 }
 
+/** Prénom / premier mot du nom complet / partie locale de l'e-mail pour la salutation du menu. */
+function getMenuGreetingName(user) {
+  if (!user) return "";
+  const meta = user.user_metadata || {};
+  const first = String(meta.first_name || "").trim();
+  if (first) return first;
+  const full = String(meta.full_name || "").trim();
+  if (full) {
+    const w = full.split(/\s+/)[0];
+    if (w) return w;
+  }
+  const email = String(user.email || "").trim();
+  if (email.includes("@")) return email.split("@")[0];
+  return email;
+}
+
 // Modales
-function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTab, onSwitchTab }) {
+function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, onSwitchTab }) {
   const { t } = useI18n();
+  const greetingName = getMenuGreetingName(user);
   const navItems = [
     { id: "trips", key: "nav.trips" },
     { id: "planner", key: "nav.planner" },
@@ -2568,7 +2832,11 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
           </button>
         </div>
         <div className="space-y-3 text-sm text-slate-700">
-          <p className="text-xs text-slate-500">{String(userEmail || "")}</p>
+          <p className="text-sm font-medium text-slate-700">
+            {greetingName
+              ? t("menu.greeting", { name: greetingName })
+              : t("menu.greetingNoName")}
+          </p>
           <LanguageSelector className="pt-1" />
           <div className="pt-2">
             <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.navigation")}</p>
@@ -2611,6 +2879,23 @@ function SideMenu({ open, onClose, userEmail, onOpenAccount, onSignOut, activeTa
   );
 }
 
+/** Erreur GoTrue / Supabase : inscription avec un e-mail déjà enregistré. */
+function isAuthSignupDuplicateEmailError(err) {
+  const m = String(err?.message || "").toLowerCase();
+  const code = String(err?.code || "").toLowerCase().replace(/_/g, "");
+  if (code.includes("useralreadyexists") || code.includes("emailalready")) return true;
+  const status = err?.status ?? err?.statusCode;
+  if (status === 422 || String(status) === "422") return true;
+  if (!m) return false;
+  if (m.includes("already registered")) return true;
+  if (m.includes("already been registered")) return true;
+  if (m.includes("email address is already")) return true;
+  if (m.includes("user already exists")) return true;
+  if (m.includes("a user with this email")) return true;
+  if (m.includes("database error saving new user") && m.includes("unique")) return true;
+  return false;
+}
+
 function AuthView() {
   const { t } = useI18n();
   const [mode, setMode] = useState("signin");
@@ -2628,6 +2913,7 @@ function AuthView() {
   const [inviteFirstName, setInviteFirstName] = useState("");
   const [inviteLastName, setInviteLastName] = useState("");
   const [invitePassword, setInvitePassword] = useState("");
+  const [emailExistsModalOpen, setEmailExistsModalOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -2678,6 +2964,8 @@ function AuthView() {
         if (profilePhotoFile) {
           avatarUrl = await fileToAvatarDataUrl(profilePhotoFile);
         }
+        // Avant signUp pour que SIGNED_IN (immédiat) voie encore le marqueur.
+        markSignupExpectsOnboarding(safeEmail);
         const { error } = await supabase.auth.signUp({
           email: safeEmail,
           password: safePassword,
@@ -2690,7 +2978,10 @@ function AuthView() {
             },
           },
         });
-        if (error) throw error;
+        if (error) {
+          clearSignupOnboardingMarkers();
+          throw error;
+        }
         setMsg(t("auth.accountCreated"));
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -2700,11 +2991,17 @@ function AuthView() {
         if (error) throw error;
       }
     } catch (e) {
-      const raw = String(e?.message || "");
-      if (raw.toLowerCase().includes("invalid login credentials")) {
-        setMsg(t("auth.invalidCredentials"));
+      if (mode === "signup") clearSignupOnboardingMarkers();
+      if (mode === "signup" && isAuthSignupDuplicateEmailError(e)) {
+        setEmailExistsModalOpen(true);
+        setMsg("");
       } else {
-        setMsg(raw || t("auth.errGeneric"));
+        const raw = String(e?.message || "");
+        if (raw.toLowerCase().includes("invalid login credentials")) {
+          setMsg(t("auth.invalidCredentials"));
+        } else {
+          setMsg(raw || t("auth.errGeneric"));
+        }
       }
     } finally {
       setLoading(false);
@@ -2744,6 +3041,7 @@ function AuthView() {
     setLoading(true);
     setMsg("");
     try {
+      markSignupExpectsOnboarding(safeInviteEmail);
       const { error } = await supabase.auth.signUp({
         email: safeInviteEmail,
         password: safePassword,
@@ -2757,8 +3055,10 @@ function AuthView() {
           },
         },
       });
-      if (error) throw error;
-
+      if (error) {
+        clearSignupOnboardingMarkers();
+        throw error;
+      }
       setFirstName(safeFirst);
       setLastName(safeLast);
       setEmail(safeInviteEmail);
@@ -2767,7 +3067,13 @@ function AuthView() {
       clearInviteParams();
       setMsg(t("auth.inviteCreated"));
     } catch (e) {
-      setMsg(String(e?.message || t("auth.inviteErr")));
+      clearSignupOnboardingMarkers();
+      if (isAuthSignupDuplicateEmailError(e)) {
+        setEmailExistsModalOpen(true);
+        setMsg("");
+      } else {
+        setMsg(String(e?.message || t("auth.inviteErr")));
+      }
     } finally {
       setLoading(false);
     }
@@ -2949,6 +3255,50 @@ function AuthView() {
             <footer className="mt-6 border-t border-slate-200/60 pt-4">
               <LanguageFab placement="authFooter" />
             </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {emailExistsModalOpen ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-email-exists-title"
+        >
+          <div className="w-full max-w-md rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-slate-200/80 sm:p-8">
+            <h2
+              id="auth-email-exists-title"
+              className="text-lg font-semibold text-slate-900"
+            >
+              {t("auth.emailAlreadyUsedTitle")}
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-slate-600">
+              {t("auth.emailAlreadyUsedBody")}
+            </p>
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="order-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:order-1 sm:w-auto"
+                onClick={() => {
+                  setEmailExistsModalOpen(false);
+                }}
+              >
+                {t("common.close")}
+              </button>
+              <button
+                type="button"
+                className="order-1 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 sm:order-2 sm:w-auto"
+                onClick={() => {
+                  setEmailExistsModalOpen(false);
+                  setInvitePromptOpen(false);
+                  clearInviteParams();
+                  setMode("signin");
+                }}
+              >
+                {t("auth.emailAlreadyUsedGoSignIn")}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -4031,6 +4381,328 @@ function ItineraryErrorNotice({ raw }) {
   );
 }
 
+// ─── TripPrefsModal ────────────────────────────────────────────────────────────
+function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
+  const { t } = useI18n();
+  const [pace, setPace] = useState("moderate");
+  const [styles, setStyles] = useState([]);
+  const [travelers, setTravelers] = useState("couple");
+  const [budget, setBudget] = useState("medium");
+  const [wishes, setWishes] = useState("");
+
+  const toggleStyle = (s) =>
+    setStyles((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+
+  const radioCard = (group, val, current, setter, label) => (
+    <button
+      key={val}
+      type="button"
+      onClick={() => setter(val)}
+      className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-[13px] transition-all ${
+        current === val
+          ? "border-indigo-400 bg-indigo-50 font-semibold text-indigo-700 shadow-sm ring-1 ring-indigo-300"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <span className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 ${current === val ? "border-indigo-500 bg-indigo-500" : "border-slate-300"}`} />
+      {label}
+    </button>
+  );
+
+  const checkCard = (val, label) => (
+    <button
+      key={val}
+      type="button"
+      onClick={() => toggleStyle(val)}
+      className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] transition-all ${
+        styles.includes(val)
+          ? "border-sky-400 bg-sky-50 font-semibold text-sky-700 ring-1 ring-sky-300"
+          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 text-[10px] ${styles.includes(val) ? "border-sky-500 bg-sky-500 text-white" : "border-slate-300"}`}>
+        {styles.includes(val) ? "✓" : ""}
+      </span>
+      {label}
+    </button>
+  );
+
+  const handleConfirm = () =>
+    onConfirm({ pace, styles, travelers, budget, wishes: wishes.trim() });
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="flex w-full max-w-lg flex-col gap-0 overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white shadow-2xl"
+        style={{ maxHeight: "92svh" }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2 border-b border-slate-100 px-6 py-5">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">{t("destination.prefsTitle")}</h2>
+            {cityLabel && (
+              <p className="mt-0.5 text-[11px] text-slate-400 font-medium">{cityLabel}</p>
+            )}
+            <p className="mt-1 text-xs text-slate-500">{t("destination.prefsSubtitle")}</p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-100">
+            <X size={17} />
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+          {/* Rythme */}
+          <section className="space-y-2">
+            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsPace")}</p>
+            <div className="space-y-2">
+              {radioCard("pace", "relaxed",   pace, setPace, t("destination.prefsPaceRelaxed"))}
+              {radioCard("pace", "moderate",  pace, setPace, t("destination.prefsPaceModerate"))}
+              {radioCard("pace", "intensive", pace, setPace, t("destination.prefsPaceIntensive"))}
+            </div>
+          </section>
+
+          {/* Style */}
+          <section className="space-y-2">
+            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsStyle")}</p>
+            <div className="flex flex-wrap gap-2">
+              {checkCard("cultural",    t("destination.prefsStyleCultural"))}
+              {checkCard("gastronomy",  t("destination.prefsStyleGastronomy"))}
+              {checkCard("nature",      t("destination.prefsStyleNature"))}
+              {checkCard("relaxation",  t("destination.prefsStyleRelaxation"))}
+              {checkCard("adventure",   t("destination.prefsStyleAdventure"))}
+              {checkCard("nightlife",   t("destination.prefsStyleNightlife"))}
+              {checkCard("shopping",    t("destination.prefsStyleShopping"))}
+            </div>
+          </section>
+
+          {/* Voyageurs */}
+          <section className="space-y-2">
+            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsTravelers")}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {radioCard("travelers", "solo",    travelers, setTravelers, t("destination.prefsTravelersSolo"))}
+              {radioCard("travelers", "couple",  travelers, setTravelers, t("destination.prefsTravelerCouple"))}
+              {radioCard("travelers", "family",  travelers, setTravelers, t("destination.prefsTravelersFamily"))}
+              {radioCard("travelers", "friends", travelers, setTravelers, t("destination.prefsTravelersFriends"))}
+            </div>
+          </section>
+
+          {/* Budget */}
+          <section className="space-y-2">
+            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsBudget")}</p>
+            <div className="space-y-2">
+              {radioCard("budget", "low",    budget, setBudget, t("destination.prefsBudgetLow"))}
+              {radioCard("budget", "medium", budget, setBudget, t("destination.prefsBudgetMedium"))}
+              {radioCard("budget", "high",   budget, setBudget, t("destination.prefsBudgetHigh"))}
+              {radioCard("budget", "luxury", budget, setBudget, t("destination.prefsBudgetLuxury"))}
+            </div>
+          </section>
+
+          {/* Souhaits libres */}
+          <section className="space-y-2">
+            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsWishes")}</p>
+            <textarea
+              rows={3}
+              value={wishes}
+              onChange={(e) => setWishes(e.target.value)}
+              placeholder={t("destination.prefsWishesPlaceholder")}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-[13px] text-slate-700 placeholder-slate-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 resize-none"
+            />
+          </section>
+        </div>
+
+        {/* Footer */}
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-6 py-4 sm:flex-row sm:justify-between">
+          <button
+            type="button"
+            onClick={onSkip}
+            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-500 hover:bg-slate-50 sm:w-auto"
+          >
+            {t("destination.prefsSkip")}
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 sm:w-auto"
+          >
+            {t("destination.prefsGenerate")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ItineraryResultModal ──────────────────────────────────────────────────────
+function ItineraryResultModal({ dayIdeas, cityLabel, startDate, endDate, prefs, onClose, onRegenerate, onSaveToCalendar }) {
+  const { t } = useI18n();
+  const [saving, setSaving] = useState(false);
+  const days = Array.isArray(dayIdeas) ? dayIdeas : [];
+
+  const totalCost = days.reduce((sum, d) => sum + (Number(d?.costEur) || 0), 0);
+  const hasCostData = days.some((d) => Number(d?.costEur) > 0);
+
+  const budgetTierLabel = (() => {
+    const tier = prefs?.budget;
+    if (!tier) return null;
+    const key = `destination.itineraryBudget${tier.charAt(0).toUpperCase()}${tier.slice(1)}`;
+    return t(key);
+  })();
+
+  const dateRange = startDate && endDate && startDate !== endDate
+    ? `${startDate} – ${endDate}`
+    : startDate || "";
+
+  const handleSave = async () => {
+    if (!onSaveToCalendar || saving) return;
+    setSaving(true);
+    try { await onSaveToCalendar(); } finally { setSaving(false); }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[1.75rem]"
+        style={{ maxHeight: "92svh" }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* ── Handle (mobile) ── */}
+        <div className="flex shrink-0 justify-center pt-3 sm:hidden">
+          <div className="h-1 w-10 rounded-full bg-slate-200" />
+        </div>
+
+        {/* ── Header iOS-style ── */}
+        <div className="shrink-0 px-5 pb-4 pt-4 sm:px-6 sm:pt-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                  <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                  {t("destination.itineraryResultSubtitle")}
+                </span>
+              </div>
+              <h2 className="mt-2 text-[1.35rem] font-bold leading-tight tracking-tight text-slate-900">
+                {cityLabel || t("destination.itineraryResultTitle")}
+              </h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                {dateRange && (
+                  <span className="text-[12px] text-slate-500">{dateRange}</span>
+                )}
+                {days.length > 0 && (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="text-[12px] text-slate-500">{t("destination.itineraryResultDays", { n: days.length })}</span>
+                  </>
+                )}
+                {budgetTierLabel && (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="text-[12px] text-slate-500 capitalize">{budgetTierLabel}</span>
+                  </>
+                )}
+                {hasCostData && totalCost > 0 && (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-gradient-to-r from-sky-600 to-indigo-700 bg-clip-text text-[12px] font-bold text-transparent">~{totalCost}€</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-slate-200"
+              aria-label={t("destination.itineraryResultClose")}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Divider ── */}
+        <div className="h-px shrink-0 bg-slate-100 mx-5" />
+
+        {/* ── Liste des jours ── */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <ol className="divide-y divide-slate-100">
+            {days.map((d, idx) => {
+              const dayNum = Number(d?.day) || idx + 1;
+              const cost = Number(d?.costEur) || 0;
+              return (
+                <li key={`day-${dayNum}`} className="px-5 py-4 sm:px-6">
+                  {/* Ligne titre du jour */}
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">
+                      {t("destination.itineraryDayLabel")} {dayNum}
+                    </span>
+                    <p className="min-w-0 flex-1 text-[13px] font-semibold text-slate-900">
+                      {String(d?.title || "")}
+                    </p>
+                    {cost > 0 && (
+                      <span className="shrink-0 text-[12px] font-semibold text-slate-500">
+                        ~{cost}€
+                      </span>
+                    )}
+                  </div>
+                  {/* Activités du jour */}
+                  {Array.isArray(d?.bullets) && d.bullets.length > 0 && (
+                    <ul className="mt-2.5 space-y-1.5 pl-10">
+                      {d.bullets.map((b, j) => (
+                        <li key={j} className="flex gap-2 text-[12px] leading-relaxed text-slate-500">
+                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden />
+                          <span>{String(b)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="shrink-0">
+          {/* Total */}
+          {hasCostData && totalCost > 0 && (
+            <div className="mx-5 mb-3 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-2.5 ring-1 ring-slate-100">
+              <span className="text-[12px] font-medium text-slate-500">{t("destination.itineraryTotalCost")}</span>
+              <span className="bg-gradient-to-r from-sky-600 to-indigo-700 bg-clip-text text-[13px] font-bold text-transparent">~{totalCost}€</span>
+            </div>
+          )}
+          {/* Boutons */}
+          <div className="flex items-center gap-2.5 border-t border-slate-100 px-5 pb-6 pt-3 sm:pb-4">
+            <button
+              type="button"
+              onClick={onRegenerate}
+              className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98]"
+            >
+              {t("destination.itineraryResultRegenerate")}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+            >
+              <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
+              {saving ? t("destination.itineraryAdding") : t("destination.itineraryAddToCalendar")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Heures proposées dans le modal « Ajouter le voyage » (planning par activité). */
 const TRIP_SCHEDULE_TIME_OPTIONS = [
   "09:00",
@@ -4094,6 +4766,29 @@ function DestinationGuideView({
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
   const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
+  const [tripPrefsOpen, setTripPrefsOpen] = useState(false);
+  const [pendingTripRequest, setPendingTripRequest] = useState(null);
+  const [itineraryResultOpen, setItineraryResultOpen] = useState(false);
+  const [lastItineraryPrefs, setLastItineraryPrefs] = useState(null);
+
+  // ── sessionStorage helpers ────────────────────────────────────────────────
+  const ITIN_SS_KEY = "tp_last_itinerary_result";
+  const ssNorm = (s) => String(s || "").trim().toLowerCase();
+  const saveItineraryToSession = useCallback((dest, dayIdeas, prefs, startDate, endDate, popupOpen) => {
+    try {
+      sessionStorage.setItem(ITIN_SS_KEY, JSON.stringify({ destination: dest, dayIdeas, prefs, startDate, endDate, popupOpen }));
+    } catch { /* quota / private browsing — ignore */ }
+  }, []);
+  const setItineraryResultOpenPersist = useCallback((isOpen) => {
+    setItineraryResultOpen(isOpen);
+    try {
+      const raw = sessionStorage.getItem(ITIN_SS_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        sessionStorage.setItem(ITIN_SS_KEY, JSON.stringify({ ...data, popupOpen: isOpen }));
+      }
+    } catch { /* ignore */ }
+  }, []);
   const [programStartDate, setProgramStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [programEndDate, setProgramEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [itineraryLoading, setItineraryLoading] = useState(false);
@@ -4145,7 +4840,39 @@ function DestinationGuideView({
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
+    // Supprimer sessionStorage si la destination a changé
+    try {
+      const raw = sessionStorage.getItem(ITIN_SS_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (ssNorm(data?.destination) !== ssNorm(confirmedDestination)) {
+          sessionStorage.removeItem(ITIN_SS_KEY);
+        }
+      }
+    } catch { /* ignore */ }
   }, [confirmedDestination]);
+
+  // Restaurer l'itinéraire depuis sessionStorage au montage (changement d'onglet → retour)
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(ITIN_SS_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!confirmedDestination || !data?.destination) return;
+      if (ssNorm(data.destination) !== ssNorm(confirmedDestination)) {
+        sessionStorage.removeItem(ITIN_SS_KEY);
+        return;
+      }
+      if (Array.isArray(data.dayIdeas) && data.dayIdeas.length > 0) {
+        setGeneratedDayIdeas(data.dayIdeas);
+        if (data.prefs)      setLastItineraryPrefs(data.prefs);
+        if (data.startDate)  setProgramStartDate(data.startDate);
+        if (data.endDate)    setProgramEndDate(data.endDate);
+        if (data.popupOpen)  setItineraryResultOpen(true);
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addModalWasOpenRef = useRef(false);
   /** Libellés figés au moment du cochet (si la liste Gemini change avant « Créer », on garde le bon titre). */
@@ -4260,9 +4987,23 @@ function DestinationGuideView({
     ).trim();
     if (dest.length < 2) return;
     let cancelled = false;
-    fetchGeminiTripSuggestions({ destination: dest, language })
+    // Groq en priorité pour les conseils — fallback Gemini si Groq indisponible
+    fetchGroqTips({ destination: dest, language })
       .then((res) => {
         if (cancelled) return;
+        if (res?.ok && res.data?.tips) {
+          const tipsDo   = Array.isArray(res.data.tips.do)   ? res.data.tips.do.filter(Boolean)   : [];
+          const tipsDont = Array.isArray(res.data.tips.dont) ? res.data.tips.dont.filter(Boolean) : [];
+          if (tipsDo.length > 0 || tipsDont.length > 0) {
+            setGeminiLangTips({ do: tipsDo, dont: tipsDont });
+            return;
+          }
+        }
+        // Fallback Gemini
+        return fetchGeminiTripSuggestions({ destination: dest, language });
+      })
+      .then((res) => {
+        if (cancelled || !res) return;
         if (res?.ok && res.data) {
           const norm = normalizeGeminiGuidePayload(res.data, dest);
           if (norm?.tips && (norm.tips.do?.length > 0 || norm.tips.dont?.length > 0)) {
@@ -4289,18 +5030,30 @@ function DestinationGuideView({
       setItineraryError(error);
       return;
     }
+    // Valider les dates puis ouvrir le modal de préférences
+    setPendingTripRequest({ dest, startDate: programStartDate, endDate: programEndDate });
+    setItineraryModalOpen(false);
+    setTripPrefsOpen(true);
+  }
+
+  async function handleGenerateWithPrefs(prefs) {
+    if (!pendingTripRequest) return;
+    const { dest, startDate, endDate } = pendingTripRequest;
+    setTripPrefsOpen(false);
+    setLastItineraryPrefs(prefs);
     setItineraryLoading(true);
     setItineraryError("");
     try {
-      const res = await fetchGeminiItinerary({
-        destination: dest,
-        startDate: programStartDate,
-        endDate: programEndDate,
-        language,
-      });
+      let res = null;
+      try {
+        res = await fetchGroqItinerary({ destination: dest, startDate, endDate, language, prefs });
+      } catch (_groqErr) {
+        res = await fetchGeminiItinerary({ destination: dest, startDate, endDate, language, prefs });
+      }
       if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
         setGeneratedDayIdeas(res.data.dayIdeas);
-        setItineraryModalOpen(false);
+        setItineraryResultOpen(true);
+        saveItineraryToSession(dest, res.data.dayIdeas, prefs, startDate, endDate, true);
       } else {
         setItineraryError("Le programme renvoyé est vide.");
       }
@@ -4309,7 +5062,6 @@ function DestinationGuideView({
       setItineraryError(msg);
       if (isGeminiQuotaError(msg)) {
         setItineraryQuotaModalOpen(true);
-        setItineraryModalOpen(false);
       } else if (/403|premium|réservée/i.test(msg)) {
         setItineraryPremiumGateOpen(true);
         setItineraryModalOpen(false);
@@ -4560,12 +5312,31 @@ function DestinationGuideView({
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   {(displayGuide.suggestedActivities || []).map((a, i) => {
                     const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
+                    const isFreeNote = /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || ""));
+                    const costBadge =
+                      cell.cost > 0
+                        ? `~${cell.cost}€`
+                        : isFreeNote
+                          ? t("destination.activityFree")
+                          : null;
+                    const isFreeBadge = costBadge != null && cell.cost === 0;
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
-                        className="inline-flex max-w-full rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
+                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
                       >
-                        {displayActivityTitleForLocale(cell.title, language)}
+                        <span>{displayActivityTitleForLocale(cell.title, language)}</span>
+                        {costBadge != null && (
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              isFreeBadge
+                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                            }`}
+                          >
+                            {costBadge}
+                          </span>
+                        )}
                       </span>
                     );
                   })}
@@ -4610,28 +5381,40 @@ function DestinationGuideView({
                 </div>
                 {itineraryError && !itineraryModalOpen ? <ItineraryErrorNotice raw={itineraryError} /> : null}
                 {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
-                  <ul className="mt-5 space-y-4">
-                    {generatedDayIdeas.map((d) => (
-                      <li
-                        key={String(d?.day) + String(d?.title)}
-                        className="relative overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/50 py-4 pl-4 pr-4 shadow-sm ring-1 ring-slate-100/90 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-2xl before:bg-gradient-to-b before:from-sky-500 before:to-indigo-500 before:content-['']"
-                      >
-                        <p className="text-sm font-semibold text-slate-900">
-                          {t("destination.itineraryDay", { n: Number(d?.day) || "?" })} — {String(d?.title || "")}
+                  <div className="mt-5">
+                    {/* Aperçu condensé — invite à ouvrir le popup */}
+                    <div className="overflow-hidden rounded-2xl border border-indigo-200/60 bg-gradient-to-br from-slate-900 via-indigo-950 to-sky-950 p-5 shadow-[0_8px_32px_rgba(99,102,241,0.25)]">
+                      <div className="flex items-center gap-2 border-b border-white/10 pb-3">
+                        <Sparkles className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2.5} aria-hidden />
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                          {t("destination.itineraryResultTitle")}
                         </p>
-                        {Array.isArray(d?.bullets) && d.bullets.length > 0 ? (
-                          <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3 text-sm text-slate-700">
-                            {d.bullets.map((b, j) => (
-                              <li key={j} className="flex gap-2 pl-0.5">
-                                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" aria-hidden />
-                                <span className="leading-relaxed">{String(b)}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+                      </div>
+                      <ul className="mt-3 space-y-1.5">
+                        {generatedDayIdeas.slice(0, 3).map((d) => (
+                          <li key={String(d?.day) + String(d?.title)} className="flex items-center gap-2.5 text-sm text-slate-300">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white ring-1 ring-white/20">
+                              {Number(d?.day) || "·"}
+                            </span>
+                            <span className="font-medium text-white/90">{String(d?.title || "")}</span>
+                          </li>
+                        ))}
+                        {generatedDayIdeas.length > 3 && (
+                          <li className="pl-7 text-xs text-slate-500">
+                            +{generatedDayIdeas.length - 3} {t("destination.itineraryResultDays", { n: "" }).trim().replace(/\s*\d*\s*/, "")}…
+                          </li>
+                        )}
+                      </ul>
+                      <button
+                        type="button"
+                        onClick={() => setItineraryResultOpenPersist(true)}
+                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white ring-1 ring-white/20 transition hover:bg-white/20"
+                      >
+                        <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
+                        {t("destination.itineraryResultView")}
+                      </button>
+                    </div>
+                  </div>
                 ) : generatedDayIdeas === null ? (
                   <p className="mt-4 text-center text-xs text-slate-400">
                     {t("destination.itineraryHint")}
@@ -4669,6 +5452,77 @@ function DestinationGuideView({
           </div>
         )}
       </div>
+
+      {tripPrefsOpen && pendingTripRequest ? (
+        <TripPrefsModal
+          cityLabel={displayCityForLocale(String(pendingTripRequest.dest), language)}
+          onConfirm={handleGenerateWithPrefs}
+          onSkip={() => handleGenerateWithPrefs(null)}
+          onClose={() => { setTripPrefsOpen(false); setPendingTripRequest(null); }}
+        />
+      ) : null}
+
+      {itineraryResultOpen && Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
+        <ItineraryResultModal
+          dayIdeas={generatedDayIdeas}
+          cityLabel={displayGuide ? displayCityForLocale(String(displayGuide.city || ""), language) : ""}
+          startDate={programStartDate}
+          endDate={programEndDate}
+          prefs={lastItineraryPrefs}
+          onClose={() => setItineraryResultOpenPersist(false)}
+          onRegenerate={() => {
+            setItineraryResultOpenPersist(false);
+            setItineraryModalOpen(true);
+          }}
+          onSaveToCalendar={async () => {
+            // Build activities list from dayIdeas
+            const timeMap = (bullet) => {
+              const b = String(bullet || "").trim().toLowerCase();
+              if (/^matin|^morning|^morgen|^ma[ñn]ana|^mattina|^上午|^早/.test(b)) return "09:00";
+              if (/^après-midi|^afternoon|^nachmittag|^tarde|^pomeriggio|^下午/.test(b)) return "14:00";
+              if (/^soir|^soirée|^evening|^abend|^noche|^sera|^serata|^晚/.test(b)) return "19:00";
+              return null;
+            };
+            const stripPrefix = (bullet) =>
+              String(bullet || "").replace(/^[^:：]+[:：]\s*/, "").trim() || String(bullet || "").trim();
+            const addDaysToDate = (ymd, n) => {
+              const d = new Date(`${ymd}T12:00:00`);
+              d.setDate(d.getDate() + n);
+              return d.toISOString().slice(0, 10);
+            };
+            const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
+            const schedule = [];
+            for (const d of generatedDayIdeas) {
+              const dayNum = Number(d?.day) || 1;
+              const actDate = addDaysToDate(programStartDate, dayNum - 1);
+              const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
+              const perActCost = bullets.length > 0 && Number(d?.costEur) > 0
+                ? Math.round(Number(d.costEur) / bullets.length)
+                : 0;
+              bullets.forEach((b, j) => {
+                schedule.push({
+                  title: stripPrefix(b),
+                  date: actDate,
+                  time: timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
+                  location: String(displayGuide?.city || ""),
+                  cost: perActCost,
+                  description: `Jour ${dayNum} — ${String(d?.title || "")}`,
+                });
+              });
+            }
+            const dest = String(displayGuide?.city || confirmedDestination || "");
+            const ok = await onCreateTrip({
+              title: dest,
+              destination: dest,
+              start_date: programStartDate,
+              end_date: programEndDate,
+              selectedActivitiesWithSchedule: schedule,
+              selectedActivities: schedule.map((r) => r.title),
+            });
+            if (ok) setItineraryResultOpenPersist(false);
+          }}
+        />
+      ) : null}
 
       {itineraryModalOpen && displayGuide ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
@@ -4739,7 +5593,7 @@ function DestinationGuideView({
                 disabled={itineraryLoading}
                 className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
-                {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerateShort")}
+                {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryNext")}
               </button>
             </div>
           </div>
@@ -4893,10 +5747,22 @@ function DestinationGuideView({
                     const rawLabel = cell.title;
                     const displayLabel = displayActivityTitleForLocale(rawLabel, language);
                     const checked = pickedActivityIndices.has(i);
+                    const isFreeNote = /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || ""));
+                    const costBadge =
+                      cell.cost > 0
+                        ? `~${cell.cost}€`
+                        : isFreeNote
+                          ? t("destination.activityFree")
+                          : null;
+                    const isFreeBadge = costBadge != null && cell.cost === 0;
                     return (
                       <label
                         key={`pick-act-${i}-${rawLabel.slice(0, 32)}`}
-                        className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-100 transition hover:bg-slate-50/90"
+                        className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 ring-1 transition ${
+                          checked
+                            ? "bg-sky-50/80 ring-sky-200"
+                            : "bg-white ring-slate-100 hover:bg-slate-50/90"
+                        }`}
                       >
                         <input
                           type="checkbox"
@@ -4914,9 +5780,22 @@ function DestinationGuideView({
                               return n;
                             });
                           }}
-                          className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
-                        <span className="min-w-0 text-sm font-medium leading-snug text-slate-900">{displayLabel}</span>
+                        <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-slate-900">{displayLabel}</span>
+                        {costBadge != null ? (
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              isFreeBadge
+                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                : "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200"
+                            }`}
+                          >
+                            {costBadge}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] text-slate-300">—</span>
+                        )}
                       </label>
                     );
                   })
@@ -4924,9 +5803,25 @@ function DestinationGuideView({
               </div>
               {sortedPickedIndices.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90">
-                    {t("destination.scheduleTitle")}
-                  </p>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90">
+                      {t("destination.scheduleTitle")}
+                    </p>
+                    {(() => {
+                      const total = sortedPickedIndices.reduce((sum, actIndex) => {
+                        const cell = normalizeSuggestedActivityShape(
+                          (displayGuide.suggestedActivities || [])[actIndex],
+                          displayGuide.city
+                        );
+                        return sum + Number(cell.cost || 0);
+                      }, 0);
+                      return total > 0 ? (
+                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200">
+                          {t("destination.activitiesTotalEst")} ~{total}€
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                   {tripDatesForModal.length === 0 ? (
                     <p className="mt-2 text-xs text-rose-600">{t("destination.scheduleDatesError")}</p>
                   ) : (
@@ -4953,9 +5848,20 @@ function DestinationGuideView({
                             key={`sched-${actIndex}-${label.slice(0, 24)}`}
                             className="flex flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
                           >
-                            <span className="min-w-0 flex-1 text-xs font-medium leading-snug text-slate-800">
-                              {label}
-                            </span>
+                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                              <span className="min-w-0 flex-1 text-xs font-medium leading-snug text-slate-800">
+                                {label}
+                              </span>
+                              {cell.cost > 0 ? (
+                                <span className="shrink-0 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-600 ring-1 ring-indigo-200">
+                                  ~{cell.cost}€
+                                </span>
+                              ) : /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || "")) ? (
+                                <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                  {t("destination.activityFree")}
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="flex shrink-0 flex-wrap items-center gap-2">
                               <select
                                 aria-label={t("destination.dayFor", { label })}
@@ -6901,6 +7807,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() => readStoredActiveTab());
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tripModalOpen, setTripModalOpen] = useState(false);
   const [shareTrip, setShareTrip] = useState(null);
@@ -7072,15 +7979,30 @@ export default function App() {
       }
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession || null);
       setAuthLoading(false);
+      if (event !== "SIGNED_IN" || !newSession?.user?.id) return;
+      // À chaque connexion (ou inscription), ouvrir « Mes voyages ».
+      setActiveTab("trips");
+      const uid = newSession.user.id;
+      const afterSignup = consumePendingOnboardingIntent(newSession.user);
+      if (afterSignup && !hasSeenOnboardingForUser(uid)) {
+        setShowOnboarding(true);
+      }
     });
     return () => {
       mounted = false;
       sub?.subscription?.unsubscribe();
     };
   }, []);
+
+
+  useEffect(() => {
+    if (!session) {
+      setShowOnboarding(false);
+    }
+  }, [session]);
 
   useEffect(() => {
     try {
@@ -8830,7 +9752,7 @@ export default function App() {
       <SideMenu
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
-        userEmail={session?.user?.email || ""}
+        user={session?.user || null}
         activeTab={activeTab}
         onSwitchTab={(tabId) => {
           setMenuOpen(false);
@@ -8974,6 +9896,15 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      {/* ── Onboarding guide (nouveaux utilisateurs) ── */}
+      {showOnboarding && session?.user?.id ? (
+        <OnboardingTour
+          userId={session.user.id}
+          onDone={() => setShowOnboarding(false)}
+        />
+      ) : null}
+
     </div>
   );
 }
