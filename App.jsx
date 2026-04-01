@@ -801,7 +801,7 @@ const GLASS_ACCENT_STYLE = {
 /** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
 const MODAL_GRID_2 = "grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3";
 /** Conteneur date : overflow-hidden + .modal-date-field (CSS) pour coins arrondis sur WebKit/iOS. */
-function ModalDateField({ value, onChange, className: wrapClass = "", inputClassName = "" }) {
+function ModalDateField({ value, onChange, min, max, className: wrapClass = "", inputClassName = "" }) {
   return (
     <div
       className={`modal-date-field rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.05)] overflow-hidden ${wrapClass}`.trim()}
@@ -810,6 +810,8 @@ function ModalDateField({ value, onChange, className: wrapClass = "", inputClass
         type="date"
         value={value}
         onChange={onChange}
+        min={min}
+        max={max}
         className={`min-w-0 w-full max-w-full border-0 bg-transparent px-4 py-3 text-base leading-normal outline-none focus:ring-0 focus-visible:outline-none [color-scheme:light] ${inputClassName}`.trim()}
       />
     </div>
@@ -848,11 +850,32 @@ const WIKI_FR_PAGE_TITLE = Object.freeze({
   athenes: "Athènes",
   vienne: "Vienne",
   lisbonne: "Lisbonne",
+  lisbon: "Lisbonne",
   "le caire": "Le Caire",
+  cairo: "Le Caire",
   beijing: "Pékin",
   pekin: "Pékin",
   canton: "Guangzhou",
+  guangzhou: "Guangzhou",
   barcelona: "Barcelone",
+  moscow: "Moscou",
+  moscou: "Moscou",
+  venice: "Venise",
+  venise: "Venise",
+  athens: "Athènes",
+  vienna: "Vienne",
+  brussels: "Bruxelles",
+  bruxelles: "Bruxelles",
+  dubai: "Dubaï",
+  singapore: "Singapour",
+  seoul: "Séoul",
+  florence: "Florence",
+  naples: "Naples",
+  milan: "Milan",
+  rome: "Rome",
+  marrakesh: "Marrakech",
+  "cape town": "Le Cap",
+  montreal: "Montréal",
 });
 
 const wikiHeroUrlInflight = Object.create(null);
@@ -1350,31 +1373,56 @@ function buildInstantDestinationGuide(rawQuery) {
 const countryMapCache = Object.create(null);
 
 /** Bbox + contour GeoJSON du pays (une requête Nominatim avec polygon_geojson). */
-async function fetchCountryMapData(countryName, countryCode) {
-  const name = String(countryName || "").trim();
-  if (!name) return null;
-  const cc = String(countryCode || "")
-    .trim()
-    .toLowerCase();
-  const cacheKey = `${cc}|${name.toLowerCase()}`;
+/**
+ * Récupère le contour GeoJSON du pays via reverse geocoding (zoom=3).
+ * Plus fiable que la recherche par nom : on passe les coordonnées de la ville,
+ * Nominatim remonte directement la frontière du pays correspondant.
+ */
+async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
+  const cc = String(countryCode || "").trim().toLowerCase();
+  const cacheKey = cc || String(countryName || "").toLowerCase();
+  if (!cacheKey) return null;
   if (countryMapCache[cacheKey]) return countryMapCache[cacheKey];
 
   try {
-    let url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&polygon_geojson=1&addressdetails=0&featuretype=country&accept-language=fr&q=${encodeURIComponent(
-      name
-    )}`;
-    if (cc.length === 2) url += `&countrycodes=${cc}`;
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    const arr = await r.json();
-    const first = Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
+    let first = null;
+
+    // Stratégie 1 : reverse geocoding avec coordonnées ville (zoom=3 → niveau pays)
+    if (Number.isFinite(cityLat) && Number.isFinite(cityLon)) {
+      const revUrl =
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${cityLat}&lon=${cityLon}` +
+        `&zoom=3&polygon_geojson=1&addressdetails=0`;
+      const revResp = await fetch(revUrl);
+      if (revResp.ok) {
+        const revJson = await revResp.json();
+        if (revJson?.geojson && revJson?.boundingbox) first = revJson;
+      }
+    }
+
+    // Stratégie 2 : recherche par code pays ISO (plus précis que le nom en français)
+    if (!first && cc.length === 2) {
+      const searchUrl =
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&polygon_geojson=1` +
+        `&addressdetails=0&featuretype=country&countrycodes=${cc}&q=${encodeURIComponent(cc)}`;
+      const r2 = await fetch(searchUrl);
+      if (r2.ok) {
+        const arr2 = await r2.json();
+        first = Array.isArray(arr2) && arr2.length > 0 ? arr2[0] : null;
+      }
+    }
+
+    if (!first) return null;
+
+    // Bounding box : soit tableau [s,n,w,e], soit objet avec propriétés
+    let south, north, west, east;
     const bb = first?.boundingbox;
-    if (!Array.isArray(bb) || bb.length < 4) return null;
-    const south = Number(bb[0]);
-    const north = Number(bb[1]);
-    const west = Number(bb[2]);
-    const east = Number(bb[3]);
+    if (Array.isArray(bb) && bb.length >= 4) {
+      [south, north, west, east] = bb.map(Number);
+    } else {
+      return null;
+    }
     if (![south, north, west, east].every(Number.isFinite)) return null;
+
     const geo = first?.geojson;
     const data = {
       bbox: { south, north, west, east },
@@ -1567,13 +1615,12 @@ async function fetchWikivoyageSummaryText(safeCity, uiLang) {
   if (wikiLang === "en") {
     addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
   } else if (wikiLang === "fr") {
+    // Ne pas tomber sur l'article EN — on préfère "" (→ Groq/Wikipedia FR prendront le relai)
     addCandidate("fr", WIKI_FR_PAGE_TITLE[norm] || safeCity);
-    addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
   } else {
     const localTitle = displayCityForLocale(safeCity, wikiLang) || safeCity;
     addCandidate(wikiLang, localTitle);
-    addCandidate("en", WIKI_EN_PAGE_TITLE[norm] || safeCity);
-    addCandidate("fr", WIKI_FR_PAGE_TITLE[norm] || safeCity);
+    // Pas de fallback EN pour les langues non-EN
   }
 
   for (const { lang, title } of candidates) {
@@ -1924,9 +1971,8 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   let situationMap = null;
   if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
     let countryMap = null;
-    if (displayCountry) {
-      countryMap = await fetchCountryMapData(displayCountry, countryCodeNorm);
-    }
+    // Passer les coordonnées pour le reverse geocoding (beaucoup plus fiable)
+    countryMap = await fetchCountryMapData(displayCountry, countryCodeNorm, latitude, longitude);
     let bbox = null;
     if (countryMap?.bbox) {
       bbox = expandBoundingBox(countryMap.bbox);
@@ -2780,6 +2826,7 @@ function TopNav({ onMenu, onAdd, title }) {
         <button
           type="button"
           onClick={onAdd}
+          data-tour-id="plus-button"
           className={`shrink-0 rounded-full p-2.5 text-white transition hover:opacity-90 sm:p-3 ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
@@ -2807,7 +2854,7 @@ function getMenuGreetingName(user) {
 }
 
 // Modales
-function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, onSwitchTab }) {
+function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, onSwitchTab, onShowTour }) {
   const { t } = useI18n();
   const greetingName = getMenuGreetingName(user);
   const navItems = [
@@ -2873,6 +2920,21 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           >
             {t("menu.signOut")}
           </button>
+          {/* ── Aide ── */}
+          <div className="mt-4 pt-4 border-t border-slate-200/70">
+            <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.help")}</p>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onShowTour?.();
+              }}
+              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
+            >
+              <span className="text-base leading-none">🧭</span>
+              {t("menu.howItWorks")}
+            </button>
+          </div>
         </div>
       </aside>
     </div>
@@ -3215,10 +3277,11 @@ function AuthView() {
         </footer>
       </div>
       {invitePromptOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setInvitePromptOpen(false); setInviteAccepted(false); clearInviteParams(); } }}>
           <div
             className="w-full max-w-md overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[2rem]"
             style={{ maxHeight: "92svh" }}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Handle mobile */}
             <div className="flex justify-center pt-3 sm:hidden">
@@ -3366,8 +3429,9 @@ function AuthView() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="auth-email-exists-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setEmailExistsModalOpen(false); }}
         >
-          <div className="w-full max-w-md rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-slate-200/80 sm:p-8">
+          <div className="w-full max-w-md rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-slate-200/80 sm:p-8" onClick={(e) => e.stopPropagation()}>
             <h2
               id="auth-email-exists-title"
               className="text-lg font-semibold text-slate-900"
@@ -3437,8 +3501,8 @@ function TripFormModal({ open, onClose, onCreate }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("tripForm.title")}</h2>
           <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
@@ -3457,13 +3521,29 @@ function TripFormModal({ open, onClose, onCreate }) {
             sm+ : grille 3 colonnes comme avant.
           */}
           <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
-            <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <ModalDateField
+              value={startDate}
+              max={endDate}
+              onChange={(e) => {
+                const d = e.target.value;
+                setStartDate(d);
+                if (d && endDate && d > endDate) setEndDate(d);
+              }}
+            />
             <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
               <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
                 <Plane size={14} className="animate-bounce" />
               </div>
             </div>
-            <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <ModalDateField
+              value={endDate}
+              min={startDate}
+              onChange={(e) => {
+                const d = e.target.value;
+                setEndDate(d);
+                if (d && startDate && d < startDate) setStartDate(d);
+              }}
+            />
           </div>
           <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_2.75rem] items-stretch gap-2">
             <input
@@ -3563,8 +3643,8 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="min-w-0 text-xs uppercase tracking-[0.32em] text-slate-500">
             {String(title || t("modals.inviteParticipantsTitle"))}
@@ -3640,8 +3720,8 @@ function EditTripModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.editTripTitle")}</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
@@ -3656,8 +3736,24 @@ function EditTripModal({ open, onClose, trip, onSave }) {
             className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-            <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <ModalDateField
+              value={startDate}
+              max={endDate}
+              onChange={(e) => {
+                const d = e.target.value;
+                setStartDate(d);
+                if (d && endDate && d > endDate) setEndDate(d);
+              }}
+            />
+            <ModalDateField
+              value={endDate}
+              min={startDate}
+              onChange={(e) => {
+                const d = e.target.value;
+                setEndDate(d);
+                if (d && startDate && d < startDate) setStartDate(d);
+              }}
+            />
           </div>
           <input
             value={fixedUrl}
@@ -3998,8 +4094,8 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Participants</h2>
@@ -4064,8 +4160,8 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
   if (!open || !trip) return null;
   const delTitle = String(trip?.title || t("modals.tripDefault"));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting) onCancel(); }}>
+      <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("common.confirmation")}</h2>
         <p className="mb-6 break-words text-sm text-slate-700">
           {t("modals.deleteTripQuestion", { title: delTitle })}
@@ -4118,8 +4214,8 @@ function AccountModal({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting && !saving) onClose(); }}>
+      <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Mon compte</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
@@ -4648,12 +4744,13 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
     onConfirm({ pace, styles, travelers, budget, wishes: wishes.trim() });
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div
         role="dialog"
         aria-modal="true"
         className="flex w-full max-w-lg flex-col gap-0 overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white shadow-2xl"
         style={{ maxHeight: "92svh" }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-2 border-b border-slate-100 px-6 py-5">
@@ -4957,6 +5054,42 @@ function pickNextDestinationGuideImgSrc(el, guide) {
   return "";
 }
 
+/* ─── Cache localStorage pour DestinationGuideView ───────────────────────── */
+const _GUIDE_LS_KEY = "tp_guide_cache_v2";
+const _GUIDE_LS_TTL = 2 * 60 * 60 * 1000; // 2h
+
+function _readGuideCache(city, lang) {
+  try {
+    const raw = window.localStorage.getItem(_GUIDE_LS_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d?.ts || !d?.city || !d?.lang) return null;
+    const normLang = (s) => String(s || "fr").toLowerCase().split("-")[0];
+    if (normLang(d.lang) !== normLang(lang)) return null;
+    const normCity = (s) => String(s || "").toLowerCase().trim().replace(/\s+/g, " ");
+    if (normCity(d.city) !== normCity(city)) return null;
+    if (Date.now() - d.ts > _GUIDE_LS_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
+function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, geminiTips) {
+  try {
+    if (!city || !guide) return;
+    const { countryMap: _cm, ...guideSlim } = guide; // exclure le GeoJSON trop volumineux
+    window.localStorage.setItem(_GUIDE_LS_KEY, JSON.stringify({
+      city,
+      lang: String(lang || "fr").toLowerCase().split("-")[0],
+      guide: guideSlim,
+      geminiContent: geminiContent ?? null,
+      geminiAiActs: geminiAiActs ?? null,
+      geminiTips: geminiTips ?? null,
+      ts: Date.now(),
+    }));
+  } catch { /* quota / navigation privée — ignorer */ }
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 function DestinationGuideView({
   session,
   searchInput,
@@ -4967,8 +5100,19 @@ function DestinationGuideView({
   onBack,
 }) {
   const { t, language } = useI18n();
+
+  // Nombre de "crédits" pour sauter le clear initial si on a des données en cache
+  const skipClearsRef = useRef(0);
+
   const [guideError, setGuideError] = useState("");
-  const [guide, setGuide] = useState(null);
+  const [guide, setGuide] = useState(() => {
+    const c = _readGuideCache(confirmedDestination, language);
+    if (c?.guide) {
+      skipClearsRef.current = 3; // 3 effets vont essayer de vider l'état
+      return c.guide;
+    }
+    return null;
+  });
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [startDate, setStartDate] = useState(getTodayStr());
   const [endDate, setEndDate] = useState(getTodayStr());
@@ -4977,9 +5121,15 @@ function DestinationGuideView({
   /** Par indice d'activité : { date?: 'YYYY-MM-DD', time?: 'HH:MM' } (optionnel ; défaut = répartition sur le séjour). */
   const [activitySchedule, setActivitySchedule] = useState(() => ({}));
   const [geminiError, setGeminiError] = useState("");
-  const [geminiContent, setGeminiContent] = useState(null);
+  const [geminiContent, setGeminiContent] = useState(() => {
+    const c = _readGuideCache(confirmedDestination, language);
+    return c?.geminiContent ?? null;
+  });
   /** Activités issues de /suggested-activities quand enrichissement complet désactivé. */
-  const [geminiAiSuggestedActivities, setGeminiAiSuggestedActivities] = useState(null);
+  const [geminiAiSuggestedActivities, setGeminiAiSuggestedActivities] = useState(() => {
+    const c = _readGuideCache(confirmedDestination, language);
+    return c?.geminiAiActs ?? null;
+  });
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
   const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
@@ -5013,7 +5163,10 @@ function DestinationGuideView({
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
   /** Tips en langue UI (Gemini) — utilisés quand la langue n'est pas le français et que GEMINI_DESTINATION_ENRICH est désactivé. */
-  const [geminiLangTips, setGeminiLangTips] = useState(null);
+  const [geminiLangTips, setGeminiLangTips] = useState(() => {
+    const c = _readGuideCache(confirmedDestination, language);
+    return c?.geminiTips ?? null;
+  });
 
   const displayGuide = useMemo(() => {
     if (!guide) return null;
@@ -5037,6 +5190,16 @@ function DestinationGuideView({
     return base;
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips]);
 
+  // Sauvegarder le guide en localStorage dès que les données sont disponibles
+  // → permet de restaurer instantanément après veille téléphone / changement d'app
+  useEffect(() => {
+    if (!guide || !confirmedDestination) return;
+    _writeGuideCache(
+      confirmedDestination, language,
+      guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips
+    );
+  }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, confirmedDestination, language]);
+
   const tripDatesForModal = useMemo(() => listTripDatesInclusive(startDate, endDate), [startDate, endDate]);
 
   const sortedPickedIndices = useMemo(
@@ -5045,6 +5208,11 @@ function DestinationGuideView({
   );
 
   useEffect(() => {
+    // Si des données en cache ont été restaurées, sauter le clear initial
+    if (skipClearsRef.current > 0) {
+      skipClearsRef.current--;
+      return;
+    }
     setGeminiContent(null);
     setGeminiAiSuggestedActivities(null);
     setGeminiError("");
@@ -5146,8 +5314,13 @@ function DestinationGuideView({
     if (dest.length < 2) return undefined;
     let cancelled = false;
     setGeminiError("");
-    setGeminiContent(null);
-    setGeminiAiSuggestedActivities(null);
+    // Ne pas vider les données si on a restauré depuis le cache
+    if (skipClearsRef.current > 0) {
+      skipClearsRef.current--;
+    } else {
+      setGeminiContent(null);
+      setGeminiAiSuggestedActivities(null);
+    }
 
     if (GEMINI_DESTINATION_ENRICH) {
       fetchGeminiTripSuggestions({ destination: dest, language })
@@ -5195,7 +5368,12 @@ function DestinationGuideView({
   }, [confirmedDestination, language, t]);
 
   useEffect(() => {
-    setGeminiLangTips(null);
+    // Ne pas vider les tips si on a restauré depuis le cache
+    if (skipClearsRef.current > 0) {
+      skipClearsRef.current--;
+    } else {
+      setGeminiLangTips(null);
+    }
     if (GEMINI_DESTINATION_ENRICH) return;
     const lang = String(language || "fr").toLowerCase().split("-")[0];
     if (lang === "fr") return;
@@ -5742,12 +5920,13 @@ function DestinationGuideView({
       ) : null}
 
       {itineraryModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setItineraryModalOpen(false); }}>
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="itinerary-modal-title"
             className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-2xl sm:p-8"
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 id="itinerary-modal-title" className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-900">
@@ -5918,8 +6097,8 @@ function DestinationGuideView({
       ) : null}
 
       {addModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-          <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddModalOpen(false); }}>
+          <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
                 {t("destination.addCityHeading", {
@@ -6518,8 +6697,8 @@ function PlannerView({
       </div>
 
       {activityModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.newActivityTitle")}</h2>
               <button
@@ -6624,8 +6803,8 @@ function PlannerView({
       ) : null}
 
       {activityDetailsOpen && viewingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityDetailsOpen(false); setViewingActivity(null); } }}>
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">{t("planner.detailsTitle")}</h2>
               <button
@@ -6686,8 +6865,8 @@ function PlannerView({
       ) : null}
 
       {editActivityModalOpen && editingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
+          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.editActivityTitle")}</h2>
               <button
@@ -6775,8 +6954,8 @@ function PlannerView({
       ) : null}
 
       {activityToDelete ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-          <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setActivityToDelete(null); }}>
+          <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.confirmTitle")}</h2>
             <p className="mb-6 break-words text-sm text-slate-700">
               {t("planner.deleteActivityQuestion", {
@@ -6881,8 +7060,8 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
+      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <h3 className="min-w-0 flex-1 text-xs uppercase tracking-[0.35em] text-slate-500">
             {initial?.id ? t("budget.editExpense") : t("budget.newExpenseModal")}
@@ -7666,12 +7845,13 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/45 p-3 backdrop-blur-[2px] sm:p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/45 p-3 backdrop-blur-[2px] sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setChatTripId(""); }}>
           <div
             className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-[0_24px_64px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/90 sm:max-h-[88vh]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="tp-chat-hub-title"
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 pb-3 pt-4 sm:px-5 sm:pb-3.5 sm:pt-5">
               <div className="min-w-0 flex-1 pr-1">
@@ -8040,6 +8220,8 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
+  /** true dès que l'onglet Recherche est visité une 1ère fois — garde le composant monté (display:none) par la suite */
+  const [destTabReady, setDestTabReady] = useState(() => readStoredActiveTab() === "destination");
   const [destinationInvalidModalOpen, setDestinationInvalidModalOpen] = useState(false);
   const [destinationInvalidMessage, setDestinationInvalidMessage] = useState("");
   const [tripDateConflictModalOpen, setTripDateConflictModalOpen] = useState(false);
@@ -8232,6 +8414,10 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== "budget") setBudgetDetailTrip(null);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "destination" && !destTabReady) setDestTabReady(true);
+  }, [activeTab, destTabReady]);
 
   useEffect(() => {
     try {
@@ -9705,21 +9891,25 @@ export default function App() {
           </div>
         ) : null}
 
-        {activeTab === "destination" ? (
-          <DestinationGuideView
-            session={session}
-            searchInput={destinationInput}
-            onSearchInputChange={handleDestinationSearchChange}
-            confirmedDestination={destinationConfirmed}
-            onConfirmDestination={handleConfirmDestination}
-            onBack={() => setActiveTab("trips")}
-            onCreateTrip={async (payload) => {
-              const ok = await createTrip(payload);
-              if (ok) setActiveTab("planner");
-              return ok;
-            }}
-          />
-        ) : null}
+        {/* DestinationGuideView reste monté (display:none) après la 1ère visite
+            → état préservé au retour sur l'onglet + évite les re-fetch */}
+        {destTabReady && (
+          <div style={{ display: activeTab === "destination" ? undefined : "none" }}>
+            <DestinationGuideView
+              session={session}
+              searchInput={destinationInput}
+              onSearchInputChange={handleDestinationSearchChange}
+              confirmedDestination={destinationConfirmed}
+              onConfirmDestination={handleConfirmDestination}
+              onBack={() => setActiveTab("trips")}
+              onCreateTrip={async (payload) => {
+                const ok = await createTrip(payload);
+                if (ok) setActiveTab("planner");
+                return ok;
+              }}
+            />
+          </div>
+        )}
 
         {activeTab === "trips" ? (
           <AllTripsView
@@ -9941,6 +10131,7 @@ export default function App() {
             return (
               <button
                 key={t.id}
+                data-tour-id={`tab-${t.id}`}
                 onClick={() => {
                   if (t.id === "planner") {
                     openPlannerToday();
@@ -9988,6 +10179,10 @@ export default function App() {
           setAccountOpen(true);
         }}
         onSignOut={signOut}
+        onShowTour={() => {
+          setMenuOpen(false);
+          setShowOnboarding(true);
+        }}
       />
       <TripFormModal open={tripModalOpen} onClose={() => setTripModalOpen(false)} onCreate={createTrip} />
       <EditTripModal
@@ -10062,8 +10257,9 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="tp-dest-invalid-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setDestinationInvalidModalOpen(false); }}
         >
-          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
+          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80" onClick={(e) => e.stopPropagation()}>
             <h3 id="tp-dest-invalid-title" className="text-lg font-semibold text-slate-900">
               {t("destination.modalTitle")}
             </h3>
@@ -10084,8 +10280,9 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="tp-trip-date-conflict-title"
+          onClick={(e) => { if (e.target === e.currentTarget) { setTripDateConflictModalOpen(false); setTripDateConflictTrips([]); } }}
         >
-          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80">
+          <div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-[0_24px_48px_rgba(15,23,42,0.15)] ring-1 ring-slate-200/80" onClick={(e) => e.stopPropagation()}>
             <h3 id="tp-trip-date-conflict-title" className="text-lg font-semibold text-slate-900">
               {t("modals.tripDateTitle")}
             </h3>
