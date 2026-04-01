@@ -892,7 +892,7 @@ function dedupeImageUrlChain(urls) {
   return out;
 }
 
-async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 2048) {
+async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 3200) {
   const t = String(title || "").trim();
   if (!t) return "";
   try {
@@ -906,7 +906,8 @@ async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 2048) {
     if (!pages || typeof pages !== "object") return "";
     const page = Object.values(pages)[0];
     if (!page || page.missing === true || Number(page.pageid) < 0) return "";
-    return String(page.thumbnail?.source || "").trim();
+    const thumb = String(page.thumbnail?.source || "").trim();
+    return thumb ? upgradeLandscapeImageUrl(thumb) : "";
   } catch (_e) {
     return "";
   }
@@ -941,7 +942,8 @@ async function fetchFrenchWikiSummaryThumb(safeCity) {
     );
     if (!r.ok) return "";
     const j = await r.json();
-    return String(j?.thumbnail?.source || "").trim();
+    const thumbFr = String(j?.thumbnail?.source || "").trim();
+    return thumbFr ? upgradeLandscapeImageUrl(thumbFr) : "";
   } catch (_e) {
     return "";
   }
@@ -1023,6 +1025,47 @@ const CITY_HERO_IMAGE_URL_LISTS = Object.freeze({
   ],
 });
 
+const WIKIMEDIA_THUMB_MIN_WIDTH = 1920;
+const WIKIMEDIA_THUMB_MAX_WIDTH = 4096;
+
+/**
+ * Passe les miniatures Commons (/320px-, /800px-, …) à une largeur adaptée aux cartes HD / mobile retina.
+ * Aucune clé API : même fichier sur upload.wikimedia.org.
+ */
+function upgradeWikimediaCommonsThumbUrl(url) {
+  const u = String(url || "").trim();
+  if (!u.includes("upload.wikimedia.org") || !u.includes("/thumb/")) return u;
+  return u.replace(/\/(\d{2,4})px-([^/?#]+)$/i, (full, w, rest) => {
+    const cur = parseInt(w, 10) || 0;
+    if (cur >= WIKIMEDIA_THUMB_MIN_WIDTH) return full;
+    const nw = Math.min(
+      Math.max(WIKIMEDIA_THUMB_MIN_WIDTH, cur),
+      WIKIMEDIA_THUMB_MAX_WIDTH
+    );
+    return `/${nw}px-${rest}`;
+  });
+}
+
+/** Unsplash : élargit w= dans l’URL (regular ~1080px → ~2400px si la photo le permet). */
+function upgradeUnsplashDisplayUrl(url) {
+  let u = String(url || "").trim();
+  if (!/images\.unsplash\.com/i.test(u)) return u;
+  if (/[?&]w=(?:2[4-9]\d{2}|[3-9]\d{3})/i.test(u)) return u;
+  if (/([?&])w=\d+/i.test(u)) {
+    return u.replace(/([?&])w=\d+/i, "$1w=2400");
+  }
+  return `${u}${u.includes("?") ? "&" : "?"}w=2400&fit=max&q=88&auto=format`;
+}
+
+/** Qualité maximale avec les sources déjà branchées (Commons + Unsplash). */
+function upgradeLandscapeImageUrl(url) {
+  let u = String(url || "").trim();
+  if (!u) return u;
+  u = upgradeWikimediaCommonsThumbUrl(u);
+  u = upgradeUnsplashDisplayUrl(u);
+  return u;
+}
+
 /** Vignette Wikipédia souvent = drapeau / sceau / blason — inadaptée comme bandeau paysage. */
 function isLikelyWikiFlagOrSealThumb(url) {
   const u = String(url || "").toLowerCase();
@@ -1041,6 +1084,102 @@ function isLikelyWikiFlagOrSealThumb(url) {
     u.includes("_badge.") ||
     u.includes("logo_")
   );
+}
+
+/** Logo / wordmark / charte — à éviter pour le bandeau « lieu » (ex. The Met). */
+function isLikelyWikiBrandOrLogoImage(url, fileTitle = "") {
+  const u = String(url || "").toLowerCase();
+  const ft = String(fileTitle || "")
+    .toLowerCase()
+    .replace(/^file:/i, "");
+  if (!u && !ft) return false;
+  if (isLikelyWikiFlagOrSealThumb(url)) return true;
+  const hay = `${u} ${ft}`;
+  if (/wordmark|lockup|branding|brand_mark|charte_graphique/i.test(hay)) return true;
+  if (/logo\.svg|_logo\.|\/logo\.|_logo_|\/logos?\//i.test(hay)) return true;
+  if (/\blogo\b/i.test(ft) && /\.(svg|png|gif)/i.test(ft)) return true;
+  if (u.includes(".svg.png") && /logo|wordmark|emblem|icon/i.test(hay)) return true;
+  if (/^file:[^|]+_logo\.(svg|png)/i.test(String(fileTitle || ""))) return true;
+  return false;
+}
+
+function largestSrcFromWikiMediaSrcset(srcset) {
+  if (!Array.isArray(srcset) || srcset.length === 0) return "";
+  let best = "";
+  let bestW = 0;
+  for (const entry of srcset) {
+    const src = String(entry?.src || "").trim();
+    if (!src) continue;
+    const m = src.match(/(\d+)px-/);
+    const parsed = m ? Number(m[1]) : 0;
+    const w = Number.isFinite(parsed) && parsed > 0 ? parsed : 500;
+    if (w > bestW) {
+      bestW = w;
+      best = src.startsWith("//") ? `https:${src}` : src;
+    }
+  }
+  return best;
+}
+
+function scoreWikiMediaItemForPlaceHero(fileTitle, pageUrl, sectionId) {
+  const ft = String(fileTitle || "").toLowerCase().replace(/^file:/i, "");
+  const u = String(pageUrl || "").toLowerCase();
+  if (isLikelyWikiBrandOrLogoImage(pageUrl, fileTitle)) return -1000;
+  let s = 0;
+  if (/\.(jpe?g|webp)(\?|$)/i.test(u) || /\/\d+px-[^/]+\.(jpe?g|webp)/i.test(u)) s += 42;
+  if (u.includes(".svg.png")) s -= 30;
+  if (
+    /exterior|facade|façade|building|aerial|panoram|panoramio|view of|night view|plaza|square|frontage|great hall|main hall|entrance|facade|skyline|street view|central park|_nyc|manhattan|fifth.?avenue|5th.?avenue|museum.*\.(jpe?g|webp)/i.test(
+      `${ft} ${u}`
+    )
+  )
+    s += 38;
+  if (/museum|cathedral|basilica|palace|château|castle|tower|bridge|gallery|monument|memorial/i.test(`${ft} ${u}`)) s += 22;
+  const sec = Number(sectionId);
+  if (Number.isFinite(sec)) {
+    if (sec <= 1) s += 18;
+    if (sec >= 4 && sec < 48) s -= 12;
+    if (sec >= 49) s -= 40;
+  }
+  if (/_met_dt|_met_dp|_met_ada|_dp\d|_dt\d|standing_hippopotamus|pendant_mask|oil_on_canvas|portrait of|by_|\bminiature\b/i.test(`${ft} ${u}`)) s -= 28;
+  return s;
+}
+
+/**
+ * Remplace la vignette « lead » Wikipédia (souvent un logo) par une photo du lieu via media-list.
+ */
+async function resolveWikipediaPlaceHeaderImage(wikiLang, pageTitle, summaryThumb) {
+  const lang = String(wikiLang || "en").toLowerCase().split("-")[0];
+  const pt = String(pageTitle || "").trim();
+  const thumb = String(summaryThumb || "").trim();
+  if (thumb && !isLikelyWikiBrandOrLogoImage(thumb, "")) {
+    return upgradeLandscapeImageUrl(thumb);
+  }
+  if (!pt) return thumb && !isLikelyWikiBrandOrLogoImage(thumb, "") ? upgradeLandscapeImageUrl(thumb) : "";
+
+  try {
+    const r = await fetch(
+      `https://${lang}.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(pt)}`
+    );
+    if (!r.ok) return thumb && !isLikelyWikiBrandOrLogoImage(thumb, "") ? upgradeLandscapeImageUrl(thumb) : "";
+    const json = await r.json();
+    const items = Array.isArray(json?.items) ? json.items : [];
+    const scored = [];
+    for (const it of items) {
+      if (String(it?.type || "") !== "image") continue;
+      const fileTitle = String(it?.title || "");
+      const src = largestSrcFromWikiMediaSrcset(it?.srcset);
+      if (!src) continue;
+      const sc = scoreWikiMediaItemForPlaceHero(fileTitle, src, it?.section_id);
+      if (sc <= -500) continue;
+      scored.push({ src: upgradeLandscapeImageUrl(src), sc });
+    }
+    scored.sort((a, b) => b.sc - a.sc);
+    if (scored.length > 0) return scored[0].src;
+  } catch (_e) {
+    /* ignore */
+  }
+  return thumb && !isLikelyWikiBrandOrLogoImage(thumb, "") ? upgradeLandscapeImageUrl(thumb) : "";
 }
 
 function getCityHeroImageCandidates(cityInput) {
@@ -1104,7 +1243,7 @@ function buildCityImageUrl(prompt) {
 }
 
 function getCityImageCacheKey(cityInput) {
-  return `v31:${String(extractCityPrompt(cityInput) || cityInput || "")
+  return `v32:${String(extractCityPrompt(cityInput) || cityInput || "")
     .trim()
     .toLowerCase()}`;
 }
@@ -1348,12 +1487,13 @@ function buildInstantDestinationGuide(rawQuery) {
   if (cityStem.length < 2) return null;
   const safeCity = resolveCanonicalCity(cityStem);
   if (!safeCity || String(safeCity).trim().length < 2) return null;
-  const img = buildCityImageUrl(safeCity);
+  const imgRaw = buildCityImageUrl(safeCity);
+  const img = imgRaw ? upgradeLandscapeImageUrl(imgRaw) : "";
   const instantCandidates = dedupeImageUrlChain([
     ...getCityHeroImageCandidates(safeCity),
     getBundledCityHeroPath(safeCity),
     getStorageMirrorHeroUrl(safeCity),
-  ]);
+  ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
   return {
     city: safeCity,
     description: `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`,
@@ -1680,6 +1820,265 @@ async function fetchWikiSummaryForLang(safeCity, uiLang) {
   }
 }
 
+/** Découpe les libellés type « A & B » ou « A / B » pour matcher des articles distincts. */
+function expandMustSeePlaceSegments(rawTitle) {
+  const p = String(rawTitle || "").trim();
+  if (!p) return [];
+  const chunks = p
+    .split(/\s*&\s*/)
+    .flatMap((x) => x.split(/\s*\/\s*/))
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const ordered = [];
+  const add = (s) => {
+    const t = String(s || "").trim();
+    if (!t || ordered.includes(t)) return;
+    ordered.push(t);
+  };
+  if (chunks.length > 1) {
+    for (const c of chunks) add(c);
+  }
+  add(chunks[0] || p);
+  if (chunks.length > 1) add(p);
+  return ordered;
+}
+
+/** Titres anglais usuels quand le catalogue est en français (essais sur en.wikipedia uniquement). */
+function enWikipediaAliasTitles(segment) {
+  const s = String(segment || "").trim();
+  if (!s) return [];
+  const lower = s.toLowerCase();
+  const out = [];
+  const push = (x) => {
+    const t = String(x || "").trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  if (/statue\s+de\s+la\s+libert/i.test(s)) push("Statue of Liberty");
+  if (/ellis\s+island/i.test(lower)) push("Ellis Island");
+  if (/one\s*world\s*(trade|center|tower)/i.test(lower)) push("One World Trade Center");
+  if (/high\s*line/i.test(lower)) push("High Line");
+  if (/times\s*square/i.test(lower)) push("Times Square");
+  if (/brooklyn\s*bridge/i.test(lower)) push("Brooklyn Bridge");
+  if (/central\s*park/i.test(lower)) push("Central Park");
+  if (/empire\s*state/i.test(lower)) push("Empire State Building");
+  return out;
+}
+
+/** Premier titre d’article via OpenSearch (CORS origin=*). */
+async function wikiOpenSearchFirstTitle(lang, searchQuery) {
+  const q = String(searchQuery || "").trim();
+  if (q.length < 2) return "";
+  try {
+    const url =
+      `https://${lang}.wikipedia.org/w/api.php?action=opensearch` +
+      `&search=${encodeURIComponent(q)}&limit=8&namespace=0&format=json&origin=*`;
+    const r = await fetch(url);
+    if (!r.ok) return "";
+    const j = await r.json();
+    const titles = Array.isArray(j?.[1]) ? j[1] : [];
+    for (const raw of titles) {
+      const t = String(raw || "").trim();
+      if (!t) continue;
+      const tl = t.toLowerCase();
+      if (tl.includes("disambiguation") || tl.includes("homonymie") || tl.includes("disambigua")) continue;
+      return t;
+    }
+    return "";
+  } catch (_e) {
+    return "";
+  }
+}
+
+/** Post-traitement vignette (logo → photo) — réutilisable en parallèle avec d’autres requêtes. */
+async function finalizeWikiPlaceThumb(lang, res) {
+  if (!res) return res;
+  const out = { ...res };
+  out.thumb = await resolveWikipediaPlaceHeaderImage(lang, out.wikiTitle, out.thumb);
+  if (!out.thumb && out.wikiTitle) {
+    const img = await fetchWikiPageImageApi(`${lang}.wikipedia.org`, out.wikiTitle);
+    if (img) out.thumb = await resolveWikipediaPlaceHeaderImage(lang, out.wikiTitle, img);
+  }
+  return out;
+}
+
+/**
+ * Piste image en parallèle du texte : OpenSearch EN + FR sur les premiers segments, puis media-list.
+ */
+async function fetchWikiPlaceHeroImageEarly(placeTitle, cityLabel, uiLang) {
+  const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
+  const place = String(placeTitle || "").trim();
+  const city = String(cityLabel || "").trim();
+  if (!place) return "";
+  const segments = expandMustSeePlaceSegments(place);
+  const langsTry = [wikiLang, "en", "fr"].filter((l, i, arr) => arr.indexOf(l) === i);
+
+  async function tryLang(lang) {
+    for (const seg of segments.slice(0, 3)) {
+      const qCity = city ? `${seg} ${city}` : seg;
+      const t = await wikiOpenSearchFirstTitle(lang, qCity);
+      if (t) {
+        const u = await resolveWikipediaPlaceHeaderImage(lang, t, "");
+        if (u) return u;
+      }
+      const t2 = await wikiOpenSearchFirstTitle(lang, seg);
+      if (t2 && t2 !== t) {
+        const u = await resolveWikipediaPlaceHeaderImage(lang, t2, "");
+        if (u) return u;
+      }
+    }
+    return "";
+  }
+
+  const urls = await Promise.all(langsTry.map((l) => tryLang(l)));
+  return urls.find((u) => String(u || "").trim()) || "";
+}
+
+const _MUST_SEE_MODAL_CACHE = new Map();
+const _MUST_SEE_MODAL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const _MUST_SEE_MODAL_CACHE_MAX = 48;
+
+function mustSeePlaceModalCacheKey(rawName, city, lang) {
+  const L = String(lang || "fr").toLowerCase().split("-")[0];
+  return `${String(rawName || "").trim()}\x1e${String(city || "").trim().toLowerCase()}\x1e${L}`;
+}
+
+function readMustSeePlaceModalCache(rawName, city, lang) {
+  const k = mustSeePlaceModalCacheKey(rawName, city, lang);
+  const row = _MUST_SEE_MODAL_CACHE.get(k);
+  if (!row || Date.now() - row.ts > _MUST_SEE_MODAL_CACHE_TTL_MS) {
+    if (row) _MUST_SEE_MODAL_CACHE.delete(k);
+    return null;
+  }
+  return row;
+}
+
+function writeMustSeePlaceModalCache(rawName, city, lang, extract, imageUrl) {
+  const k = mustSeePlaceModalCacheKey(rawName, city, lang);
+  if (_MUST_SEE_MODAL_CACHE.size >= _MUST_SEE_MODAL_CACHE_MAX) {
+    const first = _MUST_SEE_MODAL_CACHE.keys().next().value;
+    if (first) _MUST_SEE_MODAL_CACHE.delete(first);
+  }
+  _MUST_SEE_MODAL_CACHE.set(k, {
+    extract: String(extract || ""),
+    imageUrl: String(imageUrl || ""),
+    ts: Date.now(),
+  });
+}
+
+/**
+ * Résumé Wikipédia pour un lieu (nom brut du guide) + vignette ; plusieurs titres / langues.
+ * Utilisé par le modal « lieu incontournable » (desktop & tactile).
+ * @param {{ resolveImage?: boolean }} options — si false, pas de media-list (pour enchaîner en parallèle).
+ */
+async function fetchWikiPlaceSummaryForPlace(placeTitle, cityLabel, uiLang, options = {}) {
+  const resolveImage = options.resolveImage !== false;
+  const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
+  const place = String(placeTitle || "").trim();
+  const city = String(cityLabel || "").trim();
+  if (!place) return { extract: "", thumb: "", wikiTitle: "", wikiHostLang: "" };
+
+  const langsOrder = [wikiLang, "en", "fr"].filter((l, i, arr) => arr.indexOf(l) === i);
+  const segments = expandMustSeePlaceSegments(place);
+
+  const tryFetch = async (lang, title) => {
+    try {
+      const resp = await fetch(
+        `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`
+      );
+      if (!resp.ok) return null;
+      const json = await resp.json();
+      if (json?.type === "disambiguation") return null;
+      const extract = String(json?.extract || "").trim();
+      if (extract.length < 24) return null;
+      const thumbRaw = String(json?.thumbnail?.source || "").trim();
+      const resolvedTitle = String(json?.titles?.normalized || json?.title || title).trim();
+      return {
+        extract,
+        thumb: thumbRaw ? upgradeLandscapeImageUrl(thumbRaw) : "",
+        wikiTitle: resolvedTitle || title,
+        wikiHostLang: lang,
+      };
+    } catch (_e) {
+      return null;
+    }
+  };
+
+  const seen = new Set();
+  const candidates = [];
+  const push = (lang, title) => {
+    const t = String(title || "").trim();
+    if (!t) return;
+    const k = `${lang}|${t}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    candidates.push({ lang, title: t });
+  };
+
+  for (const seg of segments) {
+    for (const lang of langsOrder) {
+      push(lang, seg);
+      if (city) push(lang, `${seg} (${city})`);
+    }
+    for (const alias of enWikipediaAliasTitles(seg)) {
+      push("en", alias);
+      if (city) push("en", `${alias} (${city})`);
+    }
+  }
+
+  const done = async (lang, res) => {
+    if (!res) return res;
+    return resolveImage ? finalizeWikiPlaceThumb(lang, res) : res;
+  };
+
+  for (const { lang, title } of candidates) {
+    const res = await tryFetch(lang, title);
+    if (res) return done(lang, res);
+  }
+
+  for (const seg of segments) {
+    for (const lang of langsOrder) {
+      const qCity = city ? `${seg} ${city}` : seg;
+      const t1 = await wikiOpenSearchFirstTitle(lang, qCity);
+      if (t1) {
+        const res = await tryFetch(lang, t1);
+        if (res) return done(lang, res);
+      }
+      const t2 = await wikiOpenSearchFirstTitle(lang, seg);
+      if (t2 && t2 !== t1) {
+        const res = await tryFetch(lang, t2);
+        if (res) return done(lang, res);
+      }
+    }
+  }
+
+  for (const seg of segments) {
+    const [frImg, enImg] = await Promise.all([
+      fetchWikiPageImageApi("fr.wikipedia.org", seg),
+      fetchWikiPageImageApi("en.wikipedia.org", seg),
+    ]);
+    let thumbOnly = frImg || enImg || "";
+    if (thumbOnly && isLikelyWikiBrandOrLogoImage(thumbOnly, "")) thumbOnly = "";
+    if (!thumbOnly) {
+      for (const lang of ["en", "fr", wikiLang].filter((l, i, a) => a.indexOf(l) === i)) {
+        const t = await wikiOpenSearchFirstTitle(lang, city ? `${seg} ${city}` : seg);
+        if (!t) continue;
+        const img = await fetchWikiPageImageApi(`${lang}.wikipedia.org`, t);
+        thumbOnly = await resolveWikipediaPlaceHeaderImage(lang, t, img || "");
+        if (thumbOnly) break;
+      }
+    }
+    if (thumbOnly) return { extract: "", thumb: thumbOnly, wikiTitle: "", wikiHostLang: "" };
+  }
+
+  const [frImg, enImg] = await Promise.all([
+    fetchWikiPageImageApi("fr.wikipedia.org", place),
+    fetchWikiPageImageApi("en.wikipedia.org", place),
+  ]);
+  let thumbOnly = frImg || enImg || "";
+  if (thumbOnly && isLikelyWikiBrandOrLogoImage(thumbOnly, "")) thumbOnly = "";
+  return { extract: "", thumb: thumbOnly, wikiTitle: "", wikiHostLang: "" };
+}
+
 // ─── Foursquare Places — estimation de coût d'après les catégories ────────────
 function fsqEstimateCost(categories) {
   const names = (categories || []).map((c) => String(c?.name || "").toLowerCase());
@@ -1937,6 +2336,11 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   }
 
   if (imageUrl) {
+    imageUrl = upgradeLandscapeImageUrl(imageUrl);
+    landscapeImageUrl = imageUrl;
+  }
+
+  if (imageUrl) {
     const prev = String(cachedCityImage || "").trim();
     if (prev !== String(imageUrl).trim()) {
       try {
@@ -1954,7 +2358,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     ...wikiHeroUrls,
     ...(wikiThumbUsable ? [wikiThumbRaw] : []),
     ...(cachedUsable ? [cachedCityImage] : []),
-  ]);
+  ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
   const tips = buildTravelTips(safeCity);
   // OTM en priorité si disponible, sinon données locales
@@ -2273,7 +2677,18 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
       return "";
     }
     const picked = best?.item || results[0];
-    return String(picked?.urls?.regular || picked?.urls?.full || "");
+    const rawU = picked?.urls?.raw;
+    const fullU = picked?.urls?.full;
+    const regU = picked?.urls?.regular;
+    let out = "";
+    if (rawU && String(rawU).includes("images.unsplash.com")) {
+      out = String(rawU);
+      out += out.includes("?") ? "&" : "?";
+      out += "w=2400&fit=max&q=88&auto=format";
+    } else {
+      out = String(fullU || regU || "");
+    }
+    return out ? upgradeLandscapeImageUrl(out) : "";
   } catch (_e) {
     return "";
   }
@@ -2599,16 +3014,16 @@ async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
   const curated = resolveCityHeroImageUrl(c);
-  if (curated) return curated;
+  if (curated) return upgradeLandscapeImageUrl(curated);
   const bundled = getBundledCityHeroPath(c);
   if (bundled) return bundled;
   const mirrored = getStorageMirrorHeroUrl(c);
   if (mirrored) return mirrored;
   const wikiUrls = await fetchWikipediaHeroImageUrls(c);
   const preferred = wikiUrls.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || wikiUrls[0] || "";
-  if (preferred) return preferred;
+  if (preferred) return upgradeLandscapeImageUrl(preferred);
   const thumb = await fetchFrenchWikiSummaryThumb(c);
-  if (thumb && !isLikelyWikiFlagOrSealThumb(thumb)) return thumb;
+  if (thumb && !isLikelyWikiFlagOrSealThumb(thumb)) return upgradeLandscapeImageUrl(thumb);
   if (UNSPLASH_ACCESS_KEY) {
     const stockQ = buildCityUnsplashStockQuery(c);
     const cityTok = normalizeCityDroneKey(c).split(/\s+/).filter((t) => t.length > 2);
@@ -2659,7 +3074,7 @@ async function resolveStableCityImageForCard(canonicalCity) {
       ],
       cityBoostTokens: [...cityTok, normalizeTextForSearch(c).split(/\s+/)[0]].filter(Boolean),
     });
-    if (u) return u;
+    if (u) return upgradeLandscapeImageUrl(u);
   }
   return "";
 }
@@ -2754,7 +3169,9 @@ function CityImage({ title }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeTitle, prompt]);
 
-  const primarySrc = resolvedUrl || buildCityImageUrl(safeTitle);
+  const primarySrc = upgradeLandscapeImageUrl(
+    String(resolvedUrl || buildCityImageUrl(safeTitle) || "").trim()
+  );
   const displaySrc = loadFailed ? "" : primarySrc;
   const dronePromptFr = buildCityDronePromptFR(prompt || safeTitle);
 
@@ -2779,29 +3196,38 @@ function CityImage({ title }) {
 /** Fond photo ville + flou / verre (même recette que l’onglet Chat). */
 function TripLiquidGlassShell({ imageTitle, active = false, className = "", children }) {
   return (
-    <div className={`relative overflow-hidden ${className}`.trim()}>
+    <div className={`relative overflow-hidden ring-1 ring-inset ring-white/10 ${className}`.trim()}>
+      {/* Photo de la ville — flou léger pour garder la transparence premium */}
       <div
-        className="pointer-events-none absolute inset-[-8px] scale-[1.04] overflow-hidden"
+        className="pointer-events-none absolute inset-[-6px] scale-[1.03] overflow-hidden"
         style={{
           filter: active
-            ? "blur(9px) saturate(1.2) brightness(0.95)"
-            : "blur(10px) saturate(1.12) brightness(0.92)",
+            ? "blur(2.5px) saturate(1.5) brightness(0.82)"
+            : "blur(2px) saturate(1.4) brightness(0.85)",
         }}
       >
         <CityImage title={String(imageTitle || "voyage")} />
       </div>
+
+      {/* Voile sombre — lisibilité du texte sans masquer la photo */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
           background: active
-            ? "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))"
-            : "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
+            ? "linear-gradient(160deg, rgba(2,6,23,0.38) 0%, rgba(2,6,23,0.55) 100%)"
+            : "linear-gradient(160deg, rgba(2,6,23,0.30) 0%, rgba(2,6,23,0.48) 100%)",
         }}
       />
+
+      {/* Shimmer blanc en haut pour l'effet "liquid glass" */}
       <div
-        className="pointer-events-none absolute inset-0 backdrop-blur-[2.5px]"
-        style={{ backgroundColor: active ? "rgba(2,6,23,0.09)" : "rgba(2,6,23,0.075)" }}
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0.0) 65%)",
+        }}
       />
+
       <div className="relative">{children}</div>
     </div>
   );
@@ -5090,6 +5516,166 @@ function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, gemini
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
 
+function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language }) {
+  const { t } = useI18n();
+  const titleId = useId();
+  const [textLoading, setTextLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [extract, setExtract] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+
+  useEffect(() => {
+    if (!open || !rawName) {
+      setExtract("");
+      setImageUrl("");
+      setTextLoading(false);
+      setImageLoading(false);
+      return;
+    }
+    const cached = readMustSeePlaceModalCache(rawName, city, language);
+    if (cached) {
+      setExtract(cached.extract);
+      setImageUrl(cached.imageUrl);
+      setTextLoading(false);
+      setImageLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTextLoading(true);
+    setImageLoading(true);
+    setExtract("");
+    setImageUrl("");
+
+    const textP = fetchWikiPlaceSummaryForPlace(rawName, city, language, { resolveImage: false }).catch(
+      () => ({ extract: "", thumb: "", wikiTitle: "", wikiHostLang: "" })
+    );
+    const imgEarlyP = fetchWikiPlaceHeroImageEarly(rawName, city, language).catch(() => "");
+    const imgMetaP = textP
+      .then(async (d) => {
+        if (!d?.wikiTitle) return "";
+        const fin = await finalizeWikiPlaceThumb(d.wikiHostLang, d);
+        return String(fin?.thumb || "").trim();
+      })
+      .catch(() => "");
+
+    textP.then((d) => {
+      if (cancelled) return;
+      setExtract(String(d?.extract || ""));
+      setTextLoading(false);
+    });
+
+    imgEarlyP.then((u) => {
+      if (cancelled || !u) return;
+      setImageUrl((prev) => (prev ? prev : String(u).trim()));
+    });
+
+    imgMetaP.then((u) => {
+      if (cancelled || !u) return;
+      setImageUrl(String(u).trim());
+    });
+
+    (async () => {
+      try {
+        const [data, early, meta] = await Promise.all([textP, imgEarlyP, imgMetaP]);
+        if (cancelled) return;
+        let img = String(meta || early || data?.thumb || "").trim();
+        if (!img && UNSPLASH_ACCESS_KEY) {
+          const c = String(city || "").trim();
+          const q = c ? `${rawName} ${c} landmark travel` : `${rawName} landmark travel`;
+          const u = await fetchUnsplashImageByQuery(q, {
+            pickFirst: true,
+            preferredKeywords: ["landmark", "travel", "architecture"],
+            avoidKeywords: ["logo", "icon", "map", "diagram"],
+          });
+          img = String(u || "").trim();
+        }
+        if (!cancelled) {
+          if (img) setImageUrl(img);
+          writeMustSeePlaceModalCache(rawName, city, language, String(data?.extract || ""), img);
+        }
+      } finally {
+        if (!cancelled) setImageLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, rawName, city, language]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      className="fixed inset-0 z-[85] flex items-end justify-center bg-black/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="flex max-h-[min(92dvh,900px)] w-full max-w-lg flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[min(88vh,720px)] sm:rounded-[2rem]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative shrink-0 bg-slate-100">
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt=""
+              className="h-44 w-full object-cover sm:h-52"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          ) : null}
+          {imageLoading && !imageUrl ? (
+            <div className="flex h-44 flex-col items-center justify-center gap-2 sm:h-52">
+              <span className="text-sm text-slate-500">{t("destination.mustSeePlaceLoading")}</span>
+            </div>
+          ) : null}
+          {!imageLoading && !imageUrl ? (
+            <div className="flex h-36 items-center justify-center bg-gradient-to-br from-sky-100 to-indigo-100 sm:h-44">
+              <MapPin className="h-12 w-12 text-sky-400/80" strokeWidth={1.5} aria-hidden />
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-slate-600 shadow-md ring-1 ring-black/5 hover:bg-white"
+            aria-label={t("common.close")}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6">
+          <h2 id={titleId} className="pr-10 text-lg font-bold leading-snug text-slate-900 sm:text-xl">
+            {displayName}
+          </h2>
+          <div className="mt-4">
+            {textLoading ? (
+              <p className="text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceLoading")}</p>
+            ) : extract ? (
+              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{extract}</p>
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceNoDesc")}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-6 w-full rounded-2xl bg-slate-900 py-3 text-sm font-semibold text-white active:scale-[0.99] sm:hidden"
+          >
+            {t("common.close")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DestinationGuideView({
   session,
   searchInput,
@@ -5114,6 +5700,8 @@ function DestinationGuideView({
     return null;
   });
   const [addModalOpen, setAddModalOpen] = useState(false);
+  /** Libellé brut du lieu (clé API / catalogue) pour le modal détail. */
+  const [mustSeePlaceModalRaw, setMustSeePlaceModalRaw] = useState(null);
   const [startDate, setStartDate] = useState(getTodayStr());
   const [endDate, setEndDate] = useState(getTodayStr());
   /** Indices des activités proposées cochées pour le voyage (évite les doublons de libellé). */
@@ -5222,6 +5810,7 @@ function DestinationGuideView({
     setItineraryPremiumGateOpen(false);
     setItineraryQuotaModalOpen(false);
     setGeminiLangTips(null);
+    setMustSeePlaceModalRaw(null);
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
@@ -5630,14 +6219,19 @@ function DestinationGuideView({
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  {(displayGuide.places || []).map((p, i) => (
-                    <span
-                      key={`place-${i}-${String(p).slice(0, 24)}`}
-                      className="inline-flex max-w-full items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-xs font-medium leading-snug text-slate-800 shadow-sm ring-1 ring-slate-100/80"
-                    >
-                      {displayActivityTitleForLocale(String(p), language)}
-                    </span>
-                  ))}
+                  {(displayGuide.places || []).map((p, i) => {
+                    const raw = String(p || "").trim();
+                    return (
+                      <button
+                        key={`place-${i}-${raw.slice(0, 24)}`}
+                        type="button"
+                        onClick={() => setMustSeePlaceModalRaw(raw)}
+                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-medium leading-snug text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
+                      >
+                        {displayActivityTitleForLocale(raw, language)}
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
 
@@ -6094,6 +6688,17 @@ function DestinationGuideView({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {mustSeePlaceModalRaw ? (
+        <MustSeePlaceModal
+          open
+          onClose={() => setMustSeePlaceModalRaw(null)}
+          rawName={mustSeePlaceModalRaw}
+          displayName={displayActivityTitleForLocale(mustSeePlaceModalRaw, language)}
+          city={String(displayGuide?.city || "").trim() || String(confirmedDestination || "").trim()}
+          language={language}
+        />
       ) : null}
 
       {addModalOpen && displayGuide ? (

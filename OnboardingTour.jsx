@@ -7,7 +7,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useI18n } from "./i18n/I18nContext.jsx";
-import { X, Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 
 /* ─── Storage helpers ──────────────────────────────────────────────────── */
 function storageKeyForUser(userId) {
@@ -326,15 +326,6 @@ export function OnboardingTour({ userId, onDone }) {
             visible ? "translate-y-0" : "translate-y-8"
           }`}
         >
-          {/* Close */}
-          <button
-            onClick={handleDone}
-            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 z-10"
-            aria-label={t("onboarding.skip")}
-          >
-            <X className="w-4 h-4" strokeWidth={2.5} />
-          </button>
-
           <div className="flex flex-col items-center text-center px-8 pt-10 pb-8 gap-5">
             {/* Illustration */}
             <div className="relative">
@@ -365,10 +356,11 @@ export function OnboardingTour({ userId, onDone }) {
             </button>
 
             <button
+              type="button"
               onClick={handleDone}
-              className="text-xs text-slate-400 hover:text-slate-600 transition-colors -mt-1"
+              className="text-xs font-medium text-slate-400 underline decoration-slate-300 underline-offset-2 hover:text-slate-600 transition-colors -mt-1"
             >
-              {t("onboarding.skip")}
+              {t("onboarding.skipDemo")}
             </button>
           </div>
         </div>
@@ -418,16 +410,6 @@ export function OnboardingTour({ userId, onDone }) {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Skip button (top-right) */}
-        <button
-          onClick={handleDone}
-          className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white backdrop-blur-sm transition-colors"
-          aria-label={t("onboarding.skip")}
-          style={{ zIndex: 2 }}
-        >
-          <X className="w-4 h-4" strokeWidth={2.5} />
-        </button>
-
         {/* Tooltip card */}
         <div
           style={{
@@ -455,9 +437,17 @@ export function OnboardingTour({ userId, onDone }) {
                 {t(currentStep.labelKey)}
               </h3>
             </div>
-            <p className="text-sm text-slate-500 mb-4 leading-relaxed">
+            <p className="text-sm text-slate-500 mb-3 leading-relaxed">
               {t(currentStep.hintKey)}
             </p>
+
+            <button
+              type="button"
+              onClick={handleDone}
+              className="mb-4 w-full text-center text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800 transition-colors"
+            >
+              {t("onboarding.skipDemo")}
+            </button>
 
             {/* Navigation bar */}
             <div className="flex items-center gap-2">

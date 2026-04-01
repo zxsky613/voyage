@@ -1618,16 +1618,286 @@ function resolveKey(raw) {
 }
 
 /**
+ * Titres générés en 简体中文 (itinéraire Groq / Gemini avec UI zh, ou modèle qui dévie).
+ * Permet d’afficher correctement en fr, en, de, es, it sans changer les données en base.
+ * Clé = norm(titre) — pour le chinois, norm conserve les caractères (hors espaces).
+ */
+const ZH_ACTIVITY_OVERRIDES = Object.freeze({
+  参观大教堂: {
+    fr: "Visite de la cathédrale",
+    en: "Cathedral visit",
+    de: "Kathedralbesuch",
+    es: "Visita a la catedral",
+    it: "Visita alla cattedrale",
+    zh: "参观大教堂",
+  },
+  游览大教堂: {
+    fr: "Visite de la cathédrale",
+    en: "Cathedral visit",
+    de: "Kathedralbesuch",
+    es: "Visita a la catedral",
+    it: "Visita alla cattedrale",
+    zh: "参观大教堂",
+  },
+  大教堂参观: {
+    fr: "Visite de la cathédrale",
+    en: "Cathedral visit",
+    de: "Kathedralbesuch",
+    es: "Visita a la catedral",
+    it: "Visita alla cattedrale",
+    zh: "参观大教堂",
+  },
+  巴黎圣母院: {
+    fr: "Notre-Dame de Paris",
+    en: "Notre-Dame de Paris",
+    de: "Notre-Dame de Paris",
+    es: "Notre Dame de París",
+    it: "Notre-Dame di Parigi",
+    zh: "巴黎圣母院",
+  },
+  卢浮宫: {
+    fr: "Musée du Louvre",
+    en: "Louvre Museum",
+    de: "Louvre",
+    es: "Museo del Louvre",
+    it: "Museo del Louvre",
+    zh: "卢浮宫",
+  },
+  参观卢浮宫: {
+    fr: "Musée du Louvre",
+    en: "Louvre Museum",
+    de: "Louvre",
+    es: "Museo del Louvre",
+    it: "Museo del Louvre",
+    zh: "参观卢浮宫",
+  },
+  埃菲尔铁塔: {
+    fr: "Tour Eiffel",
+    en: "Eiffel Tower",
+    de: "Eiffelturm",
+    es: "Torre Eiffel",
+    it: "Torre Eiffel",
+    zh: "埃菲尔铁塔",
+  },
+  凯旋门: {
+    fr: "Arc de Triomphe",
+    en: "Arc de Triomphe",
+    de: "Triumphbogen",
+    es: "Arco del Triunfo",
+    it: "Arco di Trionfo",
+    zh: "凯旋门",
+  },
+  蒙马特高地: {
+    fr: "Montmartre & Sacré-Cœur",
+    en: "Montmartre & Sacré-Cœur",
+    de: "Montmartre & Sacré-Cœur",
+    es: "Montmartre y Sacré-Cœur",
+    it: "Montmartre e Sacré-Cœur",
+    zh: "蒙马特高地",
+  },
+  蒙马特: {
+    fr: "Montmartre",
+    en: "Montmartre",
+    de: "Montmartre",
+    es: "Montmartre",
+    it: "Montmartre",
+    zh: "蒙马特",
+  },
+  塞纳河游船: {
+    fr: "Croisière sur la Seine",
+    en: "Seine river cruise",
+    de: "Bootsfahrt auf der Seine",
+    es: "Crucero por el Sena",
+    it: "Crociera sulla Senna",
+    zh: "塞纳河游船",
+  },
+  香榭丽舍大街: {
+    fr: "Avenue des Champs-Élysées",
+    en: "Champs-Élysées",
+    de: "Champs-Élysées",
+    es: "Campos Elíseos",
+    it: "Champs-Élysées",
+    zh: "香榭丽舍大街",
+  },
+  奥赛博物馆: {
+    fr: "Musée d'Orsay",
+    en: "Musée d'Orsay",
+    de: "Musée d'Orsay",
+    es: "Museo d'Orsay",
+    it: "Museo d'Orsay",
+    zh: "奥赛博物馆",
+  },
+  蓬皮杜艺术中心: {
+    fr: "Centre Pompidou",
+    en: "Centre Pompidou",
+    de: "Centre Pompidou",
+    es: "Centro Pompidou",
+    it: "Centro Pompidou",
+    zh: "蓬皮杜艺术中心",
+  },
+  玛莱区: {
+    fr: "Quartier du Marais",
+    en: "Le Marais district",
+    de: "Viertel Le Marais",
+    es: "Barrio del Marais",
+    it: "Quartiere del Marais",
+    zh: "玛莱区",
+  },
+  自由活动: {
+    fr: "Temps libre",
+    en: "Free time",
+    de: "Freizeit",
+    es: "Tiempo libre",
+    it: "Tempo libero",
+    zh: "自由活动",
+  },
+  自由时间: {
+    fr: "Temps libre",
+    en: "Free time",
+    de: "Freizeit",
+    es: "Tiempo libre",
+    it: "Tempo libero",
+    zh: "自由时间",
+  },
+  城市漫步: {
+    fr: "Promenade en ville",
+    en: "City walk",
+    de: "Stadtspaziergang",
+    es: "Paseo por la ciudad",
+    it: "Passeggiata in città",
+    zh: "城市漫步",
+  },
+  市区观光: {
+    fr: "Visite de la ville",
+    en: "City sightseeing",
+    de: "Stadtrundfahrt",
+    es: "Tour por la ciudad",
+    it: "Giro della città",
+    zh: "市区观光",
+  },
+  参观博物馆: {
+    fr: "Visite de musée",
+    en: "Museum visit",
+    de: "Museumsbesuch",
+    es: "Visita al museo",
+    it: "Visita al museo",
+    zh: "参观博物馆",
+  },
+  博物馆之旅: {
+    fr: "Visite de musée",
+    en: "Museum visit",
+    de: "Museumsbesuch",
+    es: "Visita al museo",
+    it: "Visita al museo",
+    zh: "博物馆之旅",
+  },
+  早餐: {
+    fr: "Petit-déjeuner",
+    en: "Breakfast",
+    de: "Frühstück",
+    es: "Desayuno",
+    it: "Colazione",
+    zh: "早餐",
+  },
+  午餐: {
+    fr: "Déjeuner",
+    en: "Lunch",
+    de: "Mittagessen",
+    es: "Almuerzo",
+    it: "Pranzo",
+    zh: "午餐",
+  },
+  晚餐: {
+    fr: "Dîner",
+    en: "Dinner",
+    de: "Abendessen",
+    es: "Cena",
+    it: "Cena",
+    zh: "晚餐",
+  },
+  返回酒店: {
+    fr: "Retour à l’hôtel",
+    en: "Return to hotel",
+    de: "Zurück zum Hotel",
+    es: "Regreso al hotel",
+    it: "Ritorno in hotel",
+    zh: "返回酒店",
+  },
+  酒店休息: {
+    fr: "Repos à l’hôtel",
+    en: "Rest at hotel",
+    de: "Erholung im Hotel",
+    es: "Descanso en el hotel",
+    it: "Riposo in hotel",
+    zh: "酒店休息",
+  },
+  购物时间: {
+    fr: "Shopping",
+    en: "Shopping time",
+    de: "Shopping",
+    es: "Tiempo de compras",
+    it: "Shopping",
+    zh: "购物时间",
+  },
+  购物: {
+    fr: "Shopping",
+    en: "Shopping",
+    de: "Shopping",
+    es: "Compras",
+    it: "Shopping",
+    zh: "购物",
+  },
+  机场接机: {
+    fr: "Transfert aéroport",
+    en: "Airport pickup",
+    de: "Flughafen-Transfer",
+    es: "Recogida en aeropuerto",
+    it: "Transfer dall’aeroporto",
+    zh: "机场接机",
+  },
+  抵达巴黎: {
+    fr: "Arrivée à Paris",
+    en: "Arrival in Paris",
+    de: "Ankunft in Paris",
+    es: "Llegada a París",
+    it: "Arrivo a Parigi",
+    zh: "抵达巴黎",
+  },
+  离开巴黎: {
+    fr: "Départ de Paris",
+    en: "Departure from Paris",
+    de: "Abreise aus Paris",
+    es: "Salida de París",
+    it: "Partenza da Parigi",
+    zh: "离开巴黎",
+  },
+});
+
+/**
  * @param {string} raw — titre tel qu’en base
  * @param {string} language — fr | en | de | es | it | zh
  */
 export function displayActivityTitleForLocale(raw, language) {
-  const code = String(language || "fr").toLowerCase();
-  const k = resolveKey(raw);
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  const code =
+    String(language || "fr")
+      .toLowerCase()
+      .split("-")[0]
+      .slice(0, 2) || "fr";
+
+  const nk = norm(trimmed);
+  const zhRow = ZH_ACTIVITY_OVERRIDES[nk];
+  if (zhRow) {
+    if (zhRow[code]) return zhRow[code];
+    return zhRow.en || zhRow.fr || trimmed;
+  }
+
+  const k = resolveKey(trimmed);
   const row = NAMES[k];
   if (row && row[code]) return row[code];
-  if (row) return row.en || row.fr || String(raw || "").trim();
-  return String(raw || "").trim();
+  if (row) return row.en || row.fr || trimmed;
+  return trimmed;
 }
 
 /** Si l’utilisateur n’a pas modifié le titre affiché, on garde la valeur stockée (évite d’enregistrer une variante traduite). */
