@@ -5,7 +5,7 @@
  * - Swipe gauche/droite pour changer d'étape (mobile)
  * - Bouton Aide dans le menu remet le guide à zéro
  */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -184,22 +184,45 @@ function SpotlightOverlay({ rect }) {
   );
 }
 
-/* ─── Animated arrow ────────────────────────────────────────────────────── */
-function TourArrow({ direction, leftPx }) {
+/* ─── Animated arrow (fixed viewport = alignée sur l’élément réel, pas sur la carte) ── */
+const TOUR_ARROW_W = 28;
+const TOUR_ARROW_H = 36;
+
+function TourArrowFixed({ direction, targetRect }) {
+  if (!targetRect || typeof window === "undefined") return null;
   const isUp = direction === "up";
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cx = targetRect.left + targetRect.width / 2;
+  let left = cx - TOUR_ARROW_W / 2;
+  left = Math.max(10, Math.min(left, vw - TOUR_ARROW_W - 10));
+
+  const GAP = 12;
+  let top;
+  if (isUp) {
+    // Cible au-dessus (ex. +) : flèche juste sous le bouton, pointe vers le haut
+    top = targetRect.bottom + GAP;
+  } else {
+    // Cible en dessous (ex. onglets) : flèche juste au-dessus de la zone, pointe vers le bas
+    top = targetRect.top - TOUR_ARROW_H - GAP;
+  }
+  top = Math.max(8, Math.min(top, vh - TOUR_ARROW_H - 8));
+
   return (
     <div
       aria-hidden="true"
       style={{
-        position: "absolute",
-        left: leftPx,
-        ...(isUp ? { bottom: "100%", marginBottom: 6 } : { top: "100%", marginTop: 6 }),
-        animation: isUp ? "tpArrowUp 0.9s ease-in-out infinite" : "tpArrowDown 0.9s ease-in-out infinite",
+        position: "fixed",
+        left,
+        top,
+        zIndex: 10001,
+        pointerEvents: "none",
         lineHeight: 0,
+        animation: isUp ? "tpArrowUp 0.9s ease-in-out infinite" : "tpArrowDown 0.9s ease-in-out infinite",
       }}
     >
       {isUp ? (
-        <svg width="28" height="36" viewBox="0 0 28 36" fill="none">
+        <svg width={TOUR_ARROW_W} height={TOUR_ARROW_H} viewBox="0 0 28 36" fill="none">
           <path
             d="M14 33 L14 3 M4 13 L14 3 L24 13"
             stroke="#6366f1"
@@ -209,7 +232,7 @@ function TourArrow({ direction, leftPx }) {
           />
         </svg>
       ) : (
-        <svg width="28" height="36" viewBox="0 0 28 36" fill="none">
+        <svg width={TOUR_ARROW_W} height={TOUR_ARROW_H} viewBox="0 0 28 36" fill="none">
           <path
             d="M14 3 L14 33 M4 23 L14 33 L24 23"
             stroke="#6366f1"
@@ -262,20 +285,27 @@ export function OnboardingTour({ userId, onDone }) {
     return () => clearTimeout(id);
   }, []);
 
-  /* Mesure la position de l'élément cible dans le DOM */
-  useEffect(() => {
+  /* Mesure la cible avant le paint (évite une frame avec mauvaise position / mauvaise flèche) */
+  useLayoutEffect(() => {
     if (isWelcome) {
       setTargetRect(null);
       return;
     }
+    const tourId = currentStep.tourId;
     const measure = () => {
-      const el = document.querySelector(`[data-tour-id="${currentStep.tourId}"]`);
+      const el = document.querySelector(`[data-tour-id="${tourId}"]`);
       if (el) setTargetRect(el.getBoundingClientRect());
       else setTargetRect(null);
     };
     measure();
+    const raf = requestAnimationFrame(measure);
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
   }, [step, isWelcome, currentStep]);
 
   const goTo = useCallback(
@@ -383,21 +413,9 @@ export function OnboardingTour({ userId, onDone }) {
   const arrowDir = currentStep.arrowDir;
   const isArrowUp = arrowDir === "up";
 
-  // Card vertical position:
-  // - arrow up (+ button at top): card in lower half so arrow points up to element
-  // - arrow down (tabs at bottom): card in upper portion so arrow points down to element
-  const cardTopPct = isArrowUp ? 42 : 14;
-
-  // Arrow x: center of target element, clamped to card bounds [12, card_width - 28]
-  const CARD_W = Math.min(300, window.innerWidth - 32);
-  const cardLeft = window.innerWidth / 2 - CARD_W / 2;
-  const arrowCenterVP = targetRect
-    ? targetRect.x + targetRect.width / 2
-    : window.innerWidth / 2;
-  const arrowLeftRelative = Math.max(
-    12,
-    Math.min(arrowCenterVP - cardLeft - 14, CARD_W - 28)
-  );
+  // Carte : laisser de la place pour ne pas masquer la cible (flèche = fixed sur la cible)
+  const cardTopPct = isArrowUp ? 48 : 12;
+  const CARD_W = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 32 : 300);
 
   return (
     <>
@@ -410,6 +428,8 @@ export function OnboardingTour({ userId, onDone }) {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
+        <TourArrowFixed direction={arrowDir} targetRect={targetRect} />
+
         {/* Tooltip card */}
         <div
           style={{
@@ -421,11 +441,6 @@ export function OnboardingTour({ userId, onDone }) {
             zIndex: 2,
           }}
         >
-          {/* Arrow above card → pointing UP toward element at top */}
-          {isArrowUp && (
-            <TourArrow direction="up" leftPx={arrowLeftRelative} />
-          )}
-
           {/* Card body */}
           <div
             className="bg-white rounded-3xl shadow-2xl ring-1 ring-slate-200/80"
@@ -485,11 +500,6 @@ export function OnboardingTour({ userId, onDone }) {
               </button>
             </div>
           </div>
-
-          {/* Arrow below card → pointing DOWN toward element at bottom */}
-          {!isArrowUp && (
-            <TourArrow direction="down" leftPx={arrowLeftRelative} />
-          )}
         </div>
       </div>
 

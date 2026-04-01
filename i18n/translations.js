@@ -65,7 +65,7 @@ export const translations = {
         },
         chat: {
           title: "Chat & votes",
-          desc: "Discutez avec vos compagnons et votez ensemble pour choisir les meilleures activités du voyage.",
+          desc: "Chaque voyage a son chat de groupe : parlez en direct avec vos compagnons, organisez-vous et votez pour les activités.",
         },
       },
       step: {
@@ -74,7 +74,10 @@ export const translations = {
         planner: { label: "Calendrier", hint: "Programme tes activités jour par jour" },
         destination: { label: "Explorer", hint: "Découvre des villes, activités & itinéraires" },
         budget: { label: "Budget", hint: "Suis tes dépenses en temps réel" },
-        chat: { label: "Chat", hint: "Planifie et vote en groupe avec tes amis" },
+        chat: {
+          label: "Chat",
+          hint: "Chaque voyage a son chat de groupe : discute avec tes compagnons, planifie et vote pour les activités.",
+        },
       },
     },
     app: { loading: "Connexion…" },
@@ -489,7 +492,7 @@ export const translations = {
         },
         chat: {
           title: "Chat & votes",
-          desc: "Chat with your companions and vote together to choose the best activities for your trip.",
+          desc: "Each trip has its own group chat: message your companions, coordinate, and vote on activities.",
         },
       },
       step: {
@@ -498,7 +501,10 @@ export const translations = {
         planner: { label: "Calendar", hint: "Schedule your activities day by day" },
         destination: { label: "Explore", hint: "Discover cities, activities & itineraries" },
         budget: { label: "Budget", hint: "Track your expenses in real time" },
-        chat: { label: "Chat", hint: "Plan and vote as a group with friends" },
+        chat: {
+          label: "Chat",
+          hint: "Each trip has a group chat: talk with your companions, plan together, and vote on activities.",
+        },
       },
     },
     app: { loading: "Signing in…" },
@@ -905,7 +911,7 @@ export const translations = {
         },
         chat: {
           title: "Chat & Abstimmungen",
-          desc: "Chatte mit deinen Mitreisenden und stimmt gemeinsam über die besten Aktivitäten ab.",
+          desc: "Jede Reise hat einen Gruppenchat: schreib mit deinen Mitreisenden, plant euch ab und stimmt über Aktivitäten ab.",
         },
       },
       step: {
@@ -914,7 +920,10 @@ export const translations = {
         planner: { label: "Kalender", hint: "Aktivitäten Tag für Tag planen" },
         destination: { label: "Entdecken", hint: "Städte, Aktivitäten & Reiserouten erkunden" },
         budget: { label: "Budget", hint: "Ausgaben in Echtzeit verfolgen" },
-        chat: { label: "Chat", hint: "Gemeinsam planen und abstimmen" },
+        chat: {
+          label: "Chat",
+          hint: "Pro Reise ein Gruppenchat: mit Mitreisenden schreiben, gemeinsam planen und abstimmen.",
+        },
       },
     },
     app: { loading: "Anmeldung…" },
@@ -1329,7 +1338,7 @@ export const translations = {
         },
         chat: {
           title: "Chat y votos",
-          desc: "Chatea con tus compañeros y vota juntos las mejores actividades del viaje.",
+          desc: "Cada viaje tiene su chat de grupo: habla con tus compañeros, organiza el viaje y vota las actividades.",
         },
       },
       step: {
@@ -1338,7 +1347,10 @@ export const translations = {
         planner: { label: "Calendario", hint: "Organiza tus actividades día a día" },
         destination: { label: "Explorar", hint: "Descubre ciudades, actividades e itinerarios" },
         budget: { label: "Presupuesto", hint: "Sigue tus gastos en tiempo real" },
-        chat: { label: "Chat", hint: "Planifica y vota en grupo con amigos" },
+        chat: {
+          label: "Chat",
+          hint: "Cada viaje tiene un chat de grupo: habla con tus compañeros, organiza el viaje y vota las actividades.",
+        },
       },
     },
     app: { loading: "Conectando…" },
@@ -1753,7 +1765,7 @@ export const translations = {
         },
         chat: {
           title: "Chat e voti",
-          desc: "Chatta con i tuoi compagni e votate insieme le migliori attività del viaggio.",
+          desc: "Ogni viaggio ha la sua chat di gruppo: parla con i compagni, organizzatevi e votate le attività.",
         },
       },
       step: {
@@ -1762,7 +1774,10 @@ export const translations = {
         planner: { label: "Calendario", hint: "Organizza le attività giorno per giorno" },
         destination: { label: "Esplora", hint: "Scopri città, attività e itinerari" },
         budget: { label: "Budget", hint: "Tieni traccia delle spese in tempo reale" },
-        chat: { label: "Chat", hint: "Pianifica e vota in gruppo con gli amici" },
+        chat: {
+          label: "Chat",
+          hint: "Ogni viaggio ha una chat di gruppo: parla con i compagni, pianificate e votate le attività.",
+        },
       },
     },
     app: { loading: "Accesso in corso…" },
@@ -2177,7 +2192,7 @@ export const translations = {
         },
         chat: {
           title: "聊天与投票",
-          desc: "与同伴聊天，共同投票选出最佳活动。",
+          desc: "每次旅行都有群组聊天：与同伴实时交流、协调行程，并为活动投票。",
         },
       },
       step: {
@@ -2186,7 +2201,10 @@ export const translations = {
         planner: { label: "日历", hint: "按天规划你的活动" },
         destination: { label: "探索", hint: "发现城市、活动与行程" },
         budget: { label: "预算", hint: "实时追踪你的消费" },
-        chat: { label: "聊天", hint: "与朋友一起规划和投票" },
+        chat: {
+          label: "聊天",
+          hint: "每次旅行都有群组聊天：与同伴聊天、一起规划并为活动投票。",
+        },
       },
     },
     app: { loading: "正在登录…" },
