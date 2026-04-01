@@ -1,11 +1,12 @@
 /**
  * OnboardingTour — guide interactif avec spotlight sur les éléments réels de l'UI.
- * - Spotlight : assombrit tout sauf l'élément ciblé (SVG mask)
- * - Flèches animées pointant vers l'élément
- * - Swipe gauche/droite pour changer d'étape (mobile)
- * - Bouton Aide dans le menu remet le guide à zéro
+ * - Spotlight : assombrit tout sauf l’élément ciblé (SVG mask)
+ * - Carte d’aide centrée (pas de flèche directionnelle)
+ * - Swipe gauche/droite sur la carte pour changer d’étape (mobile)
+ * - Fermeture : « Passer la démonstration » uniquement (pas de croix en conflit avec le +)
+ * - Pendant le tour : scroll de la page bloqué ; bascule automatique sur l’onglet illustré
  */
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -89,50 +90,50 @@ const STEPS = [
   {
     type: "spotlight",
     tourId: "plus-button",
+    navigateTab: "trips",
     emoji: "✈️",
     labelKey: "onboarding.step.create.label",
     hintKey: "onboarding.step.create.hint",
-    arrowDir: "up",   // arrow points UP toward element (element is above card)
   },
   {
     type: "spotlight",
     tourId: "tab-trips",
+    navigateTab: "trips",
     emoji: "🧳",
     labelKey: "onboarding.step.trips.label",
     hintKey: "onboarding.step.trips.hint",
-    arrowDir: "down", // arrow points DOWN toward element (element is below card)
   },
   {
     type: "spotlight",
     tourId: "tab-planner",
+    navigateTab: "planner",
     emoji: "📅",
     labelKey: "onboarding.step.planner.label",
     hintKey: "onboarding.step.planner.hint",
-    arrowDir: "down",
   },
   {
     type: "spotlight",
     tourId: "tab-destination",
+    navigateTab: "destination",
     emoji: "🔍",
     labelKey: "onboarding.step.destination.label",
     hintKey: "onboarding.step.destination.hint",
-    arrowDir: "down",
   },
   {
     type: "spotlight",
     tourId: "tab-budget",
+    navigateTab: "budget",
     emoji: "💰",
     labelKey: "onboarding.step.budget.label",
     hintKey: "onboarding.step.budget.hint",
-    arrowDir: "down",
   },
   {
     type: "spotlight",
     tourId: "tab-chat",
+    navigateTab: "chat",
     emoji: "💬",
     labelKey: "onboarding.step.chat.label",
     hintKey: "onboarding.step.chat.hint",
-    arrowDir: "down",
   },
 ];
 
@@ -165,84 +166,19 @@ function SpotlightOverlay({ rect }) {
           <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="black" />
         </mask>
       </defs>
-      {/* Dark overlay with cutout */}
+      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.80)" mask="url(#tp-tour-mask)" />
       <rect
-        width="100%"
-        height="100%"
-        fill="rgba(2, 6, 23, 0.80)"
-        mask="url(#tp-tour-mask)"
-      />
-      {/* Indigo glow ring around cutout */}
-      <rect
-        x={cx} y={cy} width={cw} height={ch} rx={r}
+        x={cx}
+        y={cy}
+        width={cw}
+        height={ch}
+        rx={r}
         fill="none"
         stroke="rgba(99,102,241,0.9)"
         strokeWidth="2.5"
         style={{ filter: "drop-shadow(0 0 8px rgba(99,102,241,0.55))" }}
       />
     </svg>
-  );
-}
-
-/* ─── Animated arrow (fixed viewport = alignée sur l’élément réel, pas sur la carte) ── */
-const TOUR_ARROW_W = 28;
-const TOUR_ARROW_H = 36;
-
-function TourArrowFixed({ direction, targetRect }) {
-  if (!targetRect || typeof window === "undefined") return null;
-  const isUp = direction === "up";
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const cx = targetRect.left + targetRect.width / 2;
-  let left = cx - TOUR_ARROW_W / 2;
-  left = Math.max(10, Math.min(left, vw - TOUR_ARROW_W - 10));
-
-  const GAP = 12;
-  let top;
-  if (isUp) {
-    // Cible au-dessus (ex. +) : flèche juste sous le bouton, pointe vers le haut
-    top = targetRect.bottom + GAP;
-  } else {
-    // Cible en dessous (ex. onglets) : flèche juste au-dessus de la zone, pointe vers le bas
-    top = targetRect.top - TOUR_ARROW_H - GAP;
-  }
-  top = Math.max(8, Math.min(top, vh - TOUR_ARROW_H - 8));
-
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: "fixed",
-        left,
-        top,
-        zIndex: 10001,
-        pointerEvents: "none",
-        lineHeight: 0,
-        animation: isUp ? "tpArrowUp 0.9s ease-in-out infinite" : "tpArrowDown 0.9s ease-in-out infinite",
-      }}
-    >
-      {isUp ? (
-        <svg width={TOUR_ARROW_W} height={TOUR_ARROW_H} viewBox="0 0 28 36" fill="none">
-          <path
-            d="M14 33 L14 3 M4 13 L14 3 L24 13"
-            stroke="#6366f1"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      ) : (
-        <svg width={TOUR_ARROW_W} height={TOUR_ARROW_H} viewBox="0 0 28 36" fill="none">
-          <path
-            d="M14 3 L14 33 M4 23 L14 33 L24 23"
-            stroke="#6366f1"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      )}
-    </div>
   );
 }
 
@@ -253,12 +189,11 @@ function TourDots({ step, total, goTo }) {
       {Array.from({ length: total }).map((_, i) => (
         <button
           key={i}
+          type="button"
           onClick={() => goTo(i)}
           aria-label={`Step ${i + 1}`}
           className={`rounded-full transition-all duration-300 ${
-            i === step
-              ? "w-5 h-2 bg-indigo-500"
-              : "w-2 h-2 bg-slate-200 hover:bg-slate-300"
+            i === step ? "h-2 w-5 bg-indigo-500" : "h-2 w-2 bg-slate-200 hover:bg-slate-300"
           }`}
         />
       ))}
@@ -266,14 +201,47 @@ function TourDots({ step, total, goTo }) {
   );
 }
 
+/** Bloque le scroll du document pendant le tour (y compris rebond iOS). */
+function useTourScrollLock(active) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyTouch = body.style.touchAction;
+    const prevHtmlTouch = html.style.touchAction;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    html.style.touchAction = "none";
+    body.style.touchAction = "none";
+
+    const blockMove = (e) => e.preventDefault();
+    window.addEventListener("touchmove", blockMove, { passive: false });
+
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBodyOverflow;
+      html.style.touchAction = prevHtmlTouch;
+      body.style.touchAction = prevBodyTouch;
+      window.removeEventListener("touchmove", blockMove);
+    };
+  }, [active]);
+}
+
 /* ─── Main component ────────────────────────────────────────────────────── */
-export function OnboardingTour({ userId, onDone }) {
+/** @param {{ userId?: string, onDone?: (completedFullTour?: boolean) => void, onNavigateToTab?: (tab: string) => void }} props */
+export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
   const { t } = useI18n();
   const [step, setStep] = useState(0);
   const [targetRect, setTargetRect] = useState(null);
   const [visible, setVisible] = useState(false);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
+  const onNavigateRef = useRef(onNavigateToTab);
+  onNavigateRef.current = onNavigateToTab;
+
+  useTourScrollLock(true);
 
   const TOTAL = STEPS.length;
   const currentStep = STEPS[step];
@@ -285,28 +253,35 @@ export function OnboardingTour({ userId, onDone }) {
     return () => clearTimeout(id);
   }, []);
 
-  /* Mesure la cible avant le paint (évite une frame avec mauvaise position / mauvaise flèche) */
-  useLayoutEffect(() => {
+  /* Onglet cible puis mesure spotlight après paint (double rAF). */
+  useEffect(() => {
     if (isWelcome) {
       setTargetRect(null);
-      return;
+      return undefined;
     }
     const tourId = currentStep.tourId;
+    const tab = currentStep.navigateTab;
+    if (tab) onNavigateRef.current?.(tab);
+
+    let rafOuter = 0;
+    let rafInner = 0;
     const measure = () => {
       const el = document.querySelector(`[data-tour-id="${tourId}"]`);
       if (el) setTargetRect(el.getBoundingClientRect());
       else setTargetRect(null);
     };
-    measure();
-    const raf = requestAnimationFrame(measure);
+    rafOuter = requestAnimationFrame(() => {
+      rafInner = requestAnimationFrame(measure);
+    });
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
     return () => {
-      cancelAnimationFrame(raf);
+      cancelAnimationFrame(rafOuter);
+      cancelAnimationFrame(rafInner);
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [step, isWelcome, currentStep]);
+  }, [step, isWelcome, currentStep.tourId, currentStep.navigateTab]);
 
   const goTo = useCallback(
     (next) => {
@@ -315,12 +290,15 @@ export function OnboardingTour({ userId, onDone }) {
     [TOTAL]
   );
 
-  const handleDone = useCallback(() => {
-    markOnboardingDoneForUser(userId);
-    onDone?.();
-  }, [onDone, userId]);
+  /** @param {boolean} [completedFullTour] true uniquement si l’utilisateur a validé la dernière étape (« C’est parti » / Terminer). */
+  const dismissTour = useCallback(
+    (completedFullTour = false) => {
+      markOnboardingDoneForUser(userId);
+      onDone?.(completedFullTour);
+    },
+    [onDone, userId]
+  );
 
-  /* Swipe support */
   const handleTouchStart = useCallback((e) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -333,45 +311,49 @@ export function OnboardingTour({ userId, onDone }) {
       const dy = Math.abs(e.changedTouches[0].clientY - (touchStartY.current ?? 0));
       touchStartX.current = null;
       touchStartY.current = null;
-      if (Math.abs(dx) < 50 || dy > Math.abs(dx)) return; // not a horizontal swipe
+      if (Math.abs(dx) < 50 || dy > Math.abs(dx)) return;
       if (dx < 0 && !isLast) goTo(step + 1);
       if (dx > 0 && step > 0) goTo(step - 1);
     },
     [step, isLast, goTo]
   );
 
-  /* ── Welcome modal ── */
+  const CARD_W = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 32 : 300);
+
+  /* ── Welcome modal (centré comme les autres étapes) ── */
   if (isWelcome) {
     return (
       <div
-        className={`fixed inset-0 z-[9999] flex items-end sm:items-center justify-center transition-all duration-300 ${
+        className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-all duration-300 ${
           visible ? "opacity-100" : "opacity-0"
         }`}
-        style={{ background: "rgba(15, 23, 42, 0.65)", backdropFilter: "blur(6px)" }}
+        style={{
+          background: "rgba(15, 23, 42, 0.65)",
+          backdropFilter: "blur(6px)",
+          touchAction: "none",
+        }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
         <div
-          className={`relative w-full max-w-sm bg-white rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl transition-all duration-500 ${
-            visible ? "translate-y-0" : "translate-y-8"
+          className={`relative w-full max-w-sm rounded-[2rem] bg-white shadow-2xl transition-all duration-500 ${
+            visible ? "translate-y-0 scale-100" : "translate-y-4 scale-[0.98]"
           }`}
+          style={{ maxWidth: CARD_W + 32, touchAction: "manipulation" }}
         >
-          <div className="flex flex-col items-center text-center px-8 pt-10 pb-8 gap-5">
-            {/* Illustration */}
+          <div className="flex flex-col items-center gap-5 px-8 pb-8 pt-10 text-center">
             <div className="relative">
-              <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-xl shadow-indigo-200">
-                <Plane className="w-9 h-9 text-white" strokeWidth={1.5} />
+              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-xl shadow-indigo-200">
+                <Plane className="h-9 w-9 text-white" strokeWidth={1.5} />
               </div>
-              <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center shadow-md">
-                <Sparkles className="w-3.5 h-3.5 text-white" strokeWidth={2} />
+              <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 shadow-md">
+                <Sparkles className="h-3.5 w-3.5 text-white" strokeWidth={2} />
               </div>
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900">
-                {t("onboarding.welcome.title")}
-              </h2>
-              <p className="mt-2 text-sm text-slate-500 leading-relaxed max-w-xs">
+              <h2 className="text-xl font-bold text-slate-900">{t("onboarding.welcome.title")}</h2>
+              <p className="mt-2 max-w-xs text-sm leading-relaxed text-slate-500">
                 {t("onboarding.welcome.subtitle")}
               </p>
             </div>
@@ -379,122 +361,86 @@ export function OnboardingTour({ userId, onDone }) {
             <TourDots step={step} total={TOTAL} goTo={goTo} />
 
             <button
+              type="button"
               onClick={() => goTo(1)}
-              className="w-full py-3 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-indigo-500 to-violet-600 shadow-lg shadow-indigo-200 active:scale-95 transition-transform"
+              className="w-full rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-600 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition-transform active:scale-95"
             >
               {t("onboarding.welcome.cta")} →
             </button>
 
             <button
               type="button"
-              onClick={handleDone}
-              className="text-xs font-medium text-slate-400 underline decoration-slate-300 underline-offset-2 hover:text-slate-600 transition-colors -mt-1"
+              onClick={() => dismissTour(false)}
+              className="-mt-1 text-xs font-medium text-slate-400 underline decoration-slate-300 underline-offset-2 transition-colors hover:text-slate-600"
             >
               {t("onboarding.skipDemo")}
             </button>
           </div>
         </div>
-
-        <style>{`
-          @keyframes tpArrowUp {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-7px); }
-          }
-          @keyframes tpArrowDown {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(7px); }
-          }
-        `}</style>
       </div>
     );
   }
 
-  /* ── Spotlight step ── */
-  const arrowDir = currentStep.arrowDir;
-  const isArrowUp = arrowDir === "up";
-
-  // Carte : laisser de la place pour ne pas masquer la cible (flèche = fixed sur la cible)
-  const cardTopPct = isArrowUp ? 48 : 12;
-  const CARD_W = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 32 : 300);
-
+  /* ── Spotlight : carte toujours centrée, pas de flèche, pas de croix ── */
   return (
     <>
-      {/* SVG overlay with spotlight cutout */}
       <SpotlightOverlay rect={targetRect} />
 
-      {/* Full-screen interaction zone (swipe + click capture) */}
       <div
-        className="fixed inset-0 z-[9999]"
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+        style={{ touchAction: "none" }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <TourArrowFixed direction={arrowDir} targetRect={targetRect} />
-
-        {/* Tooltip card */}
         <div
-          style={{
-            position: "absolute",
-            top: `${cardTopPct}%`,
-            left: "50%",
-            transform: "translateX(-50%)",
-            width: CARD_W,
-            zIndex: 2,
-          }}
+          className="relative z-[10002] max-h-[min(92dvh,100%)] w-full overflow-y-auto"
+          style={{ width: CARD_W, maxWidth: "100%", touchAction: "manipulation" }}
         >
-          {/* Card body */}
-          <div
-            className="bg-white rounded-3xl shadow-2xl ring-1 ring-slate-200/80"
-            style={{ padding: "1.1rem 1.2rem 1rem" }}
-          >
-            <div className="flex items-center gap-2.5 mb-1.5">
+          <div className="rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200/80" style={{ padding: "1.1rem 1.2rem 1rem" }}>
+            <div className="mb-1.5 flex items-center gap-2.5">
               <span className="text-2xl leading-none">{currentStep.emoji}</span>
-              <h3 className="text-base font-bold text-slate-900 leading-tight">
-                {t(currentStep.labelKey)}
-              </h3>
+              <h3 className="text-base font-bold leading-tight text-slate-900">{t(currentStep.labelKey)}</h3>
             </div>
-            <p className="text-sm text-slate-500 mb-3 leading-relaxed">
-              {t(currentStep.hintKey)}
-            </p>
+            <p className="mb-3 text-sm leading-relaxed text-slate-500">{t(currentStep.hintKey)}</p>
 
             <button
               type="button"
-              onClick={handleDone}
-              className="mb-4 w-full text-center text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800 transition-colors"
+              onClick={() => dismissTour(false)}
+              className="mb-4 w-full text-center text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 transition-colors hover:text-slate-800"
             >
               {t("onboarding.skipDemo")}
             </button>
 
-            {/* Navigation bar */}
             <div className="flex items-center gap-2">
               {step > 0 ? (
                 <button
+                  type="button"
                   onClick={() => goTo(step - 1)}
-                  className="w-8 h-8 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-400 shrink-0 transition-colors"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100"
                   aria-label={t("onboarding.prev")}
                 >
-                  <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
+                  <ChevronLeft className="h-4 w-4" strokeWidth={2.5} />
                 </button>
               ) : (
                 <div className="w-8 shrink-0" />
               )}
 
-              <div className="flex-1 flex justify-center">
+              <div className="flex flex-1 justify-center">
                 <TourDots step={step} total={TOTAL} goTo={goTo} />
               </div>
 
               <button
-                onClick={() => (isLast ? handleDone() : goTo(step + 1))}
-                className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-transform active:scale-95"
-                style={{
-                  background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                }}
+                type="button"
+                onClick={() => (isLast ? dismissTour(true) : goTo(step + 1))}
+                className="flex shrink-0 items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-transform active:scale-95"
+                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}
               >
                 {isLast ? (
                   t("onboarding.finish")
                 ) : (
                   <>
                     {t("onboarding.next")}
-                    <ChevronRight className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />
                   </>
                 )}
               </button>
@@ -502,17 +448,6 @@ export function OnboardingTour({ userId, onDone }) {
           </div>
         </div>
       </div>
-
-      <style>{`
-        @keyframes tpArrowUp {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-7px); }
-        }
-        @keyframes tpArrowDown {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(7px); }
-        }
-      `}</style>
     </>
   );
 }

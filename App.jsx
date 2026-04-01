@@ -142,6 +142,15 @@ function getInviteApiUrl() {
   return base ? `${base}/api/send-invite` : "/api/send-invite";
 }
 
+function getInviteApiAbsoluteSameOriginUrl() {
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin.replace(/\/$/, "")}/api/send-invite`;
+}
+
+/** Affiché à la place de toute erreur technique (ex. « Failed to fetch »). */
+const NOTICE_INVITE_EMAIL_FAILED =
+  "Invitations enregistrées. L'envoi automatique des e-mails n'a pas abouti — utilise « Partager » ou réessaie plus tard.";
+
 function buildParticipantAvatarUrl(seed) {
   const safe = encodeURIComponent(String(seed || "participant"));
   return `https://api.dicebear.com/9.x/initials/svg?seed=${safe}`;
@@ -150,6 +159,63 @@ function buildParticipantAvatarUrl(seed) {
 function isValidEmail(value) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(String(value || "").trim());
+}
+
+async function postTripInvitesToApi({ to, tripTitle, startYmd, endYmd, fixedUrl, programmeText }) {
+  const emails = Array.isArray(to)
+    ? [...new Set(to.map((x) => String(x || "").trim().toLowerCase()).filter((m) => isValidEmail(m)))]
+    : [];
+  if (emails.length === 0) return { ok: true, skipped: true };
+
+  const payload = {
+    to: emails,
+    invite_base_url: typeof window !== "undefined" ? window.location.origin : "",
+    trip: {
+      title: String(tripTitle || "Voyage"),
+      startDate: formatDate(startYmd),
+      endDate: formatDate(endYmd),
+      link: String(fixedUrl || ""),
+    },
+  };
+  const pt = String(programmeText || "").trim();
+  if (pt) payload.programme_text = pt;
+
+  const primary = getInviteApiUrl();
+  const urlsToTry = [primary];
+  if (typeof window !== "undefined" && primary.startsWith("http")) {
+    try {
+      if (new URL(primary).origin !== window.location.origin) {
+        const fb = getInviteApiAbsoluteSameOriginUrl();
+        if (fb && !urlsToTry.includes(fb)) urlsToTry.push(fb);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let inviteResp = null;
+  for (const url of urlsToTry) {
+    try {
+      inviteResp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      break;
+    } catch {
+      inviteResp = null;
+    }
+  }
+
+  if (!inviteResp) {
+    return { ok: false, error: NOTICE_INVITE_EMAIL_FAILED };
+  }
+
+  const inviteData = await inviteResp.json().catch(() => ({}));
+  if (inviteResp.status === 404 || !inviteResp.ok) {
+    return { ok: false, error: NOTICE_INVITE_EMAIL_FAILED };
+  }
+  return { ok: true, sent: emails.length };
 }
 
 function parseEmails(input) {
@@ -176,6 +242,43 @@ function canonicalParticipants(participantsInput, invitedEmailsInput) {
   // Single source of truth for budget sharing:
   // only "Moi" + invited emails (participants list can contain legacy noise).
   return ["Moi", ...invited];
+}
+
+/** Pastilles invités (planning) : sans invited_joined_emails (héritage) = tous les invited_emails ; sinon seulement les comptes ayant rejoint. */
+function invitedEmailsForAvatarStrip(trip) {
+  const all = Array.isArray(trip?.invited_emails)
+    ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  const joined = trip?.invited_joined_emails;
+  if (!Array.isArray(joined)) return all;
+  const jset = new Set(joined.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
+  return all.filter((e) => jset.has(String(e).trim().toLowerCase()));
+}
+
+/** Pastilles participants (chat, etc.) : même règle que invitedEmailsForAvatarStrip pour les e-mails. */
+function participantsForAvatarRow(trip) {
+  const legacy = !Array.isArray(trip?.invited_joined_emails);
+  const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
+  if (legacy) return parts;
+  const jset = new Set(
+    trip.invited_joined_emails.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean)
+  );
+  return parts.filter((p) => {
+    const s = String(p || "").trim();
+    if (s.toLowerCase() === "moi") return true;
+    if (!isValidEmail(s)) return true;
+    return jset.has(s.toLowerCase());
+  });
+}
+
+async function tryMarkInviteeJoinedTrips(supabaseClient) {
+  if (!supabaseClient) return;
+  try {
+    const { error } = await supabaseClient.rpc("mark_invitee_joined_for_me");
+    if (!error) return;
+  } catch (_e) {
+    /* RPC absente tant que la migration SQL n’est pas appliquée */
+  }
 }
 
 function loadChatCacheFromStorage() {
@@ -786,7 +889,8 @@ const slots = ["09:30", "14:00", "18:30", "21:00"];
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
 const TRIPS_SELECT_ATTEMPTS = [
   "*",
-  "id,title,name,destination,start_date,end_date,fixed_url,participants,owner_id,invited_emails",
+  "id,title,name,destination,start_date,end_date,fixed_url,participants,owner_id,invited_emails,invited_joined_emails",
+  "id,title,start_date,end_date,owner_id,invited_emails,invited_joined_emails",
   "id,title,start_date,end_date,owner_id,invited_emails",
   "id,title,start_date,end_date,owner_id",
 ];
@@ -2707,6 +2811,10 @@ async function fetchActivityImageFromUnsplash(activityLike) {
 function normalizeTrip(trip) {
   const normalizedTitle = formatCityName(trip?.title || trip?.destination || trip?.name || "Voyage");
   const invites = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
+  const jRaw = trip?.invited_joined_emails;
+  const invited_joined_emails = Array.isArray(jRaw)
+    ? [...new Set(jRaw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean))]
+    : undefined;
   return {
     ...trip,
     title: String(normalizedTitle || "Voyage"),
@@ -2714,6 +2822,7 @@ function normalizeTrip(trip) {
     end_date: toYMD(trip?.end_date, getTodayStr()),
     participants: canonicalParticipants(trip?.participants, invites),
     invited_emails: invites,
+    invited_joined_emails,
     fixed_url: String(trip?.fixed_url || ""),
   };
 }
@@ -4266,12 +4375,24 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
     ).join("\n\n");
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = email.trim();
     if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return;
     setState("sending");
     const programme = buildProgramme();
-    // Build invite URL with all params so the recipient sees the full invitation card
+    const inv = await postTripInvitesToApi({
+      to: [trimmed],
+      tripTitle,
+      startYmd: startDate,
+      endYmd: endDate,
+      fixedUrl: String(trip?.fixed_url || ""),
+      programmeText: programme,
+    });
+    if (inv.ok && !inv.skipped) {
+      setState("sent");
+      setTimeout(onClose, 1500);
+      return;
+    }
     const inviteParams = new URLSearchParams({
       invite: "1",
       email: trimmed,
@@ -8398,7 +8519,7 @@ function ChatHubView({
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
               const active = String(chatTripId) === String(trip.id);
-              const participantsRaw = canonicalParticipants(trip?.participants, trip?.invited_emails);
+              const participantsRaw = participantsForAvatarRow(trip);
               const participantLabels = participantsRaw.map((p) =>
                 String(p).toLowerCase() === "moi" ? currentUserDisplayName : String(p)
               );
@@ -8535,7 +8656,7 @@ function ChatHubView({
                     {t("chat.messagesHeading")}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                      {canonicalParticipants(activeTrip?.participants, activeTrip?.invited_emails)
+                      {participantsForAvatarRow(activeTrip)
                         .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
                         .map((label) => (
                           <span
@@ -8986,6 +9107,10 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession || null);
       setAuthLoading(false);
+      const authEmail = String(newSession?.user?.email || "").trim();
+      if (authEmail && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
+        void tryMarkInviteeJoinedTrips(supabase);
+      }
       if (event !== "SIGNED_IN" || !newSession?.user?.id) return;
       // À chaque connexion (ou inscription), ouvrir « Mes voyages ».
       setActiveTab("trips");
@@ -9680,6 +9805,7 @@ export default function App() {
           Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
             ? payload.invited_emails
             : [],
+        invited_joined_emails: [],
         title: safeTitle,
         name: safeTitle,
         destination: formatCityName(payload?.destination || payload?.title || safeTitle),
@@ -9737,9 +9863,41 @@ export default function App() {
             );
           }
 
+          let inviteNotice = "";
+          const inviteList = Array.isArray(body.invited_emails)
+            ? [
+                ...new Set(
+                  body.invited_emails
+                    .map((m) => String(m || "").trim().toLowerCase())
+                    .filter((m) => isValidEmail(m))
+                ),
+              ]
+            : [];
+          if (inviteList.length > 0) {
+            const inv = await postTripInvitesToApi({
+              to: inviteList,
+              tripTitle: String(body.destination || body.title || safeTitle),
+              startYmd: body.start_date,
+              endYmd: body.end_date,
+              fixedUrl: body.fixed_url,
+            });
+            if (!inv.skipped) {
+              inviteNotice = !inv.ok
+                ? NOTICE_INVITE_EMAIL_FAILED
+                : `${inviteList.length} invitation(s) envoyée(s).`;
+            }
+          }
+
           setTripModalOpen(false);
           // Pas de message "success" : on laisse l'UI se mettre à jour via le fetch/les subscriptions.
-          if (activitiesInsertOk) setNotice("");
+          if (activitiesInsertOk) {
+            setNotice(inviteNotice);
+          } else if (inviteNotice) {
+            setNotice((prev) => {
+              const base = String(prev || "").trim();
+              return base ? `${base} — ${inviteNotice}` : inviteNotice;
+            });
+          }
           // Force immediate UI refresh (subscription can lag).
           try {
             let data = null;
@@ -10164,45 +10322,58 @@ export default function App() {
         list && list.length > 0 ? list : [],
         nextInvitedEmails
       );
-      const { error } = await supabase
-        .from("trips")
-        .update({ participants, invited_emails: nextInvitedEmails })
-        .eq("id", tricountTrip.id);
-      if (error) throw error;
+      let updateBody = { participants, invited_emails: nextInvitedEmails };
+      if (Array.isArray(tricountTrip?.invited_joined_emails)) {
+        const invSet = new Set(nextInvitedEmails.map((x) => String(x || "").trim().toLowerCase()));
+        updateBody.invited_joined_emails = tricountTrip.invited_joined_emails
+          .map((x) => String(x || "").trim().toLowerCase())
+          .filter((e) => invSet.has(e));
+      }
+      let saveErr = null;
+      for (let att = 0; att < 6; att += 1) {
+        const { error } = await supabase.from("trips").update(updateBody).eq("id", tricountTrip.id);
+        if (!error) {
+          saveErr = null;
+          break;
+        }
+        saveErr = error;
+        const missing = parseMissingSchemaColumnName(error);
+        if (missing && Object.prototype.hasOwnProperty.call(updateBody, missing)) {
+          const { [missing]: _r, ...rest } = updateBody;
+          updateBody = rest;
+          continue;
+        }
+        break;
+      }
+      if (saveErr) throw saveErr;
       setTrips((prev) =>
         (prev || []).map((trip) =>
           String(trip?.id) === String(tricountTrip?.id)
-            ? normalizeTrip({ ...trip, participants, invited_emails: nextInvitedEmails })
+            ? normalizeTrip({
+                ...trip,
+                participants,
+                invited_emails: nextInvitedEmails,
+                ...(updateBody.invited_joined_emails !== undefined
+                  ? { invited_joined_emails: updateBody.invited_joined_emails }
+                  : {}),
+              })
             : trip
         )
       );
       if (newlyAddedInviteEmails.length > 0) {
-        try {
-          const inviteResp = await fetch(getInviteApiUrl(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              to: newlyAddedInviteEmails,
-              invite_base_url: window.location.origin,
-              trip: {
-                title: String(tricountTrip?.title || "Voyage"),
-                startDate: formatDate(tricountTrip?.start_date),
-                endDate: formatDate(tricountTrip?.end_date),
-                link: String(tricountTrip?.fixed_url || ""),
-              },
-            }),
-          });
-          const inviteData = await inviteResp.json().catch(() => ({}));
-          if (!inviteResp.ok) {
-            throw new Error(String(inviteData?.error || "Erreur envoi invitations"));
-          }
-          setNotice(`${newlyAddedInviteEmails.length} participant(s) invite(s) par email.`);
-        } catch (inviteErr) {
-          setNotice(
-            `Participants enregistres, mais envoi mail impossible: ${String(
-              inviteErr?.message || "erreur inconnue"
-            )}`
-          );
+        const inv = await postTripInvitesToApi({
+          to: newlyAddedInviteEmails,
+          tripTitle: String(tricountTrip?.title || "Voyage"),
+          startYmd: tricountTrip?.start_date,
+          endYmd: tricountTrip?.end_date,
+          fixedUrl: String(tricountTrip?.fixed_url || ""),
+        });
+        if (inv.ok && !inv.skipped) {
+          setNotice(`${newlyAddedInviteEmails.length} participant(s) invité(s) par e-mail.`);
+        } else if (!inv.skipped) {
+          setNotice(`Participants enregistrés. ${NOTICE_INVITE_EMAIL_FAILED}`);
+        } else {
+          setNotice("");
         }
       } else {
         setNotice("");
@@ -10241,11 +10412,20 @@ export default function App() {
       const previousInvitedEmails = Array.isArray(currentTrip?.invited_emails) ? currentTrip.invited_emails : [];
       const previousInvitedSet = new Set(previousInvitedEmails.map((m) => String(m || "").toLowerCase().trim()).filter(Boolean));
 
+      const nextInvitedList =
+        Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0 ? trip.invited_emails : [];
+      const nextInvitedLower = new Set(nextInvitedList.map((m) => String(m || "").trim().toLowerCase()).filter(Boolean));
+      let joinedForPayload;
+      if (Array.isArray(currentTrip?.invited_joined_emails)) {
+        joinedForPayload = currentTrip.invited_joined_emails
+          .map((x) => String(x || "").trim().toLowerCase())
+          .filter((e) => nextInvitedLower.has(e));
+      } else {
+        joinedForPayload = undefined;
+      }
+
       let payload = {
-        invited_emails:
-          Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
-            ? trip.invited_emails
-            : [],
+        invited_emails: nextInvitedList,
         title: safeTitle,
         name: safeTitle,
         destination: safeTitle,
@@ -10253,12 +10433,13 @@ export default function App() {
         end_date: String(trip.end_date || getTodayStr()),
         participants: canonicalParticipants(
           Array.isArray(currentTrip?.participants) ? currentTrip.participants : [],
-          Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
-            ? trip.invited_emails
-            : []
+          nextInvitedList.length > 0 ? nextInvitedList : []
         ),
         fixed_url: String(trip.fixed_url || ""),
       };
+      if (joinedForPayload !== undefined) {
+        payload.invited_joined_emails = joinedForPayload;
+      }
       for (let attempt = 0; attempt < 6; attempt += 1) {
         const { error } = await supabase.from("trips").update(payload).eq("id", trip.id);
         if (!error) {
@@ -10297,6 +10478,7 @@ export default function App() {
                     participants: nextParticipants,
                     invited_emails: nextInvited,
                     fixed_url: nextFixedUrl,
+                    ...(joinedForPayload !== undefined ? { invited_joined_emails: joinedForPayload } : {}),
                   })
                 : t
             )
@@ -10311,35 +10493,19 @@ export default function App() {
           }
 
           if (newlyAddedInvites.length > 0) {
-            try {
-              const inviteResp = await fetch(getInviteApiUrl(), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  to: newlyAddedInvites,
-                  invite_base_url: window.location.origin,
-                  trip: {
-                    title: nextTitle,
-                    startDate: formatDate(nextStart),
-                    endDate: formatDate(nextEnd),
-                    link: nextFixedUrl,
-                  },
-                }),
-              });
-              const inviteData = await inviteResp.json().catch(() => ({}));
-              if (inviteResp.status === 404) {
-                throw new Error("API mail introuvable. Configure VITE_INVITE_API_BASE_URL ou utilise vercel dev.");
-              }
-              if (!inviteResp.ok) {
-                throw new Error(String(inviteData?.error || "Erreur envoi invitations."));
-              }
-              setNotice(`Voyage modifie. ${newlyAddedInvites.length} invitation(s) envoyee(s).`);
-            } catch (inviteErr) {
-              setNotice(
-                `Voyage modifie, mais l'envoi mail a echoue: ${String(
-                  inviteErr?.message || "erreur inconnue"
-                )}`
-              );
+            const inv = await postTripInvitesToApi({
+              to: newlyAddedInvites,
+              tripTitle: nextTitle,
+              startYmd: nextStart,
+              endYmd: nextEnd,
+              fixedUrl: nextFixedUrl,
+            });
+            if (inv.ok && !inv.skipped) {
+              setNotice(`Voyage modifié. ${newlyAddedInvites.length} invitation(s) envoyée(s).`);
+            } else if (!inv.skipped) {
+              setNotice(`Voyage modifié. ${NOTICE_INVITE_EMAIL_FAILED}`);
+            } else {
+              setNotice("");
             }
           } else {
             setNotice("");
@@ -10562,7 +10728,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex items-center -space-x-2">
-                        {(Array.isArray(selectedTrip?.invited_emails) ? selectedTrip.invited_emails : [])
+                        {invitedEmailsForAvatarStrip(selectedTrip)
                           .slice(0, 5)
                           .map((mail) => (
                             <div
@@ -10926,7 +11092,14 @@ export default function App() {
       {showOnboarding && session?.user?.id ? (
         <OnboardingTour
           userId={session.user.id}
-          onDone={() => setShowOnboarding(false)}
+          onDone={(completedFullTour) => {
+            setShowOnboarding(false);
+            if (completedFullTour) setActiveTab("trips");
+          }}
+          onNavigateToTab={(tab) => {
+            if (tab === "planner") openPlannerToday();
+            else setActiveTab(tab);
+          }}
         />
       ) : null}
 

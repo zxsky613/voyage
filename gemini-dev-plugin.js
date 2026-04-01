@@ -4,11 +4,13 @@
  * - POST /api/gemini/suggestions — lieux + conseils + activités (si VITE_GEMINI_DESTINATION_ENRICH=true)
  * - POST /api/gemini/itinerary — programme sur demande (dates début / fin)
  * Lit GEMINI_API_KEY depuis .env.local (sans préfixe VITE_).
+ * - POST /api/send-invite — invitations e-mail (RESEND_API_KEY dans .env.local).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { loadEnv } from "vite";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
+import { sendTripInvitesWithResend } from "./invite-send-core.js";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -326,6 +328,53 @@ function formatError(e) {
 function attachGeminiMiddleware(middlewares, mode, envDir) {
   middlewares.use(async (req, res, next) => {
     const pathname = (req.url || "").split("?")[0] || "";
+
+    if (pathname === "/api/send-invite") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") {
+        res.statusCode = 200;
+        res.end();
+        return;
+      }
+      if (req.method === "POST") {
+        const apiKey = readServerKey(envDir, "RESEND_API_KEY");
+        const fromAddress = readServerKey(envDir, "RESEND_FROM");
+        if (!apiKey) {
+          sendJson(res, 503, {
+            error:
+              "RESEND_API_KEY est vide dans .env.local. Crée une clé sur https://resend.com, ajoute RESEND_API_KEY=..., enregistre, puis redémarre npm run dev.",
+          });
+          return;
+        }
+        let body;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          body = {};
+        }
+        const result = await sendTripInvitesWithResend({
+          apiKey,
+          fromAddress,
+          to: body.to,
+          trip: body.trip,
+          inviteBaseUrl: body.invite_base_url,
+          programmeText: body.programme_text,
+        });
+        if (!result.ok) {
+          sendJson(res, result.status, {
+            error: result.error,
+            details: result.details,
+            recipient: result.recipient,
+          });
+          return;
+        }
+        sendJson(res, 200, { ok: true, sent: result.sent, data: result.data });
+        return;
+      }
+    }
+
     if (req.method !== "POST") return next();
 
     const isSuggestions = pathname === "/api/gemini/suggestions";
