@@ -2913,6 +2913,10 @@ function AuthView() {
   const [inviteFirstName, setInviteFirstName] = useState("");
   const [inviteLastName, setInviteLastName] = useState("");
   const [invitePassword, setInvitePassword] = useState("");
+  const [inviteFromName, setInviteFromName] = useState("");
+  const [inviteStartDate, setInviteStartDate] = useState("");
+  const [inviteEndDate, setInviteEndDate] = useState("");
+  const [inviteAccepted, setInviteAccepted] = useState(false);
   const [emailExistsModalOpen, setEmailExistsModalOpen] = useState(false);
 
   useEffect(() => {
@@ -2924,6 +2928,10 @@ function AuthView() {
       if (invite !== "1" || !invitedEmail) return;
       setInviteEmail(invitedEmail);
       setInviteTripName(invitedTrip);
+      setInviteFromName(String(params.get("from") || "").trim());
+      setInviteStartDate(String(params.get("start") || "").trim());
+      setInviteEndDate(String(params.get("end") || "").trim());
+      setInviteAccepted(false);
       setMode("signup");
       setInvitePromptOpen(true);
     } catch (_e) {
@@ -2934,9 +2942,7 @@ function AuthView() {
   const clearInviteParams = () => {
     try {
       const url = new URL(window.location.href);
-      url.searchParams.delete("invite");
-      url.searchParams.delete("email");
-      url.searchParams.delete("trip");
+      ["invite", "email", "trip", "from", "start", "end"].forEach((k) => url.searchParams.delete(k));
       window.history.replaceState({}, "", url.toString());
     } catch (_e) {
       // ignore history issues
@@ -3209,52 +3215,147 @@ function AuthView() {
         </footer>
       </div>
       {invitePromptOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4">
-          <div className="relative min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2rem] bg-white/95 p-4 pb-6 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6 sm:pb-8">
-            <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("auth.inviteTitle")}</h3>
-            <p className="mt-2 text-sm text-slate-700">
-              {inviteTripName
-                ? t("auth.inviteBodyTrip", { trip: inviteTripName })
-                : t("auth.inviteBodyGeneric")}
-            </p>
-            <p className="mt-1 break-all text-xs text-slate-500">
-              {t("auth.inviteEmailLine", { email: String(inviteEmail || "-") })}
-            </p>
-            <div className={`mt-4 ${MODAL_GRID_2}`}>
-              <input
-                value={inviteFirstName}
-                onChange={(e) => setInviteFirstName(e.target.value)}
-                placeholder={t("auth.firstName")}
-                className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
-              />
-              <input
-                value={inviteLastName}
-                onChange={(e) => setInviteLastName(e.target.value)}
-                placeholder={t("auth.lastName")}
-                className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
-              />
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4">
+          <div
+            className="w-full max-w-md overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[2rem]"
+            style={{ maxHeight: "92svh" }}
+          >
+            {/* Handle mobile */}
+            <div className="flex justify-center pt-3 sm:hidden">
+              <div className="h-1 w-10 rounded-full bg-slate-200" />
             </div>
-            <input
-              type="password"
-              value={invitePassword}
-              onChange={(e) => setInvitePassword(e.target.value)}
-              placeholder={t("auth.password")}
-              className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-            />
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={completeInviteSignup}
-                disabled={loading}
-                className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
-              >
-                {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
-              </button>
-            </div>
-            <footer className="mt-6 border-t border-slate-200/60 pt-4">
-              <LanguageFab placement="authFooter" />
-            </footer>
+
+            {!inviteAccepted ? (
+              /* ── Étape 1 : détails + Accept/Decline ── */
+              <div className="px-5 pb-8 pt-4 sm:px-6 sm:pt-5">
+                {/* Icône + titre */}
+                <div className="mb-5 flex items-center gap-3.5">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-2xl shadow-sm">
+                    ✈️
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                      {t("auth.inviteTitle")}
+                    </p>
+                    <h3 className="text-[17px] font-bold leading-tight text-slate-900">
+                      {inviteFromName
+                        ? t("auth.inviteFrom", { name: inviteFromName })
+                        : t("auth.inviteFromGeneric")}
+                    </h3>
+                  </div>
+                </div>
+
+                {/* Carte détails voyage */}
+                <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100 space-y-2.5">
+                  {inviteTripName && (
+                    <div className="flex items-center gap-2.5">
+                      <MapPin size={14} className="shrink-0 text-indigo-500" />
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                          {t("auth.inviteDestination")}
+                        </p>
+                        <p className="text-[14px] font-bold text-slate-900">{inviteTripName}</p>
+                      </div>
+                    </div>
+                  )}
+                  {inviteStartDate && inviteEndDate && (
+                    <div className="flex items-center gap-2.5">
+                      <Calendar size={14} className="shrink-0 text-indigo-500" />
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Dates</p>
+                        <p className="text-[13px] font-semibold text-slate-800">
+                          {t("auth.inviteDates", {
+                            start: formatDate(inviteStartDate),
+                            end: formatDate(inviteEndDate),
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2.5 border-t border-slate-100 pt-2.5">
+                    <Mail size={13} className="shrink-0 text-slate-400" />
+                    <p className="break-all text-[11px] text-slate-500">
+                      {t("auth.inviteEmailLine", { email: String(inviteEmail || "-") })}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Boutons Accept / Decline */}
+                <div className="mt-5 flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInvitePromptOpen(false);
+                      clearInviteParams();
+                    }}
+                    className="rounded-xl border border-slate-200 px-4 py-3 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98]"
+                  >
+                    {t("auth.inviteDecline")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInviteAccepted(true)}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+                  >
+                    <span>🎉</span>
+                    {t("auth.inviteAccept")}
+                  </button>
+                </div>
+
+                <footer className="mt-5 border-t border-slate-100 pt-4">
+                  <LanguageFab placement="authFooter" />
+                </footer>
+              </div>
+            ) : (
+              /* ── Étape 2 : formulaire création compte ── */
+              <div className="px-5 pb-8 pt-5 sm:px-6">
+                <button
+                  type="button"
+                  onClick={() => setInviteAccepted(false)}
+                  className="mb-4 flex items-center gap-1.5 text-[12px] font-medium text-slate-400 hover:text-slate-600"
+                >
+                  <span>←</span> Retour
+                </button>
+                <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  {t("auth.inviteTitle")}
+                </h3>
+                <p className="mb-4 text-[15px] font-bold text-slate-900">{t("auth.inviteSignupStep")}</p>
+                <div className={`space-y-3`}>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      value={inviteFirstName}
+                      onChange={(e) => setInviteFirstName(e.target.value)}
+                      placeholder={t("auth.firstName")}
+                      className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
+                    />
+                    <input
+                      value={inviteLastName}
+                      onChange={(e) => setInviteLastName(e.target.value)}
+                      placeholder={t("auth.lastName")}
+                      className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
+                    />
+                  </div>
+                  <input
+                    type="password"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    placeholder={t("auth.password")}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[13px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={completeInviteSignup}
+                    disabled={loading}
+                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                  >
+                    {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
+                  </button>
+                </div>
+                <footer className="mt-5 border-t border-slate-100 pt-4">
+                  <LanguageFab placement="authFooter" />
+                </footer>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
@@ -3615,156 +3716,272 @@ function EditTripModal({ open, onClose, trip, onSave }) {
   );
 }
 
-function ShareModal({ open, onClose, trip }) {
+// ── InviteEmailModal ──────────────────────────────────────────────────────────
+function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
+  const { t } = useI18n();
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState("idle");
+
+  useEffect(() => { if (open) { setEmail(""); setState("idle"); } }, [open]);
+
+  if (!open || !trip) return null;
+
+  const tripTitle = String(trip?.title || t("modals.tripDefault"));
+  const startDate = String(trip?.start_date || "");
+  const endDate = String(trip?.end_date || "");
+  const dateRange = `${formatDate(startDate)} \u2014 ${formatDate(endDate)}`;
+
+  const buildProgramme = () => {
+    const rows = (activities || []).slice().sort((a, b) => {
+      const d = String(a.date || "").localeCompare(String(b.date || ""));
+      return d !== 0 ? d : String(a.time || "").localeCompare(String(b.time || ""));
+    });
+    if (!rows.length) return "";
+    const byDay = {};
+    rows.forEach((r) => { const k = String(r.date || ""); if (!byDay[k]) byDay[k] = []; byDay[k].push(r); });
+    return Object.entries(byDay).map(([date, acts]) =>
+      [`\uD83D\uDCC5 ${formatDate(date)}`, ...acts.map((a) => `  ${String(a.time || "--:--").slice(0, 5)}  ${String(a.title || "")}`)].join("\n")
+    ).join("\n\n");
+  };
+
+  const handleSend = () => {
+    const trimmed = email.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return;
+    setState("sending");
+    const programme = buildProgramme();
+    // Build invite URL with all params so the recipient sees the full invitation card
+    const inviteParams = new URLSearchParams({
+      invite: "1",
+      email: trimmed,
+      trip: tripTitle,
+      ...(inviterName ? { from: inviterName } : {}),
+      ...(startDate ? { start: startDate } : {}),
+      ...(endDate ? { end: endDate } : {}),
+    });
+    const inviteUrl = `${window.location.origin}?${inviteParams.toString()}`;
+    const subj = encodeURIComponent(`\u2708\uFE0F ${inviterName ? `${inviterName} vous invite` : "Invitation"} : ${tripTitle}`);
+    const bodyLines = [
+      `Bonjour,`, ``,
+      `${inviterName ? `${inviterName} vous` : "Vous"} invite(nt) \u00e0 rejoindre le voyage "${tripTitle}" !`, ``,
+      `\uD83D\uDCC5 Dates : ${dateRange}`,
+      programme ? `\n\uD83D\uDCCB Programme :\n${programme}` : "",
+      ``,
+      `\uD83D\uDD17 Acc\u00e9dez aux d\u00e9tails et rejoignez le voyage directement :`,
+      inviteUrl,
+      ``,
+      `\u00c0 bient\u00f4t ! \uD83C\uDF0D`,
+    ].join("\n");
+    window.location.href = `mailto:${encodeURIComponent(trimmed)}?subject=${subj}&body=${encodeURIComponent(bodyLines)}`;
+    setState("sent");
+    setTimeout(onClose, 1500);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="w-full max-w-sm overflow-hidden rounded-[1.75rem] bg-white shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-sm">
+              <Mail size={16} strokeWidth={2.5} />
+            </span>
+            <h2 className="text-[15px] font-bold text-slate-900">{t("modals.shareInviteEmailTitle")}</h2>
+          </div>
+          <button onClick={onClose} className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"><X size={15} /></button>
+        </div>
+        <div className="px-5 pb-6 space-y-4">
+          <div className="flex items-center gap-2 rounded-2xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-100">
+            <MapPin size={13} className="shrink-0 text-indigo-500" />
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-semibold text-slate-800">{tripTitle}</p>
+              <p className="text-[11px] text-slate-400">{dateRange}</p>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">E-mail</label>
+            <input
+              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+              placeholder={t("modals.shareInviteEmailPlaceholder")}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              autoFocus
+            />
+          </div>
+          <p className="flex gap-2 rounded-xl bg-sky-50 px-3.5 py-2.5 text-[11px] leading-relaxed text-sky-700 ring-1 ring-sky-100">
+            <span className="mt-0.5 shrink-0">ℹ️</span>
+            <span>{t("modals.shareInviteEmailHint")}</span>
+          </p>
+          <button
+            type="button" onClick={handleSend} disabled={state === "sent"}
+            className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+          >
+            {state === "sent" ? `\u2713 ${t("modals.shareInviteEmailSent")}` : state === "sending" ? t("modals.shareInviteEmailSending") : t("modals.shareInviteEmailSend")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ShareModal ────────────────────────────────────────────────────────────────
+function ShareModal({ open, onClose, trip, activities, inviterName }) {
   const { t } = useI18n();
   const [copyState, setCopyState] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendFeedback, setSendFeedback] = useState(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+
+  useEffect(() => { if (!open) setInviteOpen(false); }, [open]);
+
   if (!open || !trip) return null;
 
   const invitedEmails = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
   const tripTitle = String(trip?.title || t("modals.tripDefault"));
-  const dateRange = `${formatDate(trip?.start_date)} - ${formatDate(trip?.end_date)}`;
-  const linkText = String(trip?.fixed_url || "").trim() || t("modals.noLink");
-  const guestList = invitedEmails.length > 0 ? invitedEmails.join(", ") : t("modals.guestsNone");
-  const recap = [
-    t("modals.shareLineTrip", { title: tripTitle }),
-    t("modals.shareLineDates", { range: dateRange }),
-    t("modals.shareLineLink", { link: linkText }),
-    t("modals.shareLineGuests", { list: guestList }),
-  ].join("\n");
+  const dateRange = `${formatDate(trip?.start_date)} \u2014 ${formatDate(trip?.end_date)}`;
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(recap);
-      setCopyState("copied");
-      return;
-    } catch (_e) {
-      // fallback below
-    }
+  const sortedActs = (activities || []).slice().sort((a, b) => {
+    const d = String(a.date || "").localeCompare(String(b.date || ""));
+    return d !== 0 ? d : String(a.time || "").localeCompare(String(b.time || ""));
+  });
+  const byDay = {};
+  sortedActs.forEach((r) => { const k = String(r.date || ""); if (!byDay[k]) byDay[k] = []; byDay[k].push(r); });
+  const dayEntries = Object.entries(byDay);
 
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = recap;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.top = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      setCopyState(ok ? "copied" : "error");
-    } catch (_err) {
-      setCopyState("error");
+  const buildRecap = () => {
+    const lines = [`\u2708\uFE0F ${tripTitle}`, `\uD83D\uDCC5 ${dateRange}`];
+    if (dayEntries.length) {
+      lines.push("", `\u2500\u2500 ${t("modals.shareProgramSection")} \u2500\u2500`);
+      dayEntries.forEach(([date, acts]) => {
+        lines.push(`\n${formatDate(date)}`);
+        acts.forEach((a) => lines.push(`  ${String(a.time || "--:--").slice(0, 5)}  ${String(a.title || "")}`));
+      });
     }
+    if (invitedEmails.length) lines.push("", `\u2500\u2500 ${t("modals.shareGuestsSection")} \u2500\u2500`, invitedEmails.join(", "));
+    const link = String(trip?.fixed_url || "").trim();
+    if (link) lines.push("", `\uD83D\uDD17 ${link}`);
+    return lines.join("\n");
   };
 
-  const sendInvitesByEmail = async () => {
-    if (sending) return;
-    if (invitedEmails.length === 0) {
-      setSendFeedback({ ok: false, msg: t("modals.noEmailsToSend") });
-      return;
-    }
-    setSending(true);
-    setSendFeedback(null);
+  const copy = async () => {
+    const text = buildRecap();
+    try { await navigator.clipboard.writeText(text); setCopyState("copied"); return; } catch (_e) { /* fallback */ }
     try {
-      const resp = await fetch(getInviteApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: invitedEmails,
-          invite_base_url: window.location.origin,
-          trip: {
-            title: tripTitle,
-            startDate: formatDate(trip?.start_date),
-            endDate: formatDate(trip?.end_date),
-            link: String(trip?.fixed_url || ""),
-          },
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (resp.status === 404) {
-        throw new Error(t("modals.apiMailMissing"));
-      }
-      if (!resp.ok) throw new Error(String(data?.error || t("modals.inviteSendFailed")));
-      setSendFeedback({ ok: true, msg: t("modals.shareInviteSuccess") });
-    } catch (e) {
-      setSendFeedback({ ok: false, msg: String(e?.message || t("modals.inviteSendFailed")) });
-    } finally {
-      setSending(false);
-    }
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "-9999px";
+      document.body.appendChild(ta); ta.select();
+      setCopyState(document.execCommand("copy") ? "copied" : "error");
+      document.body.removeChild(ta);
+    } catch (_err) { setCopyState("error"); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4">
-      <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8">
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.shareTitle")}</h2>
-          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
-            <X size={18} />
-          </button>
-        </div>
-        <pre className="mb-4 max-h-40 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-slate-100 p-3 text-xs text-slate-700 sm:max-h-none sm:p-4 sm:text-sm">
-          {recap}
-        </pre>
-        {invitedEmails.length > 0 ? (
-          <div className="mb-3 space-y-2">
-            {invitedEmails.map((mail) => {
-              const subject = encodeURIComponent(
-                t("modals.shareMailSubject", { title: String(trip.title) })
-              );
-              const body = encodeURIComponent(
-                t("modals.shareMailBody", {
-                  title: String(trip.title),
-                  range: dateRange,
-                  link: String(trip.fixed_url || "").trim() || t("modals.noLink"),
-                })
-              );
-              return (
-                <a
-                  key={mail}
-                  href={`mailto:${encodeURIComponent(mail)}?subject=${subject}&body=${body}`}
-                  className="flex min-w-0 items-center gap-2 rounded-2xl bg-slate-100 px-3 py-3 text-sm text-slate-700 hover:bg-slate-200 sm:px-4"
-                >
-                  <Mail size={14} className="shrink-0" />
-                  <span className="min-w-0 truncate">{String(mail)}</span>
-                </a>
-              );
-            })}
+    <>
+      <div
+        className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+        onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      >
+        <div
+          className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[1.75rem]"
+          style={{ maxHeight: "90svh" }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex shrink-0 justify-center pt-3 sm:hidden">
+            <div className="h-1 w-10 rounded-full bg-slate-200" />
           </div>
-        ) : null}
-        <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            onClick={copy}
-            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-            style={
-              copyState === "copied"
-                ? { background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)" }
-                : GLASS_ACCENT_STYLE
-            }
-          >
-            {copyState === "copied"
-              ? t("modals.copied")
-              : copyState === "error"
-                ? t("modals.copyFailed")
-                : t("modals.copyRecap")}
-          </button>
-          <button
-            onClick={sendInvitesByEmail}
-            disabled={sending}
-            className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
-          >
-            {sending ? t("modals.sendingInvites") : t("modals.sendInvitesButton")}
-          </button>
+          <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-4 pb-3 sm:px-6 sm:pt-5">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">{t("modals.shareTitle")}</p>
+              <h2 className="text-[17px] font-bold leading-tight text-slate-900">{tripTitle}</h2>
+              <p className="mt-0.5 text-[12px] text-slate-500">{dateRange}</p>
+            </div>
+            <button onClick={onClose} className="shrink-0 rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="h-px shrink-0 bg-slate-100 mx-5" />
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="px-5 pt-4 pb-2 sm:px-6">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t("modals.shareProgramSection")}</p>
+              {dayEntries.length === 0 ? (
+                <p className="text-[12px] italic text-slate-400">{t("modals.shareNoActivities")}</p>
+              ) : (
+                <ol className="space-y-5">
+                  {dayEntries.map(([date, acts], di) => (
+                    <li key={date}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">
+                          {t("modals.shareDay", { n: di + 1 })}
+                        </span>
+                        <span className="text-[12px] font-semibold text-slate-600">{formatDate(date)}</span>
+                      </div>
+                      <ul className="space-y-2 pl-1">
+                        {acts.map((a, ai) => (
+                          <li key={ai} className="flex items-start gap-3">
+                            <span className="mt-0.5 shrink-0 rounded-lg bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono font-semibold tabular-nums text-slate-500">
+                              {String(a.time || "--:--").slice(0, 5)}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] font-medium leading-snug text-slate-800">{String(a.title || "")}</p>
+                              {String(a.location || "") ? (
+                                <p className="text-[11px] text-slate-400">{String(a.location)}</p>
+                              ) : null}
+                            </div>
+                            {Number(a.cost) > 0 ? (
+                              <span className="shrink-0 text-[11px] font-semibold text-slate-400">~{Number(a.cost)}&euro;</span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+            {invitedEmails.length > 0 && (
+              <div className="px-5 pt-4 pb-2 sm:px-6">
+                <div className="h-px bg-slate-100 mb-4" />
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t("modals.shareGuestsSection")}</p>
+                <div className="flex flex-wrap gap-2">
+                  {invitedEmails.map((mail) => (
+                    <span key={mail} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[12px] text-slate-700">
+                      <Mail size={11} className="shrink-0 text-slate-400" />{String(mail)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="h-4" />
+          </div>
+          <div className="shrink-0 border-t border-slate-100 px-5 pb-6 pt-3 flex items-center gap-2.5 sm:px-6 sm:pb-4">
+            <button
+              onClick={copy}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98]"
+            >
+              {copyState === "copied"
+                ? <><span className="text-emerald-600">✓</span> {t("modals.copied")}</>
+                : <><span>📋</span> {t("modals.copyRecap")}</>}
+            </button>
+            <button
+              onClick={() => setInviteOpen(true)}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-2.5 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+            >
+              <Mail size={15} strokeWidth={2.5} />
+              {t("modals.shareInviteByEmail")}
+            </button>
+          </div>
         </div>
-        {sendFeedback ? (
-          <p className={`mt-3 text-sm ${sendFeedback.ok ? "text-emerald-700" : "text-rose-700"}`}>
-            {sendFeedback.msg}
-          </p>
-        ) : null}
       </div>
-    </div>
+      <InviteEmailModal
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        trip={trip}
+        activities={activities}
+        inviterName={inviterName}
+      />
+    </>
   );
 }
 
@@ -9796,7 +10013,13 @@ export default function App() {
           setPlannerInviteOpen(false);
         }}
       />
-      <ShareModal open={!!shareTrip} onClose={() => setShareTrip(null)} trip={shareTrip} />
+      <ShareModal
+        open={!!shareTrip}
+        onClose={() => setShareTrip(null)}
+        trip={shareTrip}
+        activities={(activities || []).filter((a) => String(a?.trip_id) === String(shareTrip?.id))}
+        inviterName={getMenuGreetingName(session?.user) || ""}
+      />
       <TripParticipantsModal open={!!tricountTrip} onClose={() => setTricountTrip(null)} trip={tricountTrip} onSave={saveParticipants} />
       {budgetDetailTrip ? (
         <BudgetTripDetailShell trip={budgetDetailTrip} onClose={() => setBudgetDetailTrip(null)}>
