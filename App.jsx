@@ -3798,8 +3798,8 @@ function AuthView() {
           <div
             className="relative z-10 flex min-h-[100dvh] flex-col px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))]"
           >
-            <div className="flex flex-1 flex-col items-center pt-6 sm:pt-10">
-              <div className="flex flex-col items-center gap-0 leading-none">
+            <div className="flex min-h-0 flex-1 flex-col items-center pt-6 sm:pt-10">
+              <div className="flex shrink-0 flex-col items-center gap-0 leading-none">
                 <AuthLandingLogoImg
                   src="/LogoTriPlanner.png"
                   alt={t("auth.logoAlt")}
@@ -3809,9 +3809,11 @@ function AuthView() {
                   {t("auth.brand")}
                 </h1>
               </div>
-              <p className="mt-8 max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
-                {t("auth.landingTagline")}
-              </p>
+              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center px-1 sm:flex-none sm:justify-start">
+                <p className="max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
+                  {t("auth.landingTagline")}
+                </p>
+              </div>
             </div>
             <div className="mx-auto mt-8 w-full max-w-sm shrink-0 space-y-3 sm:mt-10">
               <button
