@@ -903,8 +903,8 @@ async function resolveValidatedDestination(raw, uiLanguage = "fr") {
 
 /** Fond écrans auth / chargement — aligné bleu-gris carte */
 const BG = "#eef3f8";
-/** Fond écran d’accueil connexion (image locale, format portrait adapté mobile). */
-const AUTH_LANDING_BG = "/auth-landing-bg.png";
+/** Fond écran d’accueil connexion (paysage large, même scène que l’ancien portrait — `bg-cover` web / mobile). */
+const AUTH_LANDING_BG = "/auth-landing-bg-wide.jpg";
 
 function authHasInviteLink() {
   try {
@@ -3420,6 +3420,34 @@ function getMenuGreetingName(user) {
   return email;
 }
 
+function MenuProfileAvatar({ user }) {
+  const { t } = useI18n();
+  const url = String(user?.user_metadata?.avatar_url || "").trim();
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [url]);
+  if (!url || broken) {
+    return (
+      <div
+        className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-slate-200/90 text-slate-500 shadow-inner ring-1 ring-slate-300/60"
+        role="img"
+        aria-label={t("menu.profileDefaultAvatarAria")}
+      >
+        <UserRound size={30} strokeWidth={1.75} aria-hidden />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={t("menu.profilePhotoAlt")}
+      onError={() => setBroken(true)}
+      className="h-16 w-16 shrink-0 rounded-full object-cover shadow-md ring-1 ring-slate-300/40"
+    />
+  );
+}
+
 // Modales
 function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, onSwitchTab, onShowTour }) {
   const { t } = useI18n();
@@ -3446,11 +3474,14 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           </button>
         </div>
         <div className="space-y-3 text-sm text-slate-700">
-          <p className="text-sm font-medium text-slate-700">
-            {greetingName
-              ? t("menu.greeting", { name: greetingName })
-              : t("menu.greetingNoName")}
-          </p>
+          <div className="space-y-2">
+            <MenuProfileAvatar user={user} />
+            <p className="text-sm font-medium text-slate-700">
+              {greetingName
+                ? t("menu.greeting", { name: greetingName })
+                : t("menu.greetingNoName")}
+            </p>
+          </div>
           <LanguageSelector className="pt-1" />
           <div className="pt-2">
             <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.navigation")}</p>
@@ -4894,10 +4925,17 @@ function AccountModal({
   deleting,
   saving,
 }) {
+  const { t } = useI18n();
+  const photoInputId = useId();
+  const photoInputRef = useRef(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null);
+  const [pendingPhotoBlobUrl, setPendingPhotoBlobUrl] = useState("");
+  const [avatarCleared, setAvatarCleared] = useState(false);
+  const [photoErr, setPhotoErr] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -4905,32 +4943,132 @@ function AccountModal({
     setLastName(String(session?.user?.user_metadata?.last_name || ""));
     setEmail(String(session?.user?.email || ""));
     setPassword("");
+    setPendingPhotoFile(null);
+    setAvatarCleared(false);
+    setPhotoErr("");
+    if (photoInputRef.current) photoInputRef.current.value = "";
   }, [open, session]);
+
+  useEffect(() => {
+    if (!pendingPhotoFile) {
+      setPendingPhotoBlobUrl("");
+      return;
+    }
+    const url = URL.createObjectURL(pendingPhotoFile);
+    setPendingPhotoBlobUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingPhotoFile]);
+
+  const savedAvatarUrl = String(session?.user?.user_metadata?.avatar_url || "").trim();
+  const displayAvatarUrl = pendingPhotoFile
+    ? pendingPhotoBlobUrl
+    : !avatarCleared && savedAvatarUrl
+      ? savedAvatarUrl
+      : "";
+  const canRemovePhoto = !!(pendingPhotoFile || (!avatarCleared && savedAvatarUrl));
+
+  const handleSave = async () => {
+    setPhotoErr("");
+    let avatar_url;
+    if (pendingPhotoFile) {
+      try {
+        avatar_url = await fileToAvatarDataUrl(pendingPhotoFile);
+      } catch (e) {
+        setPhotoErr(String(e?.message || t("auth.errGeneric")));
+        return;
+      }
+    } else if (avatarCleared && savedAvatarUrl) {
+      avatar_url = "";
+    }
+    await onUpdateProfile({
+      first_name: String(firstName || "").trim(),
+      last_name: String(lastName || "").trim(),
+      email: String(email || "").trim(),
+      password: String(password || ""),
+      avatar_url,
+    });
+  };
 
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">Mon compte</h2>
-          <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
+          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("menu.account")}</h2>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
         </div>
         <div className="min-w-0 space-y-3">
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <p className="mb-3 text-xs uppercase tracking-[0.16em] text-slate-500">{t("auth.profilePhotoOptional")}</p>
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full bg-slate-100 ring-2 ring-slate-200/80 shadow-sm">
+                {displayAvatarUrl ? (
+                  <img src={displayAvatarUrl} alt={t("auth.previewAlt")} className="h-full w-full object-cover" />
+                ) : (
+                  <div
+                    className="grid h-full w-full place-items-center text-slate-400"
+                    role="img"
+                    aria-label={t("menu.profileDefaultAvatarAria")}
+                  >
+                    <UserRound size={40} strokeWidth={1.5} aria-hidden />
+                  </div>
+                )}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <label htmlFor={photoInputId} className="sr-only">
+                  {t("accountModal.changePhoto")}
+                </label>
+                <input
+                  id={photoInputId}
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  disabled={saving || deleting}
+                  onChange={(e) => {
+                    setPhotoErr("");
+                    const f = e.target.files?.[0] || null;
+                    if (!f) {
+                      setPendingPhotoFile(null);
+                      return;
+                    }
+                    setAvatarCleared(false);
+                    setPendingPhotoFile(f);
+                  }}
+                  className="min-w-0 w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200 disabled:opacity-50"
+                />
+                {canRemovePhoto ? (
+                  <button
+                    type="button"
+                    disabled={saving || deleting}
+                    onClick={() => {
+                      setPendingPhotoFile(null);
+                      setAvatarCleared(true);
+                      if (photoInputRef.current) photoInputRef.current.value = "";
+                    }}
+                    className="self-start rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {t("accountModal.removePhoto")}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {photoErr ? <p className="mt-2 text-xs text-rose-600">{photoErr}</p> : null}
+          </div>
           <div className={MODAL_GRID_2}>
             <input
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
-              placeholder="Prenom"
+              placeholder={t("auth.firstName")}
               className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
             <input
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
-              placeholder="Nom"
+              placeholder={t("auth.lastName")}
               className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
             />
           </div>
@@ -4938,39 +5076,34 @@ function AccountModal({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Adresse mail"
+            placeholder={t("auth.email")}
             className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Nouveau mot de passe (optionnel)"
+            placeholder={t("accountModal.newPasswordOptional")}
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
           <button
-            onClick={() =>
-              onUpdateProfile({
-                first_name: String(firstName || "").trim(),
-                last_name: String(lastName || "").trim(),
-                email: String(email || "").trim(),
-                password: String(password || ""),
-              })
-            }
+            type="button"
+            onClick={handleSave}
             disabled={saving}
             className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
-            {saving ? "Enregistrement..." : "Enregistrer les informations"}
+            {saving ? t("accountModal.saving") : t("accountModal.saveProfile")}
           </button>
         </div>
         <button
+          type="button"
           onClick={onDeleteAccount}
           disabled={deleting}
           className="mt-5 w-full rounded-2xl px-4 py-3 text-sm text-white disabled:opacity-60"
           style={{ backgroundColor: "#e11d48" }}
         >
-          {deleting ? "Suppression..." : "Supprimer mon compte"}
+          {deleting ? t("accountModal.deleting") : t("accountModal.deleteAccount")}
         </button>
       </div>
     </div>
@@ -9174,7 +9307,6 @@ export default function App() {
     return monthCursorFromPlannerDate(readStoredPlannerDate() || getTodayStr());
   });
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
-  const [budgetUpcomingOpen, setBudgetUpcomingOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
 
   /** Ids d'activités insérées récemment — fusion avec loadActivities pour éviter l'écrasement par une lecture vide / en retard. */
@@ -9506,7 +9638,7 @@ export default function App() {
     }
   };
 
-  const updateMyAccount = async ({ first_name, last_name, email, password }) => {
+  const updateMyAccount = async ({ first_name, last_name, email, password, avatar_url: avatarUrlPatch }) => {
     const safeFirstName = String(first_name || "").trim();
     const safeLastName = String(last_name || "").trim();
     const safeEmail = String(email || "").trim();
@@ -9517,13 +9649,20 @@ export default function App() {
     }
     setSavingAccount(true);
     try {
+      const dataPayload = {
+        first_name: safeFirstName,
+        last_name: safeLastName,
+        full_name: `${safeFirstName} ${safeLastName}`.trim(),
+      };
+      if (avatarUrlPatch !== undefined) {
+        dataPayload.avatar_url = avatarUrlPatch;
+      } else {
+        const existingAvatar = String(session?.user?.user_metadata?.avatar_url || "").trim();
+        if (existingAvatar) dataPayload.avatar_url = existingAvatar;
+      }
       const payload = {
         email: safeEmail,
-        data: {
-          first_name: safeFirstName,
-          last_name: safeLastName,
-          full_name: `${safeFirstName} ${safeLastName}`.trim(),
-        },
+        data: dataPayload,
       };
       if (safePassword) payload.password = safePassword;
 
@@ -11019,30 +11158,13 @@ export default function App() {
                     </div>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
-                        <button
-                          type="button"
-                          onClick={() => setBudgetUpcomingOpen((v) => !v)}
-                          className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
-                        >
-                          <div>
-                            <h3 className="text-xs uppercase tracking-[0.3em] text-sky-700">{t("trips.badgeUpcoming")}</h3>
-                            <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-sky-800/55">
-                              {t("trips.upcomingSubtitle")}
-                            </p>
-                          </div>
-                          {budgetUpcomingOpen ? (
-                            <ChevronDown size={16} className="text-sky-700" />
-                          ) : (
-                            <ChevronRight size={16} className="text-sky-700" />
-                          )}
-                        </button>
-                        {budgetUpcomingOpen ? (
-                          <div className="grid gap-4">
-                            {sections.upcoming.length > 0
-                              ? sections.upcoming.map(renderBudgetTrip)
-                              : <p className="text-sm text-slate-500">{t("trips.noUpcomingList")}</p>}
-                          </div>
-                        ) : null}
+                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-sky-700">{t("trips.badgeUpcoming")}</h3>
+                        <p className="mb-3 text-[11px] text-sky-900/60">{t("trips.upcomingSubtitle")}</p>
+                        <div className="grid gap-4">
+                          {sections.upcoming.length > 0
+                            ? sections.upcoming.map(renderBudgetTrip)
+                            : <p className="text-sm text-slate-500">{t("trips.noUpcomingList")}</p>}
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-3">
