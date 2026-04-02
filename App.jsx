@@ -3809,7 +3809,7 @@ function AuthView() {
                   {t("auth.brand")}
                 </h1>
               </div>
-              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center px-1 sm:flex-none sm:justify-start">
+              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-7 sm:flex-none sm:justify-start sm:pt-0">
                 <p className="max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
                   {t("auth.landingTagline")}
                 </p>
