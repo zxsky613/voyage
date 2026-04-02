@@ -903,9 +903,8 @@ async function resolveValidatedDestination(raw, uiLanguage = "fr") {
 
 /** Fond écrans auth / chargement — aligné bleu-gris carte */
 const BG = "#eef3f8";
-/** Plage / mer (Unsplash — Sean Oulashin) : fond écran d’accueil connexion. */
-const AUTH_LANDING_BG =
-  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80";
+/** Fond écran d’accueil connexion (image locale, format portrait adapté mobile). */
+const AUTH_LANDING_BG = "/auth-landing-bg.png";
 
 function authHasInviteLink() {
   try {
