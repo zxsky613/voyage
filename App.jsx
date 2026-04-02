@@ -3814,7 +3814,7 @@ function AuthView() {
                 </p>
               </div>
             </div>
-            <div className="mx-auto mt-8 w-full max-w-sm shrink-0 space-y-3 sm:mt-10">
+            <div className="mx-auto mt-6 w-full max-w-[17rem] shrink-0 space-y-2 sm:mt-10 sm:max-w-sm sm:space-y-3">
               <button
                 type="button"
                 onClick={() => {
@@ -3822,7 +3822,7 @@ function AuthView() {
                   setMode("signin");
                   setMsg("");
                 }}
-                className="w-full rounded-full bg-white px-6 py-4 text-center text-base font-semibold text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99]"
+                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-semibold text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
               >
                 {t("auth.landingSignIn")}
               </button>
@@ -3833,13 +3833,13 @@ function AuthView() {
                   setMode("signup");
                   setMsg("");
                 }}
-                className={`w-full rounded-full px-6 py-4 text-center text-base font-semibold text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                className={`w-full rounded-full px-6 py-3 text-center text-base font-semibold text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 {t("auth.landingSignUp")}
               </button>
             </div>
-            <div className="mt-8 flex justify-center pb-2">
+            <div className="mt-6 flex justify-center pb-2 sm:mt-8">
               <LanguageFab placement="authFooter" />
             </div>
           </div>
