@@ -20,7 +20,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, "..", "public", "destinations");
 
-const UA = "TravelPlanner/1.0 (destination hero fetch; local dev; +https://github.com/)";
+const UA = "TriPlanner/1.0 (destination hero fetch; local dev; +https://github.com/)";
 
 /**
  * Chaque entrée : soit { file, commons }, soit { file, searchLabel, cityKey?, visualClass? }

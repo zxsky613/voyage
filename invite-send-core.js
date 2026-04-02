@@ -98,10 +98,26 @@ export async function sendTripInvitesWithResend(opts) {
 
     const resendData = await resendResp.json().catch(() => ({}));
     if (!resendResp.ok) {
+      const baseMsg = String(
+        resendData?.message || resendData?.error || resendData?.name || ""
+      ).trim();
+      const fallback = baseMsg || `Resend HTTP ${resendResp.status}`;
+      /** 403 : compte gratuit / domaine — souvent « only send to your own email » ou domaine non vérifié. */
+      if (resendResp.status === 403) {
+        const hintFr =
+          "Astuce : avec un compte de test, envoie d’abord une invitation vers la même adresse que ton compte Resend. Pour inviter n’importe quelle adresse, ajoute et vérifie un domaine sur resend.com puis définis RESEND_FROM sur Vercel.";
+        return {
+          ok: false,
+          status: 403,
+          error: baseMsg ? `${baseMsg} ${hintFr}` : hintFr,
+          details: resendData,
+          recipient,
+        };
+      }
       return {
         ok: false,
         status: resendResp.status,
-        error: String(resendData?.message || "Resend API error"),
+        error: fallback,
         details: resendData,
         recipient,
       };

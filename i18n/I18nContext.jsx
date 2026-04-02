@@ -37,7 +37,7 @@ function LocaleFlagImg({ flagCode, title }) {
       alt=""
       role="presentation"
       draggable={false}
-      className="box-border h-full w-full min-h-0 min-w-0 object-contain object-center p-[3px]"
+      className="box-border h-full w-full min-h-0 min-w-0 object-cover object-center"
       loading="lazy"
       decoding="async"
       title={title}

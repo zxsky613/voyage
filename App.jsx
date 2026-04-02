@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
   Calendar,
@@ -27,6 +28,7 @@ import {
   Wallet,
   Receipt,
   ArrowRight,
+  ArrowLeft,
   ThumbsUp,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
@@ -57,6 +59,7 @@ import {
   consumePendingOnboardingIntent,
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
+import { TripDateRangeField } from "./TripDateRangeField.jsx";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -147,6 +150,30 @@ function getInviteApiAbsoluteSameOriginUrl() {
   return `${window.location.origin.replace(/\/$/, "")}/api/send-invite`;
 }
 
+/** Ordre : d’abord l’API sur le même domaine que la page (évite VITE_INVITE_API_BASE_URL obsolète), puis l’URL configurée. */
+function buildInviteSendUrlList() {
+  const list = [];
+  const seen = new Set();
+  const add = (u) => {
+    const s = String(u || "").trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    list.push(s);
+  };
+  if (typeof window !== "undefined") {
+    add(getInviteApiAbsoluteSameOriginUrl());
+  }
+  const configured = getInviteApiUrl();
+  const absolute =
+    configured.startsWith("http")
+      ? configured
+      : typeof window !== "undefined"
+        ? new URL(configured, window.location.origin).href
+        : configured;
+  add(absolute);
+  return list;
+}
+
 /** Affiché à la place de toute erreur technique (ex. « Failed to fetch »). */
 const NOTICE_INVITE_EMAIL_FAILED =
   "Invitations enregistrées. L'envoi automatique des e-mails n'a pas abouti — utilise « Partager » ou réessaie plus tard.";
@@ -180,27 +207,20 @@ async function postTripInvitesToApi({ to, tripTitle, startYmd, endYmd, fixedUrl,
   const pt = String(programmeText || "").trim();
   if (pt) payload.programme_text = pt;
 
-  const primary = getInviteApiUrl();
-  const urlsToTry = [primary];
-  if (typeof window !== "undefined" && primary.startsWith("http")) {
-    try {
-      if (new URL(primary).origin !== window.location.origin) {
-        const fb = getInviteApiAbsoluteSameOriginUrl();
-        if (fb && !urlsToTry.includes(fb)) urlsToTry.push(fb);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  const urlsToTry = buildInviteSendUrlList();
 
   let inviteResp = null;
-  for (const url of urlsToTry) {
+  for (let i = 0; i < urlsToTry.length; i += 1) {
+    const url = urlsToTry[i];
     try {
-      inviteResp = await fetch(url, {
+      const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const canRetry404 = r.status === 404 && i < urlsToTry.length - 1;
+      if (canRetry404) continue;
+      inviteResp = r;
       break;
     } catch {
       inviteResp = null;
@@ -213,7 +233,8 @@ async function postTripInvitesToApi({ to, tripTitle, startYmd, endYmd, fixedUrl,
 
   const inviteData = await inviteResp.json().catch(() => ({}));
   if (inviteResp.status === 404 || !inviteResp.ok) {
-    return { ok: false, error: NOTICE_INVITE_EMAIL_FAILED };
+    const apiMsg = String(inviteData?.error || "").trim();
+    return { ok: false, error: apiMsg || NOTICE_INVITE_EMAIL_FAILED };
   }
   return { ok: true, sent: emails.length };
 }
@@ -882,6 +903,18 @@ async function resolveValidatedDestination(raw, uiLanguage = "fr") {
 
 /** Fond écrans auth / chargement — aligné bleu-gris carte */
 const BG = "#eef3f8";
+/** Plage / mer (Unsplash — Sean Oulashin) : fond écran d’accueil connexion. */
+const AUTH_LANDING_BG =
+  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80";
+
+function authHasInviteLink() {
+  try {
+    const p = new URLSearchParams(window.location.search || "");
+    return p.get("invite") === "1" && !!String(p.get("email") || "").trim();
+  } catch (_e) {
+    return false;
+  }
+}
 const TEXT = "#0B1220";
 const ACCENT = "#0F172A";
 const slots = ["09:30", "14:00", "18:30", "21:00"];
@@ -3477,6 +3510,74 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
 }
 
 /** Erreur GoTrue / Supabase : inscription avec un e-mail déjà enregistré. */
+/**
+ * Retire le fond blanc du PNG logo sur l’écran d’accueil auth (canvas, même origine).
+ * Seuil souple pour l’anti-crénelage ; l’oiseau bleu foncé reste opaque.
+ */
+function AuthLandingLogoImg({ src, alt, className }) {
+  const [dataUrl, setDataUrl] = useState(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      try {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (!w || !h) return;
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        const minBright = 242;
+        const maxChroma = 14;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i];
+          const g = d[i + 1];
+          const b = d[i + 2];
+          const mx = Math.max(r, g, b);
+          const mn = Math.min(r, g, b);
+          if (mx >= minBright && mx - mn <= maxChroma) {
+            d[i + 3] = 0;
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const out = c.toDataURL("image/png");
+        if (!cancelled) {
+          setDataUrl(out);
+          setReady(true);
+        }
+      } catch (_e) {
+        if (!cancelled) setReady(true);
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) setReady(true);
+    };
+    img.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  return (
+    <img
+      src={dataUrl || src}
+      alt={alt}
+      className={`${className} transition-opacity duration-300 ${ready ? "opacity-100" : "opacity-0"}`.trim()}
+      width={280}
+      height={280}
+      decoding="async"
+    />
+  );
+}
+
 function isAuthSignupDuplicateEmailError(err) {
   const m = String(err?.message || "").toLowerCase();
   const code = String(err?.code || "").toLowerCase().replace(/_/g, "");
@@ -3495,6 +3596,7 @@ function isAuthSignupDuplicateEmailError(err) {
 
 function AuthView() {
   const { t } = useI18n();
+  const [showAuthLanding, setShowAuthLanding] = useState(() => !authHasInviteLink());
   const [mode, setMode] = useState("signin");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -3683,8 +3785,80 @@ function AuthView() {
   };
 
   return (
+    <>
+      {showAuthLanding ? (
+        <div className="relative min-h-[100dvh] overflow-x-hidden" style={{ color: TEXT }}>
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: `url(${AUTH_LANDING_BG})` }}
+            role="presentation"
+            aria-hidden
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-900/45 to-slate-950/88" aria-hidden />
+          <div
+            className="relative z-10 flex min-h-[100dvh] flex-col px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))]"
+          >
+            <div className="flex flex-1 flex-col items-center pt-6 sm:pt-10">
+              <div className="flex flex-col items-center gap-0 leading-none">
+                <AuthLandingLogoImg
+                  src="/LogoTriPlanner.png"
+                  alt={t("auth.logoAlt")}
+                  className="block h-[13.5rem] w-[13.5rem] max-w-[min(96vw,14rem)] object-contain object-top align-top drop-shadow-[0_6px_28px_rgba(0,0,0,0.45)] sm:h-[17.5rem] sm:w-[17.5rem] sm:max-w-[18rem] -mb-[5.25rem] sm:-mb-[6.5rem]"
+                />
+                <h1 className="relative z-[1] text-center text-[1.75rem] font-bold leading-none tracking-tight text-white sm:text-4xl">
+                  {t("auth.brand")}
+                </h1>
+              </div>
+              <p className="mt-8 max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
+                {t("auth.landingTagline")}
+              </p>
+            </div>
+            <div className="mx-auto mt-8 w-full max-w-sm shrink-0 space-y-3 sm:mt-10">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAuthLanding(false);
+                  setMode("signin");
+                  setMsg("");
+                }}
+                className="w-full rounded-full bg-white px-6 py-4 text-center text-base font-semibold text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99]"
+              >
+                {t("auth.landingSignIn")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAuthLanding(false);
+                  setMode("signup");
+                  setMsg("");
+                }}
+                className={`w-full rounded-full px-6 py-4 text-center text-base font-semibold text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                {t("auth.landingSignUp")}
+              </button>
+            </div>
+            <div className="mt-8 flex justify-center pb-2">
+              <LanguageFab placement="authFooter" />
+            </div>
+          </div>
+        </div>
+      ) : (
     <div className="min-h-screen overflow-x-hidden px-4 py-8 sm:px-5" style={{ background: BG, color: TEXT }}>
       <div className="relative mx-auto mt-10 min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2.5rem] bg-white/80 p-4 pb-6 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:rounded-[4.5rem] sm:p-8 sm:pb-8">
+        {!invitePromptOpen ? (
+          <button
+            type="button"
+            onClick={() => {
+              setShowAuthLanding(true);
+              setMsg("");
+            }}
+            className="mb-3 flex items-center gap-1.5 rounded-full px-2 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100/80 hover:text-slate-900"
+          >
+            <ArrowLeft size={18} className="shrink-0" aria-hidden />
+            {t("auth.backToWelcome")}
+          </button>
+        ) : null}
         <h1 className="mb-2 text-center text-xs uppercase tracking-[0.4em] text-slate-500">{t("auth.brand")}</h1>
         <p className="mb-6 text-center text-lg font-semibold">
           {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
@@ -4003,6 +4177,8 @@ function AuthView() {
         </div>
       ) : null}
     </div>
+      )}
+    </>
   );
 }
 
@@ -4045,41 +4221,22 @@ function TripFormModal({ open, onClose, onCreate }) {
           </button>
         </div>
         <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
-          <input
+          <CitySearchBox
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={setTitle}
+            onPick={(city) => setTitle(String(city || ""))}
             placeholder={t("tripForm.destination")}
-            className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            showSuggestions
+            suggestPortal
           />
-          {/*
-            Mobile : colonne (Safari iOS déborde si 2 date + icône en ligne).
-            sm+ : grille 3 colonnes comme avant.
-          */}
-          <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
-            <ModalDateField
-              value={startDate}
-              max={endDate}
-              onChange={(e) => {
-                const d = e.target.value;
-                setStartDate(d);
-                if (d && endDate && d > endDate) setEndDate(d);
-              }}
-            />
-            <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
-              <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
-                <Plane size={14} className="animate-bounce" />
-              </div>
-            </div>
-            <ModalDateField
-              value={endDate}
-              min={startDate}
-              onChange={(e) => {
-                const d = e.target.value;
-                setEndDate(d);
-                if (d && startDate && d < startDate) setStartDate(d);
-              }}
-            />
-          </div>
+          <TripDateRangeField
+            startDate={startDate}
+            endDate={endDate}
+            onRangeChange={(s, e) => {
+              setStartDate(s);
+              setEndDate(e);
+            }}
+          />
           <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_2.75rem] items-stretch gap-2">
             <input
               value={inviteInput}
@@ -4264,32 +4421,22 @@ function EditTripModal({ open, onClose, trip, onSave }) {
           </button>
         </div>
         <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
-          <input
+          <CitySearchBox
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={setTitle}
+            onPick={(city) => setTitle(String(city || ""))}
             placeholder={t("tripForm.destination")}
-            className="w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            showSuggestions
+            suggestPortal
           />
-          <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-            <ModalDateField
-              value={startDate}
-              max={endDate}
-              onChange={(e) => {
-                const d = e.target.value;
-                setStartDate(d);
-                if (d && endDate && d > endDate) setEndDate(d);
-              }}
-            />
-            <ModalDateField
-              value={endDate}
-              min={startDate}
-              onChange={(e) => {
-                const d = e.target.value;
-                setEndDate(d);
-                if (d && startDate && d < startDate) setStartDate(d);
-              }}
-            />
-          </div>
+          <TripDateRangeField
+            startDate={startDate}
+            endDate={endDate}
+            onRangeChange={(s, e) => {
+              setStartDate(s);
+              setEndDate(e);
+            }}
+          />
           <input
             value={fixedUrl}
             onChange={(e) => setFixedUrl(e.target.value)}
@@ -4918,13 +5065,17 @@ function CitySearchBox({
   onConfirm,
   placeholder,
   showSuggestions = true,
+  suggestPortal = false,
+  className = "",
 }) {
   const { language: uiLanguage } = useI18n();
+  const wrapRef = useRef(null);
   const [focused, setFocused] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   /** `key` = requête normalisée à laquelle `list` correspond (ignore si différent du champ → liste locale seule, immédiat). */
   const [remotePack, setRemotePack] = useState(() => ({ key: "", list: [] }));
   const [suggestLoading, setSuggestLoading] = useState(false);
+  const [portalPos, setPortalPos] = useState(null);
   const fallbackSuggestions = useMemo(() => getCitySuggestions(value), [value]);
   const remoteSuggestions = useMemo(() => {
     const qk = normalizeTextForSearch(normalizeCityInput(value));
@@ -4936,7 +5087,29 @@ function CitySearchBox({
     [fallbackSuggestions, remoteSuggestions]
   );
   const show = showSuggestions && focused && suggestions.length > 0;
-  const dropdownReserve = show ? Math.min(suggestions.length, 6) * 42 + 16 : 0;
+  const dropdownReserve = !suggestPortal && show ? Math.min(suggestions.length, 6) * 42 + 16 : 0;
+
+  const updatePortalPos = useCallback(() => {
+    if (!suggestPortal || !wrapRef.current) return;
+    const r = wrapRef.current.getBoundingClientRect();
+    const gap = 8;
+    const maxH = Math.min(256, Math.max(120, window.innerHeight - r.bottom - gap - 16));
+    setPortalPos({ top: r.bottom + gap, left: r.left, width: r.width, maxHeight: maxH });
+  }, [suggestPortal]);
+
+  useLayoutEffect(() => {
+    if (!show || !suggestPortal) {
+      setPortalPos(null);
+      return;
+    }
+    updatePortalPos();
+    window.addEventListener("resize", updatePortalPos);
+    window.addEventListener("scroll", updatePortalPos, true);
+    return () => {
+      window.removeEventListener("resize", updatePortalPos);
+      window.removeEventListener("scroll", updatePortalPos, true);
+    };
+  }, [show, suggestPortal, updatePortalPos, suggestions.length, value]);
 
   useEffect(() => {
     const q = normalizeCityInput(value);
@@ -4964,10 +5137,52 @@ function CitySearchBox({
     };
   }, [value, showSuggestions, uiLanguage]);
 
+  const dropdownClass =
+    "max-h-64 overflow-auto rounded-2xl bg-white/95 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.14)] backdrop-blur-xl ring-1 ring-slate-200/80";
+
+  const suggestionButtons = suggestions.map((city) => (
+    <button
+      key={city}
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        if (onPick) onPick(city);
+        else onChange(city);
+        setFocused(false);
+      }}
+      className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
+    >
+      {formatCitySuggestionDisplay(city, uiLanguage)}
+    </button>
+  ));
+
+  const portalDropdown =
+    show && suggestPortal && portalPos && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className={`z-[70] ${dropdownClass}`}
+            style={{
+              position: "fixed",
+              top: portalPos.top,
+              left: portalPos.left,
+              width: portalPos.width,
+              maxHeight: portalPos.maxHeight,
+            }}
+          >
+            {suggestionButtons}
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
-    <div className="relative" style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}>
-      <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 ring-1 ring-sky-100/70 shadow-[0_2px_12px_rgba(30,58,95,0.04)]">
-        <Search size={16} className="text-sky-400/80" />
+    <div
+      ref={wrapRef}
+      className={`relative min-w-0 w-full ${className}`.trim()}
+      style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}
+    >
+      <div className="flex min-w-0 items-center gap-2 rounded-2xl bg-white px-4 py-3 ring-1 ring-sky-100/70 shadow-[0_2px_12px_rgba(30,58,95,0.04)]">
+        <Search size={16} className="shrink-0 text-sky-400/80" />
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -4988,25 +5203,12 @@ function CitySearchBox({
           onBlur={() => setTimeout(() => setFocused(false), 120)}
           placeholder={placeholder}
           disabled={confirmBusy}
-          className="w-full bg-transparent text-sm outline-none disabled:opacity-60"
+          className="min-w-0 w-full bg-transparent text-base outline-none disabled:opacity-60 sm:text-sm"
         />
       </div>
-      {show ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 overflow-auto rounded-2xl bg-white/95 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.14)] backdrop-blur-xl ring-1 ring-slate-200/80">
-          {suggestions.map((city) => (
-            <button
-              key={city}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onPick(city);
-                setFocused(false);
-              }}
-              className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
-            >
-              {formatCitySuggestionDisplay(city, uiLanguage)}
-            </button>
-          ))}
-        </div>
+      {portalDropdown}
+      {show && !suggestPortal ? (
+        <div className={`absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 ${dropdownClass}`}>{suggestionButtons}</div>
       ) : null}
     </div>
   );
@@ -9883,7 +10085,7 @@ export default function App() {
             });
             if (!inv.skipped) {
               inviteNotice = !inv.ok
-                ? NOTICE_INVITE_EMAIL_FAILED
+                ? inv.error || NOTICE_INVITE_EMAIL_FAILED
                 : `${inviteList.length} invitation(s) envoyée(s).`;
             }
           }
@@ -10371,7 +10573,7 @@ export default function App() {
         if (inv.ok && !inv.skipped) {
           setNotice(`${newlyAddedInviteEmails.length} participant(s) invité(s) par e-mail.`);
         } else if (!inv.skipped) {
-          setNotice(`Participants enregistrés. ${NOTICE_INVITE_EMAIL_FAILED}`);
+          setNotice(`Participants enregistrés. ${inv.error || NOTICE_INVITE_EMAIL_FAILED}`);
         } else {
           setNotice("");
         }
@@ -10503,7 +10705,7 @@ export default function App() {
             if (inv.ok && !inv.skipped) {
               setNotice(`Voyage modifié. ${newlyAddedInvites.length} invitation(s) envoyée(s).`);
             } else if (!inv.skipped) {
-              setNotice(`Voyage modifié. ${NOTICE_INVITE_EMAIL_FAILED}`);
+              setNotice(`Voyage modifié. ${inv.error || NOTICE_INVITE_EMAIL_FAILED}`);
             } else {
               setNotice("");
             }
