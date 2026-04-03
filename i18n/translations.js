@@ -203,6 +203,12 @@ export const translations = {
       itineraryGenerateShort: "Générer",
       itineraryGenerateError:
         "Impossible de générer le programme pour le moment. Vérifie ta connexion ou réessaie plus tard.",
+      itineraryNetworkError:
+        "Le téléphone n’arrive pas à joindre le serveur de génération. Avec npm run dev sur ton PC : lance « npm run dev -- --host », puis sur le mobile ouvre http://IP_DE_TON_PC:5173 (pas « localhost »). Vérifie le Wi‑Fi et réessaie.",
+      itineraryApiMissingError:
+        "L’API de programme n’existe pas sur cette adresse (souvent un site hébergé en fichiers statiques). Pour générer un programme, lance l’app en local sur ton ordinateur avec npm run dev, ou déploie un backend avec les routes /api.",
+      itineraryTimeoutError:
+        "La génération a pris trop de temps. Réessaie avec moins de jours ou une connexion plus stable.",
       itineraryFormatError:
         "La réponse était incomplète. Réessaie ou raccourcis la période (moins de jours).",
       itineraryEmptyResult: "Le programme renvoyé est vide. Réessaie ou change de dates.",
@@ -658,6 +664,12 @@ export const translations = {
       itineraryGenerateShort: "Generate",
       itineraryGenerateError:
         "We couldn’t generate your itinerary. Check your connection and try again.",
+      itineraryNetworkError:
+        "Your phone can’t reach the generation server. With npm run dev on your PC, run « npm run dev -- --host », then on your phone open http://YOUR_PC_IP:5173 (not localhost). Check Wi‑Fi and try again.",
+      itineraryApiMissingError:
+        "The itinerary API isn’t available at this URL (common on static hosting). Run the app locally with npm run dev on your computer, or deploy a backend that serves /api routes.",
+      itineraryTimeoutError:
+        "Generation took too long. Try fewer days or a more stable connection.",
       itineraryFormatError:
         "The response was incomplete. Try again or shorten the trip length.",
       itineraryEmptyResult: "The itinerary came back empty. Try again or pick different dates.",
@@ -1119,6 +1131,12 @@ export const translations = {
       itineraryGenerateShort: "Generieren",
       itineraryGenerateError:
         "Der Reiseplan konnte nicht erstellt werden. Prüfe deine Verbindung oder versuche es später erneut.",
+      itineraryNetworkError:
+        "Dein Telefon erreicht den Generierungs-Server nicht. Mit npm run dev auf dem PC: « npm run dev -- --host » starten, dann im Telefon http://PC-IP:5173 öffnen (nicht localhost). WLAN prüfen und erneut versuchen.",
+      itineraryApiMissingError:
+        "Die Programm-API ist unter dieser Adresse nicht verfügbar (häufig bei statischem Hosting). Für die Generierung die App lokal mit npm run dev starten oder ein Backend mit /api-Routen bereitstellen.",
+      itineraryTimeoutError:
+        "Die Generierung hat zu lange gedauert. Weniger Tage wählen oder eine stabilere Verbindung nutzen.",
       itineraryFormatError:
         "Die Antwort war unvollständig. Erneut versuchen oder die Reisedauer kürzen.",
       itineraryEmptyResult: "Der Reiseplan war leer. Bitte erneut versuchen oder andere Daten wählen.",
@@ -1581,6 +1599,12 @@ export const translations = {
       itineraryGenerateShort: "Generar",
       itineraryGenerateError:
         "No se ha podido generar el programa. Comprueba la conexión o inténtalo más tarde.",
+      itineraryNetworkError:
+        "El móvil no puede contactar con el servidor de generación. Con npm run dev en tu PC, ejecuta « npm run dev -- --host » y en el teléfono abre http://IP_DE_TU_PC:5173 (no localhost). Revisa el Wi‑Fi e inténtalo de nuevo.",
+      itineraryApiMissingError:
+        "La API del programa no está disponible en esta URL (frecuente en sitios estáticos). Para generar, ejecuta la app en local con npm run dev o despliega un backend con rutas /api.",
+      itineraryTimeoutError:
+        "La generación tardó demasiado. Prueba con menos días o una conexión más estable.",
       itineraryFormatError:
         "La respuesta estaba incompleta. Vuelve a intentarlo o acorta la duración del viaje.",
       itineraryEmptyResult: "El programa llegó vacío. Inténtalo de nuevo u otras fechas.",
@@ -2043,6 +2067,12 @@ export const translations = {
       itineraryGenerateShort: "Genera",
       itineraryGenerateError:
         "Impossibile generare il programma. Controlla la connessione o riprova più tardi.",
+      itineraryNetworkError:
+        "Il telefono non raggiunge il server di generazione. Con npm run dev sul PC, avvia « npm run dev -- --host » e sul telefono apri http://IP_DEL_PC:5173 (non localhost). Controlla il Wi‑Fi e riprova.",
+      itineraryApiMissingError:
+        "L’API del programma non è disponibile su questo URL (tipico degli hosting statici). Per generare, avvia l’app in locale con npm run dev o distribuisci un backend con route /api.",
+      itineraryTimeoutError:
+        "La generazione ha richiesto troppo tempo. Prova con meno giorni o una connessione più stabile.",
       itineraryFormatError:
         "La risposta era incompleta. Riprova o accorcia la durata del soggiorno.",
       itineraryEmptyResult: "Il programma restituito è vuoto. Riprova o cambia le date.",
@@ -2501,6 +2531,11 @@ export const translations = {
       itineraryGenerate: "生成行程",
       itineraryGenerateShort: "生成",
       itineraryGenerateError: "暂时无法生成行程。请检查网络连接或稍后再试。",
+      itineraryNetworkError:
+        "手机无法连接生成服务。若在电脑上使用 npm run dev，请运行「npm run dev -- --host」，然后在手机上用 http://电脑的局域网IP:5173 打开（不要用 localhost）。请确认同一 Wi‑Fi 后重试。",
+      itineraryApiMissingError:
+        "当前网址没有行程生成接口（常见于纯静态托管）。请在电脑上本地运行 npm run dev 生成行程，或部署提供 /api 的后端。",
+      itineraryTimeoutError: "生成超时。请减少天数或换更稳定的网络后重试。",
       itineraryFormatError: "返回内容不完整。请重试或缩短行程天数。",
       itineraryEmptyResult: "返回的行程为空。请重试或更换日期。",
       itineraryHint: "点击「生成行程」，选择日期后确认。",

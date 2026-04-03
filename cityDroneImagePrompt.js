@@ -382,6 +382,121 @@ function kindForCity(raw) {
   return "urban";
 }
 
+/** Types pour `buildAestheticCityUnsplashQuery` — skyline vs patrimoine vs littoral. */
+export const AESTHETIC_CITY_QUERY_TYPE = {
+  MONUMENT: "monument",
+  COASTAL: "coastal",
+  METROPOLIS: "metropolis",
+};
+
+/** Mots-clés systématiques (filtrer le bruit amateur, pousser le rendu « travel editorial »). */
+const AESTHETIC_UNSPLASH_BOOSTERS = [
+  "landscape",
+  "cinematic",
+  "travel",
+  "tourism",
+  "high-quality",
+  "professional photography",
+];
+
+const AESTHETIC_TYPE_KEYWORDS = {
+  monument: ["landmark", "architecture", "iconic monument"],
+  coastal: ["beach", "ocean", "coastline", "sea"],
+  metropolis: ["skyline", "cityscape", "city lights", "modern architecture"],
+};
+
+/**
+ * Métropoles où la skyline / néons / towers priment sur « monument unique » pour la recherche stock.
+ * (Les villes balnéaires du set côtier passent déjà en `coastal` via `kindForCity`.)
+ */
+const METROPOLIS_KEYS = new Set(
+  [
+    "tokyo",
+    "osaka",
+    "seoul",
+    "singapore",
+    "dubai",
+    "abu dhabi",
+    "abou dhabi",
+    "new york",
+    "chicago",
+    "los angeles",
+    "san francisco",
+    "toronto",
+    "shanghai",
+    "beijing",
+    "shenzhen",
+    "guangzhou",
+    "hong kong",
+    "taipei",
+    "mumbai",
+    "delhi",
+    "kuala lumpur",
+    "frankfurt",
+    "atlanta",
+    "houston",
+    "dallas",
+    "philadelphia",
+    "las vegas",
+    "denver",
+    "seattle",
+    "melbourne",
+    "johannesburg",
+    "sao paulo",
+    "mexico city",
+    "moscow",
+    "tel aviv",
+    "doha",
+  ].map((x) => normalizeKey(x))
+);
+
+/**
+ * Texte de requête Unsplash : [ville] + boosters + lot sémantique selon le type.
+ * @param {string} cityName — nom affiché ou extrait (seule la partie avant la première virgule est utilisée).
+ * @param {string} cityType — `monument` | `coastal` | `metropolis` (voir `AESTHETIC_CITY_QUERY_TYPE`).
+ */
+export function buildAestheticCityUnsplashQuery(cityName, cityType) {
+  const city = String(cityName || "")
+    .split(",")[0]
+    .trim();
+  if (!city) return "";
+  const t = String(cityType || "")
+    .toLowerCase()
+    .trim();
+  const extras = AESTHETIC_TYPE_KEYWORDS[t] || AESTHETIC_TYPE_KEYWORDS.monument;
+  return [city, ...AESTHETIC_UNSPLASH_BOOSTERS, ...extras].join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Déduit le type esthétique à partir d’une entrée utilisateur (ville, « Ville, Pays », etc.).
+ */
+export function inferAestheticCityQueryType(cityInput) {
+  const raw = String(cityInput || "").trim();
+  if (!raw) return AESTHETIC_CITY_QUERY_TYPE.MONUMENT;
+  if (kindForCity(raw) === "coastal") return AESTHETIC_CITY_QUERY_TYPE.COASTAL;
+  const { k, first } = resolveEntryKeys(raw);
+  if (METROPOLIS_KEYS.has(k) || METROPOLIS_KEYS.has(first)) {
+    return AESTHETIC_CITY_QUERY_TYPE.METROPOLIS;
+  }
+  return AESTHETIC_CITY_QUERY_TYPE.MONUMENT;
+}
+
+/**
+ * Chaîne query-string pour `GET /search/photos` (sans auth — le Client-ID reste en header).
+ * @param {{ perPage?: number }} options — défaut 3 ; plafonné à 30 côté appelant si besoin.
+ */
+export function buildAestheticCityUnsplashApiQueryString(cityName, cityType, options = {}) {
+  const query = buildAestheticCityUnsplashQuery(cityName, cityType);
+  if (!query) return "";
+  const perPage = Math.min(30, Math.max(1, Number(options.perPage) || 3));
+  const params = new URLSearchParams();
+  params.set("query", query);
+  params.set("orientation", "landscape");
+  params.set("content_filter", "high");
+  params.set("per_page", String(perPage));
+  return params.toString();
+}
+
 /**
  * Prompt FR complet (scène + style technique) — brief pour IA image ou documentation.
  */
@@ -432,14 +547,18 @@ export function getCityDroneImagePackage(cityInput) {
   const { k, first } = resolveEntryKeys(raw);
   const kind = kindForCity(raw);
   const sceneFr = sceneFrForCity(raw);
+  const displayName = raw.split(",")[0].trim() || raw;
+  const aestheticType = inferAestheticCityQueryType(raw);
   return {
     key: k || first,
-    displayName: raw.split(",")[0].trim() || raw,
+    displayName,
     classification: kind,
     sceneFr,
     promptFr: `${sceneFr} ${STYLE_TECHNIQUE_FR}`.replace(/\s+/g, " ").trim(),
     unsplashQuery: buildCityDroneUnsplashQuery(raw),
     unsplashStockQuery: buildCityUnsplashStockQuery(raw),
+    aestheticUnsplashType: aestheticType,
+    aestheticUnsplashQuery: buildAestheticCityUnsplashQuery(displayName, aestheticType),
   };
 }
 

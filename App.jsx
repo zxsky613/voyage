@@ -43,8 +43,9 @@ import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 import {
+  buildAestheticCityUnsplashQuery,
   buildCityDronePromptFR,
-  buildCityUnsplashStockQuery,
+  inferAestheticCityQueryType,
   normalizeCityDroneKey,
 } from "./cityDroneImagePrompt.js";
 import { WIKIMEDIA_CURATED_CITY_HEROES } from "./cityWikimediaHeroes.js";
@@ -1379,7 +1380,7 @@ function buildCityImageUrl(prompt) {
 }
 
 function getCityImageCacheKey(cityInput) {
-  return `v32:${String(extractCityPrompt(cityInput) || cityInput || "")
+  return `v38:${String(extractCityPrompt(cityInput) || cityInput || "")
     .trim()
     .toLowerCase()}`;
 }
@@ -2769,6 +2770,7 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
   const q = String(queryInput || "").trim();
   if (!q || !UNSPLASH_ACCESS_KEY) return "";
   const pickFirst = !!options.pickFirst;
+  const perPage = Math.min(30, Math.max(1, Number(options.perPage) || 30));
   const preferredKeywords = Array.isArray(options.preferredKeywords)
     ? options.preferredKeywords.map((k) => normalizeTextForSearch(k))
     : [];
@@ -2779,9 +2781,14 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
     ? options.cityBoostTokens.map((t) => normalizeTextForSearch(t)).filter(Boolean)
     : [];
   try {
-    const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(
-      q
-    )}&orientation=landscape&per_page=30`;
+    const params = new URLSearchParams();
+    params.set("query", q);
+    params.set("orientation", "landscape");
+    params.set("per_page", String(perPage));
+    if (options.contentFilter === "high" || options.contentFilter === "low") {
+      params.set("content_filter", options.contentFilter);
+    }
+    const url = `https://api.unsplash.com/search/photos?${params.toString()}`;
     const response = await fetch(url, {
       headers: {
         Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}`,
@@ -2828,6 +2835,42 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
   } catch (_e) {
     return "";
   }
+}
+
+/**
+ * Image Unsplash « aesthetic / wanderlust / représentative » pour une ville.
+ * @param {string} cityName — nom ou extrait principal (ex. « Paris » ou « Phuket, Thaïlande »).
+ * @param {string} [cityType] — `monument` | `coastal` | `metropolis` ; si omis, inféré via `inferAestheticCityQueryType`.
+ */
+async function getAestheticCityImage(cityName, cityType) {
+  const raw = String(cityName || "").trim();
+  if (!raw || !UNSPLASH_ACCESS_KEY) return "";
+  const display = raw.split(",")[0].trim() || raw;
+  const type = cityType != null && String(cityType).trim()
+    ? String(cityType).trim().toLowerCase()
+    : inferAestheticCityQueryType(raw);
+  const q = buildAestheticCityUnsplashQuery(display, type);
+  if (!q) return "";
+  const cityTok = normalizeCityDroneKey(display).split(/\s+/).filter((t) => t.length > 2);
+  return fetchUnsplashImageByQuery(q, {
+    pickFirst: true,
+    perPage: 3,
+    contentFilter: "high",
+    preferredKeywords: [
+      "landscape",
+      "cinematic",
+      "travel",
+      "landmark",
+      "architecture",
+      "skyline",
+      "cityscape",
+      "ocean",
+      "beach",
+      "coast",
+    ],
+    avoidKeywords: ["logo", "icon", "drawing", "illustration", "map", "diagram"],
+    cityBoostTokens: cityTok,
+  });
 }
 
 async function fetchActivityImageFromUnsplash(activityLike) {
@@ -3173,10 +3216,14 @@ async function resolveStableCityImageForCard(canonicalCity) {
   const thumb = await fetchFrenchWikiSummaryThumb(c);
   if (thumb && !isLikelyWikiFlagOrSealThumb(thumb)) return upgradeLandscapeImageUrl(thumb);
   if (UNSPLASH_ACCESS_KEY) {
-    const stockQ = buildCityUnsplashStockQuery(c);
+    const display = String(c || "").split(",")[0].trim() || c;
+    const aestheticType = inferAestheticCityQueryType(c);
+    const stockQ = buildAestheticCityUnsplashQuery(display, aestheticType);
     const cityTok = normalizeCityDroneKey(c).split(/\s+/).filter((t) => t.length > 2);
     const u = await fetchUnsplashImageByQuery(stockQ, {
       pickFirst: false,
+      perPage: 3,
+      contentFilter: "high",
       preferredKeywords: [
         "aerial",
         "drone",
@@ -3190,6 +3237,8 @@ async function resolveStableCityImageForCard(canonicalCity) {
         "beach",
         "harbor",
         "harbour",
+        "cinematic",
+        "travel",
       ],
       avoidKeywords: [
         "logo",
@@ -5629,7 +5678,29 @@ function userFacingItineraryErrorMessage(raw, tFn) {
   if (isGeminiQuotaError(s)) {
     return fb("destination.quotaRetryLater", "Veuillez réessayer plus tard.");
   }
-  if (/503|502|GEMINI_API_KEY|fetch/i.test(s)) {
+  if (/404|not found|cannot get|cannot post/i.test(s)) {
+    return fb(
+      "destination.itineraryApiMissingError",
+      "Itinerary API is not available on this host (common on static hosting). Run the app locally with npm run dev, or deploy a backend with /api routes."
+    );
+  }
+  if (
+    /failed to fetch|load failed|networkerror|network request failed|econnrefused|err_connection|internet connection|offline|unreachable host/i.test(
+      s
+    )
+  ) {
+    return fb(
+      "destination.itineraryNetworkError",
+      "Cannot reach the generation server. On your phone with npm run dev, use npm run dev -- --host on your PC and open http://YOUR_PC_IP:5173 (not localhost from the phone). Check Wi‑Fi and try again."
+    );
+  }
+  if (/TIMEOUT_ITINERARY|aborterror|the operation was aborted|dépasse le délai|timeout/i.test(s)) {
+    return fb(
+      "destination.itineraryTimeoutError",
+      "Generation took too long. Try fewer days or a more stable connection."
+    );
+  }
+  if (/503|502|GEMINI_API_KEY|Groq erreur 50[23]|\bErreur\s+50[23]\b/i.test(s)) {
     return fb("destination.itineraryGenerateError", "Service unavailable, please try again later.");
   }
   if (/JSON|invalide|guillemet|array element/i.test(s)) {
@@ -6034,7 +6105,7 @@ const TRIP_SCHEDULE_TIME_OPTIONS = [
 
 /** Repli si l’image ne charge pas : uniquement URLs des 3 couches (pas de photo « générique »). */
 function pickNextDestinationGuideImgSrc(el, guide) {
-  const city = String(guide?.city || "").trim();
+  const city = String(extractCityPrompt(guide?.city) || guide?.city || "").trim();
   const tried = new Set(String(el.getAttribute("data-img-tried") || "").split("\x1e").filter(Boolean));
   const cur = String(el.src || "").trim();
   if (cur) tried.add(cur);
@@ -6057,7 +6128,7 @@ function pickNextDestinationGuideImgSrc(el, guide) {
 }
 
 /* ─── Cache localStorage pour DestinationGuideView ───────────────────────── */
-const _GUIDE_LS_KEY = "tp_guide_cache_v2";
+const _GUIDE_LS_KEY = "tp_guide_cache_v5";
 const _GUIDE_LS_TTL = 2 * 60 * 60 * 1000; // 2h
 
 function _readGuideCache(city, lang) {
@@ -6157,13 +6228,8 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
         if (cancelled) return;
         let img = String(meta || early || data?.thumb || "").trim();
         if (!img && UNSPLASH_ACCESS_KEY) {
-          const c = String(city || "").trim();
-          const q = c ? `${rawName} ${c} landmark travel` : `${rawName} landmark travel`;
-          const u = await fetchUnsplashImageByQuery(q, {
-            pickFirst: true,
-            preferredKeywords: ["landmark", "travel", "architecture"],
-            avoidKeywords: ["logo", "icon", "map", "diagram"],
-          });
+          const hint = [rawName, city].filter(Boolean).join(", ");
+          const u = await getAestheticCityImage(hint || rawName, null);
           img = String(u || "").trim();
         }
         if (!cancelled) {
@@ -6180,6 +6246,31 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
     };
   }, [open, rawName, city, language]);
 
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyPosition = body.style.position;
+    const prevBodyTop = body.style.top;
+    const prevBodyWidth = body.style.width;
+    const scrollY = window.scrollY;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.position = prevBodyPosition;
+      body.style.top = prevBodyTop;
+      body.style.width = prevBodyWidth;
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -6187,13 +6278,16 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[85] flex items-end justify-center bg-black/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      className="fixed inset-0 z-[85] flex items-end justify-center overscroll-none bg-black/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
+      onTouchMove={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault();
+      }}
     >
       <div
-        className="flex max-h-[min(92dvh,900px)] w-full max-w-lg flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[min(88vh,720px)] sm:rounded-[2rem]"
+        className="flex max-h-[min(92dvh,900px)] w-full max-w-lg touch-auto flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[min(88vh,720px)] sm:rounded-[2rem]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative shrink-0 bg-slate-100">
@@ -6226,7 +6320,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6">
+        <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain p-5 sm:p-6">
           <h2 id={titleId} className="pr-10 text-lg font-bold leading-snug text-slate-900 sm:text-xl">
             {displayName}
           </h2>
@@ -6782,18 +6876,21 @@ function DestinationGuideView({
             <div className="relative p-4">
               <div className="relative h-56 w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ring-1 ring-white/25 sm:h-60">
                 {(() => {
+                  const cityStem = String(
+                    extractCityPrompt(displayGuide.city) || displayGuide.city || ""
+                  ).trim();
                   const heroSrc = String(
                     displayGuide.landscapeImageUrl ||
                       displayGuide.imageUrl ||
-                      resolveCityHeroImageUrl(displayGuide.city) ||
-                      getBundledCityHeroPath(displayGuide.city) ||
-                      getStorageMirrorHeroUrl(displayGuide.city) ||
+                      resolveCityHeroImageUrl(cityStem) ||
+                      getBundledCityHeroPath(cityStem) ||
+                      getStorageMirrorHeroUrl(cityStem) ||
                       ""
                   ).trim();
                   if (!heroSrc) return null;
                   return (
                     <img
-                      key={String(displayGuide.city)}
+                      key={cityStem || String(displayGuide.city)}
                       src={heroSrc}
                       alt={displayCityForLocale(String(displayGuide.city), language)}
                       className="h-full w-full object-cover object-center"

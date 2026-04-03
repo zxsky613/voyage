@@ -2,6 +2,31 @@
  * Appelle les routes locales du plugin Vite (npm run dev / vite preview).
  * En production statique, prévoir une Edge Function ou backend.
  */
+
+const ITIN_FETCH_TIMEOUT_MS = 120000;
+
+async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") {
+      throw new Error(
+        "TIMEOUT_ITINERARY La génération a dépassé le délai. Réessaie avec moins de jours ou une connexion plus stable."
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 export async function fetchGeminiTripSuggestions({ destination, days = 3, language = "fr" }) {
   const r = await fetch("/api/gemini/suggestions", {
     method: "POST",
@@ -30,10 +55,12 @@ export async function fetchGeminiSuggestedActivities({ destination, language = "
 }
 
 export async function fetchGeminiItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
-  const r = await fetch("/api/gemini/itinerary", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination, startDate, endDate, language, prefs }),
+  const r = await fetchPostJsonWithTimeout("/api/gemini/itinerary", {
+    destination,
+    startDate,
+    endDate,
+    language,
+    prefs,
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -48,10 +75,12 @@ export async function fetchGeminiItinerary({ destination, startDate, endDate, la
  * Fallback automatique sur Gemini si Groq est indisponible ou sans clé.
  */
 export async function fetchGroqItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
-  const r = await fetch("/api/groq/itinerary", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination, startDate, endDate, language, prefs }),
+  const r = await fetchPostJsonWithTimeout("/api/groq/itinerary", {
+    destination,
+    startDate,
+    endDate,
+    language,
+    prefs,
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
