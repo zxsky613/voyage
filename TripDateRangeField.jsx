@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Calendar, ChevronLeft, ChevronRight, Plane } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, Lock, Plane } from "lucide-react";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 
@@ -34,7 +34,7 @@ function mondayIndexOfFirstDay(year, monthIndex) {
   return (dow + 6) % 7;
 }
 
-export function TripDateRangeField({ startDate, endDate, onRangeChange }) {
+export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly = false }) {
   const { t, language } = useI18n();
   const titleId = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -130,6 +130,10 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange }) {
   }, []);
 
   useEffect(() => {
+    if (readOnly) setPickerOpen(false);
+  }, [readOnly]);
+
+  useEffect(() => {
     if (!pickerOpen) return;
     const onKey = (e) => {
       if (e.key === "Escape") setPickerOpen(false);
@@ -161,7 +165,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange }) {
   const rangeHi = draftStart && effEnd ? (draftStart <= effEnd ? effEnd : draftStart) : "";
 
   const pickerOverlay =
-    pickerOpen && typeof document !== "undefined" ? (
+    pickerOpen && !readOnly && typeof document !== "undefined" ? (
       <div
         className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 backdrop-blur-sm sm:items-center sm:p-4"
         onClick={(e) => {
@@ -272,24 +276,47 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange }) {
       </div>
     ) : null;
 
+  const rowClass =
+    "modal-date-field flex w-full min-w-0 max-w-full items-center justify-between gap-2 overflow-hidden rounded-2xl border border-slate-200 px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3";
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setPickerOpen(true)}
-        className="modal-date-field flex w-full min-w-0 max-w-full items-center justify-between gap-2 overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:bg-slate-50/80 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3"
-      >
-        <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(startDate)}</span>
-        <span className="flex shrink-0 justify-center sm:px-0.5">
-          <span className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
-            <Plane size={14} className="animate-bounce" aria-hidden />
+      {readOnly ? (
+        <div
+          role="group"
+          aria-readonly="true"
+          aria-label={t("modals.pastTripDatesHint")}
+          className={`${rowClass} cursor-not-allowed border-slate-200/80 bg-slate-50/90`}
+        >
+          <span className="min-w-0 truncate text-base text-slate-700">{formatYmdDisplay(startDate)}</span>
+          <span className="flex shrink-0 justify-center sm:px-0.5">
+            <span className="rounded-full bg-slate-200/80 p-1.5 text-slate-500 sm:p-2">
+              <Plane size={14} aria-hidden />
+            </span>
           </span>
-        </span>
-        <span className="flex min-w-0 items-center justify-end gap-2 sm:justify-end">
-          <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(endDate)}</span>
-          <Calendar size={18} className="shrink-0 text-slate-400" aria-hidden />
-        </span>
-      </button>
+          <span className="flex min-w-0 items-center justify-end gap-2 sm:justify-end">
+            <span className="min-w-0 truncate text-base text-slate-700">{formatYmdDisplay(endDate)}</span>
+            <Lock size={18} className="shrink-0 text-slate-400" aria-hidden />
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className={`${rowClass} bg-white transition hover:bg-slate-50/80`}
+        >
+          <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(startDate)}</span>
+          <span className="flex shrink-0 justify-center sm:px-0.5">
+            <span className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
+              <Plane size={14} className="animate-bounce" aria-hidden />
+            </span>
+          </span>
+          <span className="flex min-w-0 items-center justify-end gap-2 sm:justify-end">
+            <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(endDate)}</span>
+            <Calendar size={18} className="shrink-0 text-slate-400" aria-hidden />
+          </span>
+        </button>
+      )}
 
       {pickerOverlay ? createPortal(pickerOverlay, document.body) : null}
     </>

@@ -2988,6 +2988,13 @@ function toYMDLoose(value) {
   return "";
 }
 
+/** Voyage terminé : date de fin strictement avant aujourd'hui (AAAA-MM-JJ, calendrier local). */
+function isTripPastByEndDate(trip) {
+  const end = toYMDLoose(trip?.end_date);
+  if (!end) return false;
+  return end < getTodayStr();
+}
+
 /** Chevauchement de plages [début, fin] inclusives (AAAA-MM-JJ). */
 function ymdRangesOverlap(startA, endA, startB, endB) {
   const a0 = String(startA || "").slice(0, 10);
@@ -4449,6 +4456,8 @@ function EditTripModal({ open, onClose, trip, onSave }) {
 
   if (!open || !trip) return null;
 
+  const tripDatesReadOnly = isTripPastByEndDate(trip);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
@@ -4467,9 +4476,15 @@ function EditTripModal({ open, onClose, trip, onSave }) {
             showSuggestions
             suggestPortal
           />
+          {tripDatesReadOnly ? (
+            <p className="rounded-2xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600">
+              {t("modals.pastTripDatesHint")}
+            </p>
+          ) : null}
           <TripDateRangeField
             startDate={startDate}
             endDate={endDate}
+            readOnly={tripDatesReadOnly}
             onRangeChange={(s, e) => {
               setStartDate(s);
               setEndDate(e);
@@ -4505,8 +4520,8 @@ function EditTripModal({ open, onClose, trip, onSave }) {
               onSave({
                 ...trip,
                 title: titleToSave,
-                start_date: startDate,
-                end_date: endDate,
+                start_date: tripDatesReadOnly ? toYMD(trip?.start_date, startDate) : startDate,
+                end_date: tripDatesReadOnly ? toYMD(trip?.end_date, endDate) : endDate,
                 fixed_url: String(fixedUrl || "").trim(),
                 invited_emails: invitedEmails,
               });
@@ -4814,6 +4829,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
 }
 
 function TripParticipantsModal({ open, onClose, trip, onSave }) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [list, setList] = useState(["Moi"]);
   useEffect(() => {
@@ -5566,6 +5582,7 @@ function userFacingItineraryErrorMessage(raw, tFn) {
 
 /** Bloc erreur programme : toujours le texte utilisateur ; détail brut seulement en mode dev (repliable). */
 function ItineraryErrorNotice({ raw }) {
+  const { t } = useI18n();
   const text = String(raw || "").trim();
   if (!text) return null;
   return (
@@ -6207,8 +6224,8 @@ function DestinationGuideView({
       }
     } catch { /* ignore */ }
   }, []);
-  const [programStartDate, setProgramStartDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [programEndDate, setProgramEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [programStartDate, setProgramStartDate] = useState(() => getTodayStr());
+  const [programEndDate, setProgramEndDate] = useState(() => getTodayStr());
   const [itineraryLoading, setItineraryLoading] = useState(false);
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
@@ -7003,23 +7020,18 @@ function DestinationGuideView({
             <p className="mb-4 text-xs leading-relaxed text-slate-600">
               {t("destination.itineraryModalDesc")}
             </p>
-            <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                {t("destination.itineraryStart")}
-                <ModalDateField
-                  wrapClass="mt-1"
-                  value={programStartDate}
-                  onChange={(e) => setProgramStartDate(e.target.value)}
-                />
-              </label>
-              <label className="block min-w-0 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                {t("destination.itineraryEnd")}
-                <ModalDateField
-                  wrapClass="mt-1"
-                  value={programEndDate}
-                  onChange={(e) => setProgramEndDate(e.target.value)}
-                />
-              </label>
+            <div className="w-full min-w-0">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                {t("tripForm.dateRangeTitle")}
+              </p>
+              <TripDateRangeField
+                startDate={programStartDate}
+                endDate={programEndDate}
+                onRangeChange={(s, e) => {
+                  setProgramStartDate(s);
+                  setProgramEndDate(e);
+                }}
+              />
             </div>
             {(() => {
               const prev = countInclusiveTripDaysClient(programStartDate, programEndDate);
@@ -7310,7 +7322,7 @@ function DestinationGuideView({
                         return (
                           <li
                             key={`sched-${actIndex}-${label.slice(0, 24)}`}
-                            className="flex flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
+                            className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
                               <span className="min-w-0 flex-1 text-xs font-medium leading-snug text-slate-800">
@@ -7326,7 +7338,7 @@ function DestinationGuideView({
                                 </span>
                               ) : null}
                             </div>
-                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:w-auto sm:max-w-none sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
                               <select
                                 aria-label={t("destination.dayFor", { label })}
                                 value={dateVal}
@@ -7339,7 +7351,7 @@ function DestinationGuideView({
                                     },
                                   }))
                                 }
-                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-800"
+                                className="box-border w-full min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-2 py-2.5 text-sm font-medium text-slate-800 sm:w-auto sm:max-w-[13.5rem] sm:py-1.5 sm:text-[11px]"
                               >
                                 {tripDatesForModal.map((d) => (
                                   <option key={d} value={d}>
@@ -7363,11 +7375,11 @@ function DestinationGuideView({
                                     },
                                   }))
                                 }
-                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-800"
+                                className="box-border w-full min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-2 py-2.5 text-sm font-medium text-slate-800 sm:w-auto sm:max-w-[7.5rem] sm:py-1.5 sm:text-[11px]"
                               >
-                                {TRIP_SCHEDULE_TIME_OPTIONS.map((t) => (
-                                  <option key={t} value={t}>
-                                    {t}
+                                {TRIP_SCHEDULE_TIME_OPTIONS.map((timeOpt) => (
+                                  <option key={timeOpt} value={timeOpt}>
+                                    {timeOpt}
                                   </option>
                                 ))}
                               </select>
@@ -7765,8 +7777,8 @@ function PlannerView({
       </div>
 
       {activityModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
+          <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.newActivityTitle")}</h2>
               <button
@@ -7790,28 +7802,28 @@ function PlannerView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t("planner.activityNamePlaceholder")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={t("planner.descriptionPlaceholder")}
                 rows={3}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
               <input
                 type="time"
                 value={activityTime}
                 onChange={(e) => setActivityTime(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base [color-scheme:light] sm:min-h-0 sm:text-sm"
               />
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 placeholder={t("planner.locationPlaceholder")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <div className="relative">
+              <div className="relative min-w-0">
                 <input
                   type="number"
                   min="0"
@@ -7820,7 +7832,7 @@ function PlannerView({
                   value={cost}
                   onChange={(e) => setCost(e.target.value)}
                   placeholder={t("planner.costPlaceholder")}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
+                  className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base sm:text-sm"
                 />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
                   €
@@ -7933,8 +7945,8 @@ function PlannerView({
       ) : null}
 
       {editActivityModalOpen && editingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
-          <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
+          <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.editActivityTitle")}</h2>
               <button
@@ -7953,28 +7965,28 @@ function PlannerView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t("planner.activityNamePlaceholder")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={t("planner.descriptionPlaceholder")}
                 rows={3}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
               <input
                 type="time"
                 value={activityTime}
                 onChange={(e) => setActivityTime(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base [color-scheme:light] sm:min-h-0 sm:text-sm"
               />
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 placeholder={t("planner.locationPlaceholder")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <div className="relative">
+              <div className="relative min-w-0">
                 <input
                   type="number"
                   min="0"
@@ -7983,7 +7995,7 @@ function PlannerView({
                   value={cost}
                   onChange={(e) => setCost(e.target.value)}
                   placeholder={t("planner.costPlaceholder")}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10"
+                  className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base sm:text-sm"
                 />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
                   €
@@ -8708,15 +8720,17 @@ function TripExpenseDetail({
 
       {editingActivity ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4"
           onClick={() => setEditingActivity(null)}
         >
           <div
-            className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3rem] sm:p-6"
+            className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3rem] sm:p-6 sm:pb-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-4 flex items-center justify-between gap-2">
-              <h3 className="min-w-0 text-xs uppercase tracking-[0.35em] text-slate-500">{t("planner.editActivityTitle")}</h3>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <h3 className="min-w-0 flex-1 break-words text-xs uppercase tracking-[0.35em] text-slate-500">
+                {t("planner.editActivityTitle")}
+              </h3>
               <button
                 type="button"
                 onClick={() => setEditingActivity(null)}
@@ -8730,22 +8744,22 @@ function TripExpenseDetail({
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
                 placeholder={t("planner.activityNamePlaceholder")}
-                className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
+                className="box-border w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3.5 text-base sm:px-4 sm:text-sm"
               />
               <input
                 value={editLocation}
                 onChange={(e) => setEditLocation(e.target.value)}
                 placeholder={t("budget.locationOptionalPh")}
-                className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4"
+                className="box-border w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3.5 text-base sm:px-4 sm:text-sm"
               />
-              <div className={MODAL_GRID_2}>
+              <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
                 <input
                   type="time"
                   value={editTime}
                   onChange={(e) => setEditTime(e.target.value)}
-                  className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-2 py-3 text-sm sm:px-4"
+                  className="box-border min-h-[3rem] min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-base sm:min-h-0 sm:px-4 sm:text-sm"
                 />
-                <div className="relative min-w-0">
+                <div className="relative min-w-0 w-full">
                   <input
                     type="number"
                     min="0"
@@ -8754,7 +8768,7 @@ function TripExpenseDetail({
                     value={editCost}
                     onChange={(e) => setEditCost(e.target.value)}
                     placeholder={t("planner.costPlaceholder")}
-                    className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-9 text-sm sm:px-4 sm:pr-10"
+                    className="box-border min-h-[3rem] w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 pr-10 text-base sm:min-h-0 sm:px-4 sm:pr-10 sm:text-sm"
                   />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 sm:right-4">
                     €
@@ -9328,6 +9342,8 @@ export default function App() {
   /** Ignore les réponses `activities` arrivées après un chargement plus récent (courses requêtes). */
   const loadActivitiesGenRef = useRef(0);
   const loadTripExpensesGenRef = useRef(0);
+  /** User id déjà connu côté auth — évite de traiter un SIGNED_IN « fantôme » au retour app mobile comme une nouvelle connexion. */
+  const authSessionUidRef = useRef(null);
 
   const [tripExpenses, setTripExpenses] = useState([]);
   /** False si la table `trip_expenses` n’existe pas encore (script SQL non exécuté). */
@@ -9438,6 +9454,9 @@ export default function App() {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (mounted) setSession(data?.session || null);
+        if (mounted && data?.session?.user?.id) {
+          authSessionUidRef.current = String(data.session.user.id);
+        }
       } catch (e) {
         if (mounted) setNotice(String(e?.message || "Erreur authentification"));
       } finally {
@@ -9446,16 +9465,32 @@ export default function App() {
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
+      const uid = newSession?.user?.id ? String(newSession.user.id) : null;
+      const hadUid = authSessionUidRef.current;
+
       setSession(newSession || null);
       setAuthLoading(false);
       const authEmail = String(newSession?.user?.email || "").trim();
       if (authEmail && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
         void tryMarkInviteeJoinedTrips(supabase);
       }
-      if (event !== "SIGNED_IN" || !newSession?.user?.id) return;
-      // À chaque connexion (ou inscription), ouvrir « Mes voyages ».
+
+      if (!uid) {
+        authSessionUidRef.current = null;
+        return;
+      }
+
+      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") {
+        authSessionUidRef.current = uid;
+      }
+
+      if (event !== "SIGNED_IN") return;
+
+      authSessionUidRef.current = uid;
+      const isNewSignIn = hadUid !== uid;
+      if (!isNewSignIn) return;
+
       setActiveTab("trips");
-      const uid = newSession.user.id;
       const afterSignup = consumePendingOnboardingIntent(newSession.user);
       if (afterSignup && !hasSeenOnboardingForUser(uid)) {
         setShowOnboarding(true);
@@ -10748,9 +10783,12 @@ export default function App() {
       const newEnd = toYMD(String(trip.end_date || newStart), newStart);
       const prevStart = toYMD(currentTrip?.start_date, newStart);
       const prevEnd = toYMD(currentTrip?.end_date, prevStart);
-      const datesChanged = prevStart !== newStart || prevEnd !== newEnd;
+      const pastDatesLocked = isTripPastByEndDate(currentTrip);
+      const effectiveStart = pastDatesLocked ? prevStart : newStart;
+      const effectiveEnd = pastDatesLocked ? prevEnd : newEnd;
+      const datesChanged = prevStart !== effectiveStart || prevEnd !== effectiveEnd;
       if (datesChanged) {
-        const dateConflicts = findTripsOverlappingDateRange(trips, newStart, newEnd, trip.id);
+        const dateConflicts = findTripsOverlappingDateRange(trips, effectiveStart, effectiveEnd, trip.id);
         if (dateConflicts.length > 0) {
           setTripDateConflictTrips(dateConflicts);
           setTripDateConflictModalOpen(true);
@@ -10777,8 +10815,8 @@ export default function App() {
         title: safeTitle,
         name: safeTitle,
         destination: safeTitle,
-        start_date: String(trip.start_date || getTodayStr()),
-        end_date: String(trip.end_date || getTodayStr()),
+        start_date: String(effectiveStart),
+        end_date: String(effectiveEnd),
         participants: canonicalParticipants(
           Array.isArray(currentTrip?.participants) ? currentTrip.participants : [],
           nextInvitedList.length > 0 ? nextInvitedList : []
