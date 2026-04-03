@@ -246,8 +246,12 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Avenida_Paulista_street.jpg/1920px-Avenida_Paulista_street.jpg",
   ],
   phuket: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg/1920px-Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Phang_Nga_Bay%2C_Daylight%2C_Thailand.jpg/1920px-Phang_Nga_Bay%2C_Daylight%2C_Thailand.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Sunrise%2C_Koh_Yao_Noi_%28island%29%2C_Phang_Nga_Bay%2C_Thailand.jpg/1920px-Sunrise%2C_Koh_Yao_Noi_%28island%29%2C_Phang_Nga_Bay%2C_Thailand.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Koh_Yao_Noi%2C_Palm_on_the_beach%2C_Phang_Nga_Bay%2C_Thailand.jpg/1920px-Koh_Yao_Noi%2C_Palm_on_the_beach%2C_Phang_Nga_Bay%2C_Thailand.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0f/Banana_beach_Phuket_2017_-_02.jpg/1920px-Banana_beach_Phuket_2017_-_02.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Patong_Beach%2C_Phuket%2C_Thailand_Panorama.jpg/1920px-Patong_Beach%2C_Phuket%2C_Thailand_Panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg/1920px-Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg",
   ],
   "le caire": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg/1920px-Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg",

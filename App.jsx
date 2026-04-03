@@ -4468,19 +4468,20 @@ function EditTripModal({ open, onClose, trip, onSave }) {
           </button>
         </div>
         <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
-          <CitySearchBox
-            value={title}
-            onChange={setTitle}
-            onPick={(city) => setTitle(String(city || ""))}
-            placeholder={t("tripForm.destination")}
-            showSuggestions
-            suggestPortal
-          />
           {tripDatesReadOnly ? (
             <p className="rounded-2xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600">
               {t("modals.pastTripDatesHint")}
             </p>
           ) : null}
+          <CitySearchBox
+            value={title}
+            onChange={setTitle}
+            onPick={(city) => setTitle(String(city || ""))}
+            placeholder={t("tripForm.destination")}
+            showSuggestions={!tripDatesReadOnly}
+            readOnly={tripDatesReadOnly}
+            suggestPortal
+          />
           <TripDateRangeField
             startDate={startDate}
             endDate={endDate}
@@ -4496,17 +4497,38 @@ function EditTripModal({ open, onClose, trip, onSave }) {
             placeholder={t("modals.optionalShareLink")}
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
           />
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
-            <p className="text-sm text-slate-700">
-              {t("modals.invitesLine", { count: invitedEmails.length })}
-            </p>
-            <button
-              onClick={() => setInviteModalOpen(true)}
-              className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
-              title={t("modals.inviteByEmailTitle")}
-            >
-              <Mail size={14} />
-            </button>
+          <div
+            className={`rounded-2xl border border-slate-200 px-4 py-3 ${
+              tripDatesReadOnly ? "bg-slate-50/90" : "bg-white"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-slate-700">
+                {t("modals.invitesLine", { count: invitedEmails.length })}
+              </p>
+              {!tripDatesReadOnly ? (
+                <button
+                  type="button"
+                  onClick={() => setInviteModalOpen(true)}
+                  className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-100"
+                  title={t("modals.inviteByEmailTitle")}
+                >
+                  <Mail size={14} />
+                </button>
+              ) : null}
+            </div>
+            {tripDatesReadOnly && invitedEmails.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {invitedEmails.map((mail) => (
+                  <span
+                    key={String(mail)}
+                    className="inline-flex rounded-full bg-white px-2.5 py-1 text-[11px] text-slate-600 ring-1 ring-slate-200"
+                  >
+                    {String(mail)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
           <button
             onClick={() => {
@@ -4515,15 +4537,23 @@ function EditTripModal({ open, onClose, trip, onSave }) {
                 displayCityForLocale(rawTripTitle, language) || rawTripTitle
               ).trim();
               const nextTitle = String(title || "").trim();
-              const titleToSave =
-                nextTitle === localizedBaseline ? rawTripTitle : nextTitle;
+              const titleToSave = tripDatesReadOnly
+                ? rawTripTitle
+                : nextTitle === localizedBaseline
+                  ? rawTripTitle
+                  : nextTitle;
+              const emailsToSave = tripDatesReadOnly
+                ? Array.isArray(trip?.invited_emails)
+                  ? trip.invited_emails
+                  : []
+                : invitedEmails;
               onSave({
                 ...trip,
                 title: titleToSave,
                 start_date: tripDatesReadOnly ? toYMD(trip?.start_date, startDate) : startDate,
                 end_date: tripDatesReadOnly ? toYMD(trip?.end_date, endDate) : endDate,
                 fixed_url: String(fixedUrl || "").trim(),
-                invited_emails: invitedEmails,
+                invited_emails: emailsToSave,
               });
             }}
             className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
@@ -5223,6 +5253,7 @@ function CitySearchBox({
   showSuggestions = true,
   suggestPortal = false,
   className = "",
+  readOnly = false,
 }) {
   const { language: uiLanguage } = useI18n();
   const wrapRef = useRef(null);
@@ -5242,7 +5273,7 @@ function CitySearchBox({
     () => mergeCitySuggestionLists(fallbackSuggestions, remoteSuggestions, 10),
     [fallbackSuggestions, remoteSuggestions]
   );
-  const show = showSuggestions && focused && suggestions.length > 0;
+  const show = showSuggestions && !readOnly && focused && suggestions.length > 0;
   const dropdownReserve = !suggestPortal && show ? Math.min(suggestions.length, 6) * 42 + 16 : 0;
 
   const updatePortalPos = useCallback(() => {
@@ -5337,12 +5368,20 @@ function CitySearchBox({
       className={`relative min-w-0 w-full ${className}`.trim()}
       style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}
     >
-      <div className="flex min-w-0 items-center gap-2 rounded-2xl bg-white px-4 py-3 ring-1 ring-sky-100/70 shadow-[0_2px_12px_rgba(30,58,95,0.04)]">
+      <div
+        className={`flex min-w-0 items-center gap-2 rounded-2xl px-4 py-3 ring-1 ring-sky-100/70 shadow-[0_2px_12px_rgba(30,58,95,0.04)] ${
+          readOnly ? "bg-slate-50/90" : "bg-white"
+        }`}
+      >
         <Search size={16} className="shrink-0 text-sky-400/80" />
         <input
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            if (readOnly) return;
+            onChange(e.target.value);
+          }}
           onKeyDown={async (e) => {
+            if (readOnly) return;
             if (e.key !== "Enter" || !onConfirm) return;
             const q = normalizeCityInput(value);
             if (q.length < 2) return;
@@ -5355,11 +5394,17 @@ function CitySearchBox({
               setConfirmBusy(false);
             }
           }}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            if (!readOnly) setFocused(true);
+          }}
           onBlur={() => setTimeout(() => setFocused(false), 120)}
           placeholder={placeholder}
+          readOnly={readOnly}
           disabled={confirmBusy}
-          className="min-w-0 w-full bg-transparent text-base outline-none disabled:opacity-60 sm:text-sm"
+          aria-readonly={readOnly || undefined}
+          className={`min-w-0 w-full bg-transparent text-base outline-none disabled:opacity-60 sm:text-sm ${
+            readOnly ? "cursor-default text-slate-700" : ""
+          }`}
         />
       </div>
       {portalDropdown}
@@ -5561,10 +5606,23 @@ function getGeminiErrorUi(raw) {
   };
 }
 
+/** Erreur « programme vide » — valeur d’état ; affichée via clé i18n (pas une stack trace). */
+const ITIN_ERROR_EMPTY_RESULT = "ITIN_ERROR_EMPTY_RESULT";
+
 /** Message court pour le programme (affiché à tous les utilisateurs). */
 function userFacingItineraryErrorMessage(raw, tFn) {
   const s = String(raw || "");
-  const fb = (key, fallbackStr) => (typeof tFn === "function" ? tFn(key) : fallbackStr);
+  const fb = (key, fallbackStr) => {
+    if (typeof tFn !== "function") return fallbackStr;
+    const tr = tFn(key);
+    return tr === key ? fallbackStr : tr;
+  };
+  if (s === ITIN_ERROR_EMPTY_RESULT) {
+    return fb(
+      "destination.itineraryEmptyResult",
+      "The itinerary came back empty. Try again or pick different dates."
+    );
+  }
   if (/403|premium|réservée/i.test(s)) {
     return fb("destination.premiumBody", "Cette fonctionnalité est réservée au service Premium.");
   }
@@ -5757,10 +5815,22 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 }
 
 // ─── ItineraryResultModal ──────────────────────────────────────────────────────
-function ItineraryResultModal({ dayIdeas, cityLabel, startDate, endDate, prefs, onClose, onRegenerate, onSaveToCalendar }) {
+function ItineraryResultModal({
+  dayIdeas,
+  cityLabel,
+  startDate,
+  endDate,
+  prefs,
+  onClose,
+  onRegenerate,
+  onSaveToCalendar,
+  regenerating = false,
+  fetchError = "",
+}) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const days = Array.isArray(dayIdeas) ? dayIdeas : [];
+  const errLine = String(fetchError || "").trim();
 
   const totalCost = days.reduce((sum, d) => sum + (Number(d?.costEur) || 0), 0);
   const hasCostData = days.some((d) => Number(d?.costEur) > 0);
@@ -5851,7 +5921,24 @@ function ItineraryResultModal({ dayIdeas, cityLabel, startDate, endDate, prefs, 
         <div className="h-px shrink-0 bg-slate-100 mx-5" />
 
         {/* ── Liste des jours ── */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {regenerating ? (
+            <div
+              className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[2px]"
+              aria-busy="true"
+              aria-live="polite"
+            >
+              <div className="flex flex-col items-center gap-2 px-4">
+                <span
+                  className="h-9 w-9 animate-spin rounded-full border-2 border-sky-600 border-t-transparent"
+                  aria-hidden
+                />
+                <span className="text-center text-xs font-medium text-slate-600">
+                  {t("destination.itineraryGenerating")}
+                </span>
+              </div>
+            </div>
+          ) : null}
           <ol className="divide-y divide-slate-100">
             {days.map((d, idx) => {
               const dayNum = Number(d?.day) || idx + 1;
@@ -5889,6 +5976,14 @@ function ItineraryResultModal({ dayIdeas, cityLabel, startDate, endDate, prefs, 
           </ol>
         </div>
 
+        {errLine ? (
+          <div className="shrink-0 border-t border-rose-100 bg-rose-50/40 px-5 py-2.5">
+            <p className="text-xs leading-relaxed text-rose-600">
+              {userFacingItineraryErrorMessage(errLine, t)}
+            </p>
+          </div>
+        ) : null}
+
         {/* ── Footer ── */}
         <div className="shrink-0">
           {/* Total */}
@@ -5903,14 +5998,15 @@ function ItineraryResultModal({ dayIdeas, cityLabel, startDate, endDate, prefs, 
             <button
               type="button"
               onClick={onRegenerate}
-              className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98]"
+              disabled={regenerating || saving}
+              className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {t("destination.itineraryResultRegenerate")}
+              {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
             </button>
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || regenerating}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
             >
               <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
@@ -6164,6 +6260,7 @@ function DestinationGuideView({
   onConfirmDestination,
   onCreateTrip,
   onBack,
+  trips = [],
 }) {
   const { t, language } = useI18n();
 
@@ -6205,6 +6302,9 @@ function DestinationGuideView({
   const [pendingTripRequest, setPendingTripRequest] = useState(null);
   const [itineraryResultOpen, setItineraryResultOpen] = useState(false);
   const [lastItineraryPrefs, setLastItineraryPrefs] = useState(null);
+  /** Dernier contexte de génération (dest + dates) — pour « Régénérer » sans repasser par les modales. */
+  const [lastItineraryRequest, setLastItineraryRequest] = useState(null);
+  const [itineraryRegenerating, setItineraryRegenerating] = useState(false);
 
   // ── sessionStorage helpers ────────────────────────────────────────────────
   const ITIN_SS_KEY = "tp_last_itinerary_result";
@@ -6226,6 +6326,10 @@ function DestinationGuideView({
   }, []);
   const [programStartDate, setProgramStartDate] = useState(() => getTodayStr());
   const [programEndDate, setProgramEndDate] = useState(() => getTodayStr());
+  /** Conflit calendrier au moment d'« Ajouter au calendrier » — overlay au-dessus du modal programme (z-90). */
+  const [itineraryCalendarConflict, setItineraryCalendarConflict] = useState(null);
+  const [itineraryCalendarConflictErr, setItineraryCalendarConflictErr] = useState("");
+  const [itineraryCalendarConflictSaving, setItineraryCalendarConflictSaving] = useState(false);
   const [itineraryLoading, setItineraryLoading] = useState(false);
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
@@ -6285,6 +6389,7 @@ function DestinationGuideView({
     setGeminiAiSuggestedActivities(null);
     setGeminiError("");
     setGeneratedDayIdeas(null);
+    setLastItineraryRequest(null);
     setItineraryError("");
     setItineraryModalOpen(false);
     setItineraryPremiumGateOpen(false);
@@ -6319,10 +6424,17 @@ function DestinationGuideView({
       }
       if (Array.isArray(data.dayIdeas) && data.dayIdeas.length > 0) {
         setGeneratedDayIdeas(data.dayIdeas);
-        if (data.prefs)      setLastItineraryPrefs(data.prefs);
-        if (data.startDate)  setProgramStartDate(data.startDate);
-        if (data.endDate)    setProgramEndDate(data.endDate);
-        if (data.popupOpen)  setItineraryResultOpen(true);
+        if (data.prefs) setLastItineraryPrefs(data.prefs);
+        if (data.startDate) setProgramStartDate(data.startDate);
+        if (data.endDate) setProgramEndDate(data.endDate);
+        if (data.destination && data.startDate && data.endDate) {
+          setLastItineraryRequest({
+            dest: String(data.destination).trim(),
+            startDate: String(data.startDate).trim(),
+            endDate: String(data.endDate).trim(),
+          });
+        }
+        if (data.popupOpen) setItineraryResultOpen(true);
       }
     } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6481,6 +6593,21 @@ function DestinationGuideView({
     };
   }, [confirmedDestination, language]);
 
+  async function fetchItineraryProgram(dest, startDate, endDate, prefs) {
+    let res = null;
+    try {
+      res = await fetchGroqItinerary({ destination: dest, startDate, endDate, language, prefs });
+    } catch {
+      res = null;
+    }
+    const groqHasDays =
+      res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0;
+    if (!groqHasDays) {
+      res = await fetchGeminiItinerary({ destination: dest, startDate, endDate, language, prefs });
+    }
+    return res;
+  }
+
   async function handleGenerateItinerary() {
     if (!userCanUseItineraryGeneration(session)) {
       setItineraryPremiumGateOpen(true);
@@ -6508,18 +6635,14 @@ function DestinationGuideView({
     setItineraryLoading(true);
     setItineraryError("");
     try {
-      let res = null;
-      try {
-        res = await fetchGroqItinerary({ destination: dest, startDate, endDate, language, prefs });
-      } catch (_groqErr) {
-        res = await fetchGeminiItinerary({ destination: dest, startDate, endDate, language, prefs });
-      }
+      const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
       if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
         setGeneratedDayIdeas(res.data.dayIdeas);
+        setLastItineraryRequest({ dest, startDate, endDate });
         setItineraryResultOpen(true);
         saveItineraryToSession(dest, res.data.dayIdeas, prefs, startDate, endDate, true);
       } else {
-        setItineraryError("Le programme renvoyé est vide.");
+        setItineraryError(ITIN_ERROR_EMPTY_RESULT);
       }
     } catch (e) {
       const msg = String(e?.message || e);
@@ -6534,6 +6657,106 @@ function DestinationGuideView({
       setItineraryLoading(false);
     }
   }
+
+  async function handleRegenerateItinerary() {
+    if (!userCanUseItineraryGeneration(session)) {
+      setItineraryPremiumGateOpen(true);
+      return;
+    }
+    const req = pendingTripRequest || lastItineraryRequest;
+    const dest = String(req?.dest || displayGuide?.city || "").trim();
+    const startDate = String(req?.startDate || programStartDate || "").trim();
+    const endDate = String(req?.endDate || programEndDate || "").trim();
+    if (!dest || !startDate || !endDate) return;
+    const { ok, error } = countInclusiveTripDaysClient(startDate, endDate);
+    if (!ok) {
+      setItineraryError(error);
+      return;
+    }
+    setItineraryRegenerating(true);
+    setItineraryError("");
+    try {
+      const res = await fetchItineraryProgram(dest, startDate, endDate, lastItineraryPrefs);
+      if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
+        setGeneratedDayIdeas(res.data.dayIdeas);
+        setLastItineraryRequest({ dest, startDate, endDate });
+        saveItineraryToSession(dest, res.data.dayIdeas, lastItineraryPrefs, startDate, endDate, true);
+      } else {
+        setItineraryError(ITIN_ERROR_EMPTY_RESULT);
+      }
+    } catch (e) {
+      const msg = String(e?.message || e);
+      setItineraryError(msg);
+      if (isGeminiQuotaError(msg)) {
+        setItineraryQuotaModalOpen(true);
+      } else if (/403|premium|réservée/i.test(msg)) {
+        setItineraryPremiumGateOpen(true);
+      }
+    } finally {
+      setItineraryRegenerating(false);
+    }
+  }
+
+  const saveProgramToCalendar = useCallback(
+    async (rangeStartRaw, rangeEndRaw) => {
+      const rangeStart = toYMD(String(rangeStartRaw || getTodayStr()), getTodayStr());
+      const rangeEnd = toYMD(String(rangeEndRaw || rangeStart), rangeStart);
+      if (String(rangeStart) > String(rangeEnd)) return false;
+      const conflicts = findTripsOverlappingDateRange(trips, rangeStart, rangeEnd, null);
+      if (conflicts.length > 0) {
+        setItineraryCalendarConflict({ conflictingTrips: conflicts, draftStart: rangeStart, draftEnd: rangeEnd });
+        setItineraryCalendarConflictErr("");
+        return false;
+      }
+      const timeMap = (bullet) => {
+        const b = String(bullet || "").trim().toLowerCase();
+        if (/^matin|^morning|^morgen|^ma[ñn]ana|^mattina|^上午|^早/.test(b)) return "09:00";
+        if (/^après-midi|^afternoon|^nachmittag|^tarde|^pomeriggio|^下午/.test(b)) return "14:00";
+        if (/^soir|^soirée|^evening|^abend|^noche|^sera|^serata|^晚/.test(b)) return "19:00";
+        return null;
+      };
+      const stripPrefix = (bullet) =>
+        String(bullet || "").replace(/^[^:：]+[:：]\s*/, "").trim() || String(bullet || "").trim();
+      const addDaysToDate = (ymd, n) => {
+        const d = new Date(`${ymd}T12:00:00`);
+        d.setDate(d.getDate() + n);
+        return d.toISOString().slice(0, 10);
+      };
+      const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
+      const schedule = [];
+      const ideas = generatedDayIdeas;
+      if (!Array.isArray(ideas) || ideas.length === 0) return false;
+      for (const d of ideas) {
+        const dayNum = Number(d?.day) || 1;
+        const actDate = addDaysToDate(rangeStart, dayNum - 1);
+        const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
+        const perActCost =
+          bullets.length > 0 && Number(d?.costEur) > 0
+            ? Math.round(Number(d.costEur) / bullets.length)
+            : 0;
+        bullets.forEach((b, j) => {
+          schedule.push({
+            title: stripPrefix(b),
+            date: actDate,
+            time: timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
+            location: String(displayGuide?.city || ""),
+            cost: perActCost,
+            description: `Jour ${dayNum} — ${String(d?.title || "")}`,
+          });
+        });
+      }
+      const dest = String(displayGuide?.city || confirmedDestination || "");
+      return onCreateTrip({
+        title: dest,
+        destination: dest,
+        start_date: rangeStart,
+        end_date: rangeEnd,
+        selectedActivitiesWithSchedule: schedule,
+        selectedActivities: schedule.map((r) => r.title),
+      });
+    },
+    [trips, generatedDayIdeas, displayGuide, confirmedDestination, onCreateTrip]
+  );
 
   return (
     <section className="space-y-6">
@@ -6848,7 +7071,9 @@ function DestinationGuideView({
                     {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
                   </button>
                 </div>
-                {itineraryError && !itineraryModalOpen ? <ItineraryErrorNotice raw={itineraryError} /> : null}
+                {itineraryError && !itineraryModalOpen && !itineraryResultOpen ? (
+                  <ItineraryErrorNotice raw={itineraryError} />
+                ) : null}
                 {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
                   <div className="mt-5">
                     {/* Aperçu condensé — invite à ouvrir le popup */}
@@ -6932,65 +7157,189 @@ function DestinationGuideView({
       ) : null}
 
       {itineraryResultOpen && Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
-        <ItineraryResultModal
-          dayIdeas={generatedDayIdeas}
-          cityLabel={displayGuide ? displayCityForLocale(String(displayGuide.city || ""), language) : ""}
-          startDate={programStartDate}
-          endDate={programEndDate}
-          prefs={lastItineraryPrefs}
-          onClose={() => setItineraryResultOpenPersist(false)}
-          onRegenerate={() => {
-            setItineraryResultOpenPersist(false);
-            setItineraryModalOpen(true);
-          }}
-          onSaveToCalendar={async () => {
-            // Build activities list from dayIdeas
-            const timeMap = (bullet) => {
-              const b = String(bullet || "").trim().toLowerCase();
-              if (/^matin|^morning|^morgen|^ma[ñn]ana|^mattina|^上午|^早/.test(b)) return "09:00";
-              if (/^après-midi|^afternoon|^nachmittag|^tarde|^pomeriggio|^下午/.test(b)) return "14:00";
-              if (/^soir|^soirée|^evening|^abend|^noche|^sera|^serata|^晚/.test(b)) return "19:00";
-              return null;
-            };
-            const stripPrefix = (bullet) =>
-              String(bullet || "").replace(/^[^:：]+[:：]\s*/, "").trim() || String(bullet || "").trim();
-            const addDaysToDate = (ymd, n) => {
-              const d = new Date(`${ymd}T12:00:00`);
-              d.setDate(d.getDate() + n);
-              return d.toISOString().slice(0, 10);
-            };
-            const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
-            const schedule = [];
-            for (const d of generatedDayIdeas) {
-              const dayNum = Number(d?.day) || 1;
-              const actDate = addDaysToDate(programStartDate, dayNum - 1);
-              const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
-              const perActCost = bullets.length > 0 && Number(d?.costEur) > 0
-                ? Math.round(Number(d.costEur) / bullets.length)
-                : 0;
-              bullets.forEach((b, j) => {
-                schedule.push({
-                  title: stripPrefix(b),
-                  date: actDate,
-                  time: timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
-                  location: String(displayGuide?.city || ""),
-                  cost: perActCost,
-                  description: `Jour ${dayNum} — ${String(d?.title || "")}`,
-                });
-              });
-            }
-            const dest = String(displayGuide?.city || confirmedDestination || "");
-            const ok = await onCreateTrip({
-              title: dest,
-              destination: dest,
-              start_date: programStartDate,
-              end_date: programEndDate,
-              selectedActivitiesWithSchedule: schedule,
-              selectedActivities: schedule.map((r) => r.title),
-            });
-            if (ok) setItineraryResultOpenPersist(false);
-          }}
-        />
+        <>
+          <ItineraryResultModal
+            dayIdeas={generatedDayIdeas}
+            cityLabel={displayGuide ? displayCityForLocale(String(displayGuide.city || ""), language) : ""}
+            startDate={String(
+              lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate
+            )}
+            endDate={String(
+              lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate
+            )}
+            prefs={lastItineraryPrefs}
+            regenerating={itineraryRegenerating}
+            fetchError={itineraryError}
+            onClose={() => {
+              setItineraryError("");
+              setItineraryCalendarConflict(null);
+              setItineraryCalendarConflictErr("");
+              setItineraryResultOpenPersist(false);
+            }}
+            onRegenerate={handleRegenerateItinerary}
+            onSaveToCalendar={async () => {
+              const rangeStart = String(
+                lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || ""
+              );
+              const rangeEnd = String(
+                lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate || ""
+              );
+              const ok = await saveProgramToCalendar(rangeStart, rangeEnd);
+              if (ok) setItineraryResultOpenPersist(false);
+            }}
+          />
+          {itineraryCalendarConflict ? (
+            <div
+              className="fixed inset-0 z-[90] flex items-end justify-center bg-black/55 p-3 backdrop-blur-sm sm:items-center sm:p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="tp-itin-cal-conflict-title"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget && !itineraryCalendarConflictSaving) {
+                  setItineraryCalendarConflict(null);
+                  setItineraryCalendarConflictErr("");
+                }
+              }}
+            >
+              <div
+                className="flex w-full max-w-md flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[85vh] sm:rounded-[1.75rem]"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain px-5 pb-4 pt-5 sm:px-6">
+                  <h3 id="tp-itin-cal-conflict-title" className="text-lg font-semibold text-slate-900">
+                    {t("modals.tripDateTitle")}
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600">{t("modals.tripDateIntro")}</p>
+                  <p className="mt-3 text-sm leading-relaxed text-slate-600">
+                    {t("destination.itineraryCalendarConflictHint")}
+                  </p>
+                  <ul className="mt-3 max-h-32 list-disc space-y-1.5 overflow-y-auto pl-5 text-sm text-slate-800">
+                    {itineraryCalendarConflict.conflictingTrips.map((tripRow) => (
+                      <li key={String(tripRow.id)}>
+                        <span className="font-medium">
+                          {displayCityForLocale(
+                            tripDestinationDisplayName(tripRow) || t("modals.tripDefault"),
+                            language
+                          )}
+                        </span>
+                        <span className="text-slate-600">
+                          {" "}
+                          — {formatDate(tripRow.start_date)} – {formatDate(tripRow.end_date)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 w-full min-w-0">
+                    <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                      {t("tripForm.dateRangeTitle")}
+                    </p>
+                    <TripDateRangeField
+                      startDate={itineraryCalendarConflict.draftStart}
+                      endDate={itineraryCalendarConflict.draftEnd}
+                      onRangeChange={(s, e) => {
+                        setItineraryCalendarConflict((prev) =>
+                          prev ? { ...prev, draftStart: s, draftEnd: e } : prev
+                        );
+                        setItineraryCalendarConflictErr("");
+                      }}
+                    />
+                  </div>
+                  {(() => {
+                    const span = countInclusiveTripDaysClient(
+                      itineraryCalendarConflict.draftStart,
+                      itineraryCalendarConflict.draftEnd
+                    );
+                    return (
+                      <p className="mt-2 text-xs text-slate-600">
+                        {span.ok
+                          ? t("destination.itineraryDuration", { n: span.days })
+                          : span.error || t("destination.itineraryDatesError")}
+                      </p>
+                    );
+                  })()}
+                  {itineraryCalendarConflictErr ? (
+                    <p className="mt-3 text-sm text-rose-600">{itineraryCalendarConflictErr}</p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    disabled={itineraryCalendarConflictSaving}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:w-auto"
+                    onClick={() => {
+                      setItineraryCalendarConflict(null);
+                      setItineraryCalendarConflictErr("");
+                    }}
+                  >
+                    {t("destination.itineraryCancel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={itineraryCalendarConflictSaving}
+                    className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 sm:w-auto"
+                    onClick={async () => {
+                      const c = itineraryCalendarConflict;
+                      if (!c) return;
+                      const ds = c.draftStart;
+                      const de = c.draftEnd;
+                      setItineraryCalendarConflictSaving(true);
+                      setItineraryCalendarConflictErr("");
+                      try {
+                        const span = countInclusiveTripDaysClient(ds, de);
+                        if (!span.ok) {
+                          setItineraryCalendarConflictErr(span.error);
+                          return;
+                        }
+                        if (span.days < generatedDayIdeas.length) {
+                          setItineraryCalendarConflictErr(
+                            t("destination.itineraryCalendarNeedDays", { n: generatedDayIdeas.length })
+                          );
+                          return;
+                        }
+                        const still = findTripsOverlappingDateRange(trips, ds, de, null);
+                        if (still.length > 0) {
+                          setItineraryCalendarConflictErr(t("destination.itineraryCalendarStillConflict"));
+                          setItineraryCalendarConflict((prev) =>
+                            prev ? { ...prev, conflictingTrips: still } : prev
+                          );
+                          return;
+                        }
+                        const dest = String(displayGuide?.city || confirmedDestination || "");
+                        setProgramStartDate(ds);
+                        setProgramEndDate(de);
+                        setLastItineraryRequest((prev) => ({
+                          dest: String(prev?.dest || dest),
+                          startDate: ds,
+                          endDate: de,
+                        }));
+                        setPendingTripRequest((prev) =>
+                          prev ? { ...prev, startDate: ds, endDate: de } : prev
+                        );
+                        saveItineraryToSession(
+                          dest,
+                          generatedDayIdeas,
+                          lastItineraryPrefs,
+                          ds,
+                          de,
+                          true
+                        );
+                        setItineraryCalendarConflict(null);
+                        const ok = await saveProgramToCalendar(ds, de);
+                        if (ok) setItineraryResultOpenPersist(false);
+                      } finally {
+                        setItineraryCalendarConflictSaving(false);
+                      }
+                    }}
+                  >
+                    {itineraryCalendarConflictSaving
+                      ? t("destination.itineraryAdding")
+                      : t("destination.itineraryCalendarApplyAdd")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {itineraryModalOpen && displayGuide ? (
@@ -7811,12 +8160,14 @@ function PlannerView({
                 rows={3}
                 className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <input
-                type="time"
-                value={activityTime}
-                onChange={(e) => setActivityTime(e.target.value)}
-                className="box-border min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base [color-scheme:light] sm:min-h-0 sm:text-sm"
-              />
+              <div className="min-w-0 w-full max-w-full">
+                <input
+                  type="time"
+                  value={activityTime}
+                  onChange={(e) => setActivityTime(e.target.value)}
+                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                />
+              </div>
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
@@ -7974,12 +8325,14 @@ function PlannerView({
                 rows={3}
                 className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <input
-                type="time"
-                value={activityTime}
-                onChange={(e) => setActivityTime(e.target.value)}
-                className="box-border min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base [color-scheme:light] sm:min-h-0 sm:text-sm"
-              />
+              <div className="min-w-0 w-full max-w-full">
+                <input
+                  type="time"
+                  value={activityTime}
+                  onChange={(e) => setActivityTime(e.target.value)}
+                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                />
+              </div>
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
@@ -8311,8 +8664,56 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
   );
 }
 
+/** Bottom sheet mobile : seuil de fermeture au swipe vers le bas (px). */
+const BUDGET_SHEET_DISMISS_PX = 100;
+
+function isBudgetSheetMobileDrag() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(max-width: 639px)").matches;
+}
+
 function BudgetTripDetailShell({ trip, onClose, children }) {
   const { t, language } = useI18n();
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const [sheetDragging, setSheetDragging] = useState(false);
+  const sheetTouchStartY = useRef(0);
+  const sheetTouchStartX = useRef(0);
+  /** Sync true dès touchstart — évite que le 1er touchmove arrive avant le re-render (sheetDragging encore false). */
+  const sheetDragSessionRef = useRef(false);
+  /** Dernière position de drag (sync) pour touchend fiable vs setState async. */
+  const sheetDragYRef = useRef(0);
+
+  const onSheetDragStart = useCallback((e) => {
+    if (!isBudgetSheetMobileDrag() || !e.touches?.[0]) return;
+    sheetTouchStartY.current = e.touches[0].clientY;
+    sheetTouchStartX.current = e.touches[0].clientX;
+    sheetDragSessionRef.current = true;
+    sheetDragYRef.current = 0;
+    setSheetDragging(true);
+  }, []);
+
+  const onSheetDragMove = useCallback((e) => {
+    if (!sheetDragSessionRef.current || !isBudgetSheetMobileDrag() || !e.touches?.[0]) return;
+    const y = e.touches[0].clientY;
+    const x = e.touches[0].clientX;
+    const dy = y - sheetTouchStartY.current;
+    const dx = Math.abs(x - sheetTouchStartX.current);
+    if (dy > 0 && dy > dx * 0.35) {
+      sheetDragYRef.current = dy;
+      setSheetDragY(dy);
+    }
+  }, []);
+
+  const onSheetDragEnd = useCallback(() => {
+    if (!sheetDragSessionRef.current) return;
+    sheetDragSessionRef.current = false;
+    setSheetDragging(false);
+    const y = sheetDragYRef.current;
+    sheetDragYRef.current = 0;
+    setSheetDragY(0);
+    if (y >= BUDGET_SHEET_DISMISS_PX) onClose();
+  }, [onClose]);
+
   if (!trip) return null;
   const rawLabel = String(trip?.destination || trip?.title || "").trim();
   const label = rawLabel ? displayCityForLocale(rawLabel, language) : t("modals.tripDefault");
@@ -8331,28 +8732,45 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
       }}
     >
       <div
-        className="flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-xl flex-col overflow-hidden rounded-t-[2.25rem] bg-white shadow-[0_-12px_48px_rgba(2,6,23,0.2)] sm:max-h-[90vh] sm:rounded-[2rem] sm:shadow-2xl"
+        className={`flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-xl flex-col overflow-hidden rounded-t-[2.25rem] bg-white shadow-[0_-12px_48px_rgba(2,6,23,0.2)] sm:max-h-[90vh] sm:rounded-[2rem] sm:shadow-2xl ${!sheetDragging ? "transition-transform duration-200 ease-out" : ""}`}
+        style={
+          sheetDragY > 0
+            ? { transform: `translateY(${sheetDragY}px)`, willChange: "transform" }
+            : undefined
+        }
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-slate-100 px-4 pb-3 pt-4 sm:gap-3 sm:px-6">
-          <div className="min-w-0 flex-1 pr-1">
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{t("budget.tripDetailTitle")}</p>
-            <h2
-              id="budget-trip-detail-title"
-              className="mt-1 line-clamp-2 break-words text-lg font-semibold leading-snug text-slate-900"
-            >
-              {label}
-            </h2>
-            {dr ? <p className="mt-0.5 break-all text-xs text-slate-500">{dr}</p> : null}
+        <div
+          className="shrink-0 touch-none border-b border-slate-100 sm:touch-auto"
+          onTouchStart={onSheetDragStart}
+          onTouchMove={onSheetDragMove}
+          onTouchEnd={onSheetDragEnd}
+          onTouchCancel={onSheetDragEnd}
+        >
+          <div className="flex justify-center pt-2 pb-1 sm:hidden" aria-hidden>
+            <span className="block h-1 w-10 rounded-full bg-slate-300/90" />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-100"
-            aria-label={t("menu.closeMenu")}
-          >
-            <X size={22} />
-          </button>
+          <div className="flex items-start justify-between gap-2 px-4 pb-3 pt-1 sm:gap-3 sm:px-6 sm:pt-4">
+            <div className="min-w-0 flex-1 pr-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{t("budget.tripDetailTitle")}</p>
+              <h2
+                id="budget-trip-detail-title"
+                className="mt-1 line-clamp-2 break-words text-lg font-semibold leading-snug text-slate-900"
+              >
+                {label}
+              </h2>
+              {dr ? <p className="mt-0.5 break-all text-xs text-slate-500">{dr}</p> : null}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              onTouchStart={(e) => e.stopPropagation()}
+              className="shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-100"
+              aria-label={t("menu.closeMenu")}
+            >
+              <X size={22} />
+            </button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-5 sm:py-4">{children}</div>
       </div>
@@ -8434,14 +8852,16 @@ function TripExpenseDetail({
               <p className="mt-0.5 text-xs font-medium uppercase tracking-wider text-slate-400">{dateRange}</p>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenParticipants(trip)}
-            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
-          >
-            <Users size={18} className="text-slate-600" strokeWidth={2} />
-            {t("budget.participants")}
-          </button>
+          {!isTripPastByEndDate(trip) ? (
+            <button
+              type="button"
+              onClick={() => onOpenParticipants(trip)}
+              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
+            >
+              <Users size={18} className="text-slate-600" strokeWidth={2} />
+              {t("budget.participants")}
+            </button>
+          ) : null}
         </div>
 
         {!groupExpensesEnabled ? (
@@ -8753,12 +9173,14 @@ function TripExpenseDetail({
                 className="box-border w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3.5 text-base sm:px-4 sm:text-sm"
               />
               <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
-                <input
-                  type="time"
-                  value={editTime}
-                  onChange={(e) => setEditTime(e.target.value)}
-                  className="box-border min-h-[3rem] min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-base sm:min-h-0 sm:px-4 sm:text-sm"
-                />
+                <div className="min-w-0 w-full max-w-full">
+                  <input
+                    type="time"
+                    value={editTime}
+                    onChange={(e) => setEditTime(e.target.value)}
+                    className="box-border block min-h-[3rem] min-w-0 w-full max-w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:px-4 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                  />
+                </div>
                 <div className="relative min-w-0 w-full">
                   <input
                     type="number"
@@ -9924,7 +10346,12 @@ export default function App() {
     loadChatData();
   }, [chatTripId, chatMessagesLocal, activityVotesLocal]);
 
-  const sendChatMessage = async () => {
+  const sortChatMessagesList = (list) =>
+    (Array.isArray(list) ? list : []).slice().sort((a, b) =>
+      String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
+    );
+
+  const sendChatMessage = () => {
     const content = String(chatInput || "").trim();
     if (!content || !chatTripId) return;
     const currentUserId = String(session?.user?.id || "");
@@ -9934,6 +10361,25 @@ export default function App() {
       String(userEmail).split("@")[0] ||
       "Membre";
 
+    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const nowIso = new Date().toISOString();
+    const optimisticMsg = {
+      id: pendingId,
+      trip_id: chatTripId,
+      author_id: currentUserId,
+      author_email: userEmail,
+      author_name: authorName,
+      content,
+      created_at: nowIso,
+    };
+
+    setChatInput("");
+    setChatMessages((prev) => sortChatMessagesList([...(prev || []), optimisticMsg]));
+    setChatMessagesByTrip((prev) => ({
+      ...prev,
+      [chatTripId]: sortChatMessagesList([...(prev[chatTripId] || []), optimisticMsg]),
+    }));
+
     let payload = {
       trip_id: chatTripId,
       author_id: currentUserId,
@@ -9942,54 +10388,77 @@ export default function App() {
       content,
     };
 
-    try {
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { error } = await supabase.from("chat_messages").insert(payload);
-        if (!error) {
-          setChatInput("");
-          const { data: fresh } = await supabase
+    const replacePendingWithList = (nextList) => {
+      const sorted = sortChatMessagesList(nextList);
+      setChatMessages(sorted);
+      setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sorted }));
+    };
+
+    const removePendingAndApply = (fn) => {
+      setChatMessages((prev) => {
+        const without = (prev || []).filter((m) => String(m?.id) !== pendingId);
+        return sortChatMessagesList(fn(without));
+      });
+      setChatMessagesByTrip((prev) => {
+        const without = (prev[chatTripId] || []).filter((m) => String(m?.id) !== pendingId);
+        return { ...prev, [chatTripId]: sortChatMessagesList(fn(without)) };
+      });
+    };
+
+    void (async () => {
+      try {
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const { data: insertedRows, error } = await supabase
             .from("chat_messages")
-            .select("*")
-            .eq("trip_id", chatTripId)
-            .order("created_at", { ascending: true });
-          const sortedMessages = (fresh || []).slice().sort((a, b) =>
-            String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
-          );
-          setChatMessages(sortedMessages);
-          setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sortedMessages }));
-          return;
+            .insert(payload)
+            .select("*");
+          if (!error) {
+            const row = Array.isArray(insertedRows) && insertedRows[0] ? insertedRows[0] : null;
+            if (row) {
+              removePendingAndApply((without) => [...without, row]);
+              return;
+            }
+            const { data: fresh, error: fetchErr } = await supabase
+              .from("chat_messages")
+              .select("*")
+              .eq("trip_id", chatTripId)
+              .order("created_at", { ascending: true });
+            if (!fetchErr) {
+              replacePendingWithList(fresh || []);
+              return;
+            }
+            removePendingAndApply((without) => without);
+            setChatInput(content);
+            return;
+          }
+          const msg = String(error?.message || "");
+          const m1 = msg.match(/Could not find the '([^']+)' column/i);
+          const m2 = msg.match(/column "([^"]+)" does not exist/i);
+          const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
+          if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
+            const { [missing]: _removed, ...rest } = payload;
+            payload = rest;
+            continue;
+          }
+          throw error;
         }
-        const msg = String(error?.message || "");
-        const m1 = msg.match(/Could not find the '([^']+)' column/i);
-        const m2 = msg.match(/column "([^"]+)" does not exist/i);
-        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
-        if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
-          const { [missing]: _removed, ...rest } = payload;
-          payload = rest;
-          continue;
-        }
-        throw error;
+        throw new Error("chat insert failed");
+      } catch (_e) {
+        const localMsg = {
+          id: `local-${Date.now()}`,
+          trip_id: chatTripId,
+          author_id: currentUserId,
+          author_email: userEmail,
+          author_name: authorName,
+          content,
+        };
+        removePendingAndApply((without) => [...without, localMsg]);
+        setChatMessagesLocal((prev) => ({
+          ...prev,
+          [chatTripId]: [...(prev[chatTripId] || []), localMsg],
+        }));
       }
-    } catch (_e) {
-      const localMsg = {
-        id: `local-${Date.now()}`,
-        trip_id: chatTripId,
-        author_id: currentUserId,
-        author_email: userEmail,
-        author_name: authorName,
-        content,
-      };
-      setChatMessages((prev) => [...(prev || []), localMsg]);
-      setChatMessagesByTrip((prev) => ({
-        ...prev,
-        [chatTripId]: [...(prev[chatTripId] || []), localMsg],
-      }));
-      setChatMessagesLocal((prev) => ({
-        ...prev,
-        [chatTripId]: [...(prev[chatTripId] || []), localMsg],
-      }));
-      setChatInput("");
-    }
+    })();
   };
 
   const voteActivity = async (activityId, value) => {
@@ -10688,6 +11157,10 @@ export default function App() {
 
   const saveParticipants = async (list) => {
     if (!tricountTrip) return;
+    if (isTripPastByEndDate(tricountTrip)) {
+      setTricountTrip(null);
+      return;
+    }
     try {
       const existingInvited = Array.isArray(tricountTrip?.invited_emails)
         ? tricountTrip.invited_emails.map((m) => String(m || "").trim().toLowerCase()).filter((m) => isValidEmail(m))
@@ -10768,22 +11241,27 @@ export default function App() {
   };
 
   const updateTrip = async (trip) => {
-    const safeTitle = formatCityName(trip?.title || "");
-    if (!safeTitle) {
-      setNotice(t("notices.destinationRequired"));
-      return;
-    }
     if (String(trip.start_date || "") > String(trip.end_date || "")) {
       setNotice(t("notices.invalidStartDate"));
       return;
     }
     try {
       const currentTrip = (trips || []).find((t) => String(t?.id) === String(trip?.id)) || trip || {};
+      const pastDatesLocked = isTripPastByEndDate(currentTrip);
+      const previousInvitedEmails = Array.isArray(currentTrip?.invited_emails) ? currentTrip.invited_emails : [];
+      const titleForFormat = pastDatesLocked
+        ? String(currentTrip?.title || trip?.title || "").trim()
+        : String(trip?.title || "").trim();
+      const safeTitle = formatCityName(titleForFormat);
+      if (!safeTitle) {
+        setNotice(t("notices.destinationRequired"));
+        return;
+      }
+
       const newStart = toYMD(String(trip.start_date || getTodayStr()), getTodayStr());
       const newEnd = toYMD(String(trip.end_date || newStart), newStart);
       const prevStart = toYMD(currentTrip?.start_date, newStart);
       const prevEnd = toYMD(currentTrip?.end_date, prevStart);
-      const pastDatesLocked = isTripPastByEndDate(currentTrip);
       const effectiveStart = pastDatesLocked ? prevStart : newStart;
       const effectiveEnd = pastDatesLocked ? prevEnd : newEnd;
       const datesChanged = prevStart !== effectiveStart || prevEnd !== effectiveEnd;
@@ -10795,11 +11273,13 @@ export default function App() {
           return;
         }
       }
-      const previousInvitedEmails = Array.isArray(currentTrip?.invited_emails) ? currentTrip.invited_emails : [];
       const previousInvitedSet = new Set(previousInvitedEmails.map((m) => String(m || "").toLowerCase().trim()).filter(Boolean));
 
-      const nextInvitedList =
-        Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0 ? trip.invited_emails : [];
+      const nextInvitedList = pastDatesLocked
+        ? previousInvitedEmails
+        : Array.isArray(trip?.invited_emails) && trip.invited_emails.length > 0
+          ? trip.invited_emails
+          : [];
       const nextInvitedLower = new Set(nextInvitedList.map((m) => String(m || "").trim().toLowerCase()).filter(Boolean));
       let joinedForPayload;
       if (Array.isArray(currentTrip?.invited_joined_emails)) {
@@ -11059,6 +11539,7 @@ export default function App() {
               confirmedDestination={destinationConfirmed}
               onConfirmDestination={handleConfirmDestination}
               onBack={() => setActiveTab("trips")}
+              trips={trips}
               onCreateTrip={async (payload) => {
                 const ok = await createTrip(payload);
                 if (ok) setActiveTab("planner");
@@ -11130,13 +11611,16 @@ export default function App() {
                             </div>
                           ))}
                       </div>
-                      <button
-                        onClick={() => setPlannerInviteOpen(true)}
-                        className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
-                        title={t("modals.inviteByEmailTitle")}
-                      >
-                        <Mail size={16} />
-                      </button>
+                      {!isTripPastByEndDate(selectedTrip) ? (
+                        <button
+                          type="button"
+                          onClick={() => setPlannerInviteOpen(true)}
+                          className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
+                          title={t("modals.inviteByEmailTitle")}
+                        >
+                          <Mail size={16} />
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </TripLiquidGlassShell>
@@ -11338,6 +11822,10 @@ export default function App() {
         initialEmails={selectedTrip?.invited_emails || []}
         onSave={async (emails) => {
           if (!selectedTrip) {
+            setPlannerInviteOpen(false);
+            return;
+          }
+          if (isTripPastByEndDate(selectedTrip)) {
             setPlannerInviteOpen(false);
             return;
           }

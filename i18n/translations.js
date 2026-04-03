@@ -201,6 +201,11 @@ export const translations = {
       itineraryGenerating: "Génération…",
       itineraryGenerate: "Générer un programme",
       itineraryGenerateShort: "Générer",
+      itineraryGenerateError:
+        "Impossible de générer le programme pour le moment. Vérifie ta connexion ou réessaie plus tard.",
+      itineraryFormatError:
+        "La réponse était incomplète. Réessaie ou raccourcis la période (moins de jours).",
+      itineraryEmptyResult: "Le programme renvoyé est vide. Réessaie ou change de dates.",
       itineraryHint: "Clique sur « Générer un programme », choisis tes dates, puis valide.",
       itineraryResultTitle: "Votre programme sur mesure",
       itineraryResultSubtitle: "Généré par l'IA · personnalisé pour vous",
@@ -224,6 +229,12 @@ export const translations = {
       itineraryEnd: "Fin",
       itineraryDuration: "Durée : {{n}} jour(s) inclus.",
       itineraryDatesError: "Vérifie les dates.",
+      itineraryCalendarConflictHint:
+        "Choisis une période libre ci-dessous (début et fin sur le même calendrier, comme pour générer le programme).",
+      itineraryCalendarApplyAdd: "Mettre à jour les dates et ajouter",
+      itineraryCalendarStillConflict: "Ces dates se chevauchent encore avec un autre voyage.",
+      itineraryCalendarNeedDays:
+        "La période doit couvrir au moins {{n}} jour(s), comme le nombre de jours de ce programme.",
       itineraryCancel: "Annuler",
       itineraryNext: "Suivant →",
       prefsTitle: "Personnalisez votre programme",
@@ -321,7 +332,8 @@ export const translations = {
       invitesLine: "Invités : {{count}}",
       inviteByEmailTitle: "Inviter par e-mail",
       editTripSave: "Enregistrer les modifications",
-      pastTripDatesHint: "Ce voyage est terminé : les dates ne peuvent plus être modifiées.",
+      pastTripDatesHint:
+        "Ce voyage est terminé : les dates, le lieu et la liste des invités ne peuvent plus être modifiés.",
       shareTitle: "Partager",
       shareLineTrip: "Voyage : {{title}}",
       shareLineDates: "Dates : {{range}}",
@@ -644,6 +656,11 @@ export const translations = {
       itineraryGenerating: "Generating…",
       itineraryGenerate: "Generate itinerary",
       itineraryGenerateShort: "Generate",
+      itineraryGenerateError:
+        "We couldn’t generate your itinerary. Check your connection and try again.",
+      itineraryFormatError:
+        "The response was incomplete. Try again or shorten the trip length.",
+      itineraryEmptyResult: "The itinerary came back empty. Try again or pick different dates.",
       itineraryHint: "Click \"Generate itinerary\", pick your dates and confirm.",
       itineraryResultTitle: "Your custom itinerary",
       itineraryResultSubtitle: "AI-generated · tailored for you",
@@ -667,6 +684,12 @@ export const translations = {
       itineraryEnd: "End",
       itineraryDuration: "Duration: {{n}} day(s).",
       itineraryDatesError: "Check your dates.",
+      itineraryCalendarConflictHint:
+        "Pick free dates below (start and end on the same calendar, like when generating the itinerary).",
+      itineraryCalendarApplyAdd: "Update dates and add to calendar",
+      itineraryCalendarStillConflict: "These dates still overlap another trip.",
+      itineraryCalendarNeedDays:
+        "The range must cover at least {{n}} day(s) to match this itinerary’s length.",
       itineraryCancel: "Cancel",
       itineraryNext: "Next →",
       prefsTitle: "Customize your itinerary",
@@ -764,7 +787,8 @@ export const translations = {
       invitesLine: "Guests: {{count}}",
       inviteByEmailTitle: "Invite by email",
       editTripSave: "Save changes",
-      pastTripDatesHint: "This trip has ended: dates can no longer be changed.",
+      pastTripDatesHint:
+        "This trip has ended: dates, destination and guest list can no longer be changed.",
       shareTitle: "Share",
       shareLineTrip: "Trip: {{title}}",
       shareLineDates: "Dates: {{range}}",
@@ -1093,6 +1117,11 @@ export const translations = {
       itineraryGenerating: "Wird generiert…",
       itineraryGenerate: "Reiseplan generieren",
       itineraryGenerateShort: "Generieren",
+      itineraryGenerateError:
+        "Der Reiseplan konnte nicht erstellt werden. Prüfe deine Verbindung oder versuche es später erneut.",
+      itineraryFormatError:
+        "Die Antwort war unvollständig. Erneut versuchen oder die Reisedauer kürzen.",
+      itineraryEmptyResult: "Der Reiseplan war leer. Bitte erneut versuchen oder andere Daten wählen.",
       itineraryHint: "Klicke auf „Reiseplan generieren“, wähle die Daten aus und bestätige.",
       itineraryResultTitle: "Ihr maßgeschneiderter Reiseplan",
       itineraryResultSubtitle: "KI-generiert · personalisiert für Sie",
@@ -1116,6 +1145,12 @@ export const translations = {
       itineraryEnd: "Ende",
       itineraryDuration: "Dauer: {{n}} Tag(e).",
       itineraryDatesError: "Überprüfe die Daten.",
+      itineraryCalendarConflictHint:
+        "Wähle unten einen freien Zeitraum (Start und Ende im gleichen Kalender wie bei der Programmgenerierung).",
+      itineraryCalendarApplyAdd: "Daten aktualisieren und hinzufügen",
+      itineraryCalendarStillConflict: "Diese Daten überschneiden sich weiterhin mit einer anderen Reise.",
+      itineraryCalendarNeedDays:
+        "Der Zeitraum muss mindestens {{n}} Tag(e) umfassen, passend zur Länge dieses Programms.",
       itineraryCancel: "Abbrechen",
       itineraryNext: "Weiter →",
       prefsTitle: "Reise personalisieren",
@@ -1213,7 +1248,8 @@ export const translations = {
       invitesLine: "Gäste: {{count}}",
       inviteByEmailTitle: "Per E-Mail einladen",
       editTripSave: "Änderungen speichern",
-      pastTripDatesHint: "Diese Reise ist beendet: Die Daten können nicht mehr geändert werden.",
+      pastTripDatesHint:
+        "Diese Reise ist beendet: Daten, Reiseziel und Gästeliste können nicht mehr geändert werden.",
       shareTitle: "Teilen",
       shareLineTrip: "Reise: {{title}}",
       shareLineDates: "Daten: {{range}}",
@@ -1543,6 +1579,11 @@ export const translations = {
       itineraryGenerating: "Generando…",
       itineraryGenerate: "Generar programa",
       itineraryGenerateShort: "Generar",
+      itineraryGenerateError:
+        "No se ha podido generar el programa. Comprueba la conexión o inténtalo más tarde.",
+      itineraryFormatError:
+        "La respuesta estaba incompleta. Vuelve a intentarlo o acorta la duración del viaje.",
+      itineraryEmptyResult: "El programa llegó vacío. Inténtalo de nuevo u otras fechas.",
       itineraryHint: "Haz clic en «Generar programa», elige tus fechas y confirma.",
       itineraryResultTitle: "Tu itinerario personalizado",
       itineraryResultSubtitle: "Generado por IA · adaptado para ti",
@@ -1566,6 +1607,12 @@ export const translations = {
       itineraryEnd: "Fin",
       itineraryDuration: "Duración: {{n}} día(s).",
       itineraryDatesError: "Comprueba las fechas.",
+      itineraryCalendarConflictHint:
+        "Elige fechas libres abajo (inicio y fin en el mismo calendario, como al generar el itinerario).",
+      itineraryCalendarApplyAdd: "Actualizar fechas y añadir",
+      itineraryCalendarStillConflict: "Estas fechas siguen solapándose con otro viaje.",
+      itineraryCalendarNeedDays:
+        "El periodo debe cubrir al menos {{n}} día(s), como la duración de este programa.",
       itineraryCancel: "Cancelar",
       itineraryNext: "Siguiente →",
       prefsTitle: "Personaliza tu programa",
@@ -1663,7 +1710,8 @@ export const translations = {
       invitesLine: "Invitados: {{count}}",
       inviteByEmailTitle: "Invitar por correo",
       editTripSave: "Guardar cambios",
-      pastTripDatesHint: "Este viaje ha terminado: las fechas ya no se pueden modificar.",
+      pastTripDatesHint:
+        "Este viaje ha terminado: fechas, destino y lista de invitados ya no se pueden modificar.",
       shareTitle: "Compartir",
       shareLineTrip: "Viaje: {{title}}",
       shareLineDates: "Fechas: {{range}}",
@@ -1993,6 +2041,11 @@ export const translations = {
       itineraryGenerating: "Generazione…",
       itineraryGenerate: "Genera programma",
       itineraryGenerateShort: "Genera",
+      itineraryGenerateError:
+        "Impossibile generare il programma. Controlla la connessione o riprova più tardi.",
+      itineraryFormatError:
+        "La risposta era incompleta. Riprova o accorcia la durata del soggiorno.",
+      itineraryEmptyResult: "Il programma restituito è vuoto. Riprova o cambia le date.",
       itineraryHint: "Clicca su «Genera programma», scegli le date e conferma.",
       itineraryResultTitle: "Il tuo programma su misura",
       itineraryResultSubtitle: "Generato dall'IA · personalizzato per te",
@@ -2016,6 +2069,12 @@ export const translations = {
       itineraryEnd: "Fine",
       itineraryDuration: "Durata: {{n}} giorno/i.",
       itineraryDatesError: "Controlla le date.",
+      itineraryCalendarConflictHint:
+        "Scegli un periodo libero qui sotto (inizio e fine sullo stesso calendario, come per generare il programma).",
+      itineraryCalendarApplyAdd: "Aggiorna le date e aggiungi",
+      itineraryCalendarStillConflict: "Queste date si sovrappongono ancora a un altro viaggio.",
+      itineraryCalendarNeedDays:
+        "Il periodo deve coprire almeno {{n}} giorno/i, come la lunghezza di questo programma.",
       itineraryCancel: "Annulla",
       itineraryNext: "Avanti →",
       prefsTitle: "Personalizza il tuo programma",
@@ -2113,7 +2172,8 @@ export const translations = {
       invitesLine: "Invitati: {{count}}",
       inviteByEmailTitle: "Invita via email",
       editTripSave: "Salva modifiche",
-      pastTripDatesHint: "Questo viaggio è terminato: le date non si possono più modificare.",
+      pastTripDatesHint:
+        "Questo viaggio è terminato: date, destinazione e elenco invitati non si possono più modificare.",
       shareTitle: "Condividi",
       shareLineTrip: "Viaggio: {{title}}",
       shareLineDates: "Date: {{range}}",
@@ -2440,6 +2500,9 @@ export const translations = {
       itineraryGenerating: "生成中…",
       itineraryGenerate: "生成行程",
       itineraryGenerateShort: "生成",
+      itineraryGenerateError: "暂时无法生成行程。请检查网络连接或稍后再试。",
+      itineraryFormatError: "返回内容不完整。请重试或缩短行程天数。",
+      itineraryEmptyResult: "返回的行程为空。请重试或更换日期。",
       itineraryHint: "点击「生成行程」，选择日期后确认。",
       itineraryResultTitle: "您的定制行程",
       itineraryResultSubtitle: "AI生成 · 专为您定制",
@@ -2463,6 +2526,11 @@ export const translations = {
       itineraryEnd: "结束",
       itineraryDuration: "时长：{{n}}天。",
       itineraryDatesError: "请检查日期。",
+      itineraryCalendarConflictHint:
+        "在下方选择空闲日期（在同一日历上选择到达与离开，与生成行程时相同）。",
+      itineraryCalendarApplyAdd: "更新日期并添加到日历",
+      itineraryCalendarStillConflict: "这些日期仍与其他行程重叠。",
+      itineraryCalendarNeedDays: "日期范围至少需要 {{n}} 天，以匹配此行程的天数。",
       itineraryCancel: "取消",
       itineraryNext: "下一步 →",
       prefsTitle: "定制您的行程",
@@ -2559,7 +2627,7 @@ export const translations = {
       invitesLine: "受邀人：{{count}}",
       inviteByEmailTitle: "通过邮件邀请",
       editTripSave: "保存更改",
-      pastTripDatesHint: "行程已结束，无法修改日期。",
+      pastTripDatesHint: "行程已结束，无法修改日期、目的地和受邀人列表。",
       shareTitle: "分享",
       shareLineTrip: "旅行：{{title}}",
       shareLineDates: "日期：{{range}}",
