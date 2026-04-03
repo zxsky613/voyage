@@ -64,6 +64,12 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   roma: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Colosseum_in_Rome%2C_Italy_-_April_2007.jpg/1920px-Colosseum_in_Rome%2C_Italy_-_April_2007.jpg",
   ],
+  florence: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/View_of_Florence_from_Piazzale_Michelangelo.jpg/1920px-View_of_Florence_from_Piazzale_Michelangelo.jpg",
+  ],
+  firenze: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/View_of_Florence_from_Piazzale_Michelangelo.jpg/1920px-View_of_Florence_from_Piazzale_Michelangelo.jpg",
+  ],
   berlin: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/Brandenburger_Tor%2C_Panorama_West-Seite_-_panoramio.jpg/1920px-Brandenburger_Tor%2C_Panorama_West-Seite_-_panoramio.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Reichstag_building_Berlin_view_from_west_before_sunset.jpg/1920px-Reichstag_building_Berlin_view_from_west_before_sunset.jpg",
@@ -174,10 +180,14 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg/1920px-Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg",
   ],
   lisbonne: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg/1920px-Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
   ],
   lisbon: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg/1920px-Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
   ],
@@ -213,6 +223,9 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   ],
   "san francisco": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Golden_Gate_Bridge_Panorama_Photo.jpg/1920px-Golden_Gate_Bridge_Panorama_Photo.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg/1920px-Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg/1920px-San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/GoldenGateBridge-001.jpg/1920px-GoldenGateBridge-001.jpg",
   ],
   toronto: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Sunset_Toronto_Skyline_Panorama_Crop_from_Snake_Island.jpg/1920px-Sunset_Toronto_Skyline_Panorama_Crop_from_Snake_Island.jpg",
@@ -222,11 +235,10 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Vancouver_%28BC%2C_Canada%29%2C_Canada_Place_--_2022_--_2093.jpg/1920px-Vancouver_%28BC%2C_Canada%29%2C_Canada_Place_--_2022_--_2093.jpg",
   ],
   miami: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Lifeguard_stand%2C_Miami_Beach.jpg/1920px-Lifeguard_stand%2C_Miami_Beach.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/Miami_Beach_-_Ocean_Drive_%282023%29.jpg/1920px-Miami_Beach_-_Ocean_Drive_%282023%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/South_Beach_Ocean_Drive_Strip%2C_Miami_Beach_Florida%2C_January_2018_-_01.jpg/1920px-South_Beach_Ocean_Drive_Strip%2C_Miami_Beach_Florida%2C_January_2018_-_01.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/MiamiSouthBeachPanoramaEdit.jpg/1920px-MiamiSouthBeachPanoramaEdit.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Brickell_neighborhood_skyline_%2860062p%29.jpg/1920px-Brickell_neighborhood_skyline_%2860062p%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG/1920px-Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Downtown_Miami_Panorama_from_the_Rusty_Pelican_photo_D_Ramey_Logan.jpg/1920px-Downtown_Miami_Panorama_from_the_Rusty_Pelican_photo_D_Ramey_Logan.jpg",
   ],
   "new york": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Lower_Manhattan_from_Brooklyn_May_2015_panorama.jpg/1920px-Lower_Manhattan_from_Brooklyn_May_2015_panorama.jpg",
@@ -290,6 +302,12 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg/1920px-Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg/1920px-Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Avenida_Paulista_street.jpg/1920px-Avenida_Paulista_street.jpg",
+  ],
+  valencia: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/City_of_Arts_Science_Panorama02.jpg/1920px-City_of_Arts_Science_Panorama02.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Hemispheric_Twilight_-_Valencia%2C_Spain_-_Jan_2007.jpg/1920px-Hemispheric_Twilight_-_Valencia%2C_Spain_-_Jan_2007.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/City_of_Arts_and_Sciences_by_Night_%2835427641542%29.jpg/1920px-City_of_Arts_and_Sciences_by_Night_%2835427641542%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG/1920px-Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG",
   ],
   phuket: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg/1920px-The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg",

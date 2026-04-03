@@ -3,6 +3,8 @@
  * Classification balnéaire / urbaine-historique ; style technique constant (brief IA + stock).
  */
 
+import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
+
 export const STYLE_TECHNIQUE_FR =
   "Style technique : photographie de voyage haut de gamme, vue drone, résolution 8k, lumière cinématique, prise type DJI Mavic 3 Pro f/2.8, hyper-réaliste, couleurs vives mais naturelles, sans déformation des bâtiments.";
 
@@ -112,7 +114,7 @@ const CURATED_SCENE_FR = {
     "Panneau Hollywood et jetée de Santa Monica : palmiers, coucher de soleil californien, Pacifique, collines.",
   johannesburg:
     "Pont Nelson Mandela et Sandton : urbain chic, gratte-ciel, savane au loin sous lumière dorée.",
-  miami: "Ocean Drive et South Beach : Art déco pastel, néons, sable blanc, front d’océan.",
+  miami: "South Beach et baie de Miami : plage de sable blanc, eau turquoise, skyline sur la baie, palmiers.",
   "las vegas": "Le Strip et fontaines du Bellagio : démesure, casinos iconiques, lumières nocturnes, désert.",
   orlando: "Parcs Disney et Universal : châteaux féeriques, lacs, palmiers de Floride, ambiance spectaculaire.",
   venise: "Grand Canal et basilique Saint-Marc : palais gothiques sur l’eau, gondoles, pont du Rialto.",
@@ -205,7 +207,8 @@ const CURATED_SCENE_FR = {
   auckland: "Sky Tower et voiliers : Waitemata, baie, îles au loin.",
   "cape town": "Table Mountain et port : océan, montagne plate, urbain.",
   "rio de janeiro": "Christ Rédempteur et baie : plages, forêt, icône mondiale.",
-  "sao paulo": "Skyline dense : gratte-ciel, mégalopole sud-américaine.",
+  "sao paulo":
+    "Monument de l’Indépendance du Brésil (Ipiranga) : groupe sculpté emblématique, musée du Parc, allée et palmiers — repère historique de São Paulo.",
 };
 
 const CITY_DRONE_SCENES_EN = {
@@ -255,9 +258,9 @@ const CITY_DRONE_SCENES_EN = {
   guangzhou: "Canton Tower Pearl River Guangzhou twisted skyscraper bridges dense skyline aerial",
   lisbonne: "Belem Tower Alfama Lisbon azulejos yellow trams Tagus hills aerial Portugal",
   lisbon: "Belem Tower Alfama Lisbon azulejos yellow trams Tagus hills aerial Portugal",
-  "los angeles": "Hollywood sign Santa Monica pier palm trees Pacific sunset hills aerial California",
+  "los angeles": "Los Angeles skyline Griffith Observatory Hollywood Sign downtown aerial wide view California",
   johannesburg: "Nelson Mandela Bridge Sandton skyline Johannesburg savanna distant aerial South Africa",
-  miami: "Ocean Drive South Beach Miami art deco neon white sand palm aerial Florida",
+  miami: "Miami Beach South Beach turquoise ocean white sand skyline palm trees aerial wide view Florida",
   "las vegas": "Las Vegas Strip Bellagio fountains neon night casinos desert aerial",
   orlando: "Disney castle Universal Orlando theme parks lakes palm trees aerial Florida",
   venise: "Grand Canal Venice St Mark basilica gothic palaces gondolas Rialto aerial Italy",
@@ -349,7 +352,8 @@ const CITY_DRONE_SCENES_EN = {
   auckland: "Auckland Sky Tower harbor sails Waitemata aerial New Zealand",
   "cape town": "Table Mountain Cape Town harbor aerial South Africa",
   "rio de janeiro": "Christ Redeemer Rio bay beaches aerial Brazil",
-  "sao paulo": "Sao Paulo skyline skyscrapers aerial Brazil",
+  "sao paulo":
+    "Avenida Paulista MASP Sao Paulo Brazil skyline skyscrapers dense urban aerial metropolis",
 };
 
 function inferSceneEn(displayCity, kind) {
@@ -382,28 +386,378 @@ function kindForCity(raw) {
   return "urban";
 }
 
-/** Types pour `buildAestheticCityUnsplashQuery` — skyline vs patrimoine vs littoral. */
+/** Types pour `inferAestheticCityQueryType` (métadonnées ; la requête héros utilise `kindForCity`). */
 export const AESTHETIC_CITY_QUERY_TYPE = {
   MONUMENT: "monument",
   COASTAL: "coastal",
   METROPOLIS: "metropolis",
 };
 
-/** Mots-clés systématiques (filtrer le bruit amateur, pousser le rendu « travel editorial »). */
-const AESTHETIC_UNSPLASH_BOOSTERS = [
-  "landscape",
-  "cinematic",
-  "travel",
-  "tourism",
-  "high-quality",
-  "professional photography",
-];
+/**
+ * Monuments / sujets en anglais pour l’amorce Unsplash (priorité sur l’extraction auto depuis CITY_DRONE_SCENES_EN).
+ */
+const HERO_LANDMARK_EN_OVERRIDES = Object.freeze({
+  paris: "Eiffel Tower",
+  tokyo: "Tokyo Tower",
+  kyoto: "Kinkaku-ji Golden Pavilion",
+  osaka: "Osaka Castle",
+  seoul: "Gyeongbokgung Palace Seoul wide view",
+  bangkok: "Wat Arun Grand Palace",
+  singapore: "Marina Bay Sands",
+  "hong kong": "Victoria Harbour",
+  hongkong: "Victoria Harbour",
+  "kuala lumpur": "Petronas Twin Towers",
+  taipei: "Taipei 101",
+  "new york": "Statue of Liberty",
+  london: "Big Ben Westminster Palace",
+  londres: "Big Ben Westminster Palace",
+  rome: "Colosseum",
+  roma: "Colosseum",
+  barcelona: "Sagrada Familia Barcelona Gaudi facade close view",
+  barcelone: "Sagrada Familia Barcelona Gaudi facade close view",
+  madrid: "Royal Palace Plaza Mayor Madrid",
+  amsterdam: "Amsterdam canals Rijksmuseum",
+  prague: "Charles Bridge Prague Castle",
+  vienna: "Schonbrunn Palace",
+  vienne: "Schonbrunn Palace",
+  berlin: "Brandenburg Gate",
+  budapest: "Hungarian Parliament Danube",
+  athens: "Acropolis Parthenon",
+  athenes: "Acropolis Parthenon",
+  istanbul: "Hagia Sophia Blue Mosque",
+  florence: "Duomo Santa Maria del Fiore",
+  firenze: "Duomo Santa Maria del Fiore",
+  milan: "Milan Cathedral Duomo",
+  milano: "Milan Cathedral Duomo",
+  venise: "Venice Grand Canal gondola Rialto Bridge wide view",
+  venice: "Venice Grand Canal gondola Rialto Bridge wide view",
+  dubai: "Burj Khalifa",
+  "abu dhabi": "Sheikh Zayed Grand Mosque",
+  "abou dhabi": "Sheikh Zayed Grand Mosque",
+  doha: "Museum of Islamic Art Doha",
+  cairo: "Pyramids of Giza",
+  "le caire": "Pyramids of Giza",
+  moscow: "Red Square Saint Basil Cathedral",
+  moscou: "Red Square Saint Basil Cathedral",
+  sydney: "Sydney Opera House",
+  melbourne: "Flinders Street Station Melbourne",
+  auckland: "Sky Tower Auckland",
+  "cape town": "Table Mountain",
+  "rio de janeiro": "Christ the Redeemer",
+  "sao paulo": "Avenida Paulista MASP Sao Paulo skyline",
+  "buenos aires": "La Boca Obelisk Buenos Aires",
+  "mexico city": "Palacio Bellas Artes Mexico City",
+  mexico: "Palacio Bellas Artes Mexico City",
+  lyon: "Basilica Notre-Dame de Fourviere",
+  marseille: "Notre-Dame de la Garde",
+  nice: "Promenade des Anglais",
+  bordeaux: "Place de la Bourse mirror Bordeaux",
+  toulouse: "Capitole Toulouse",
+  bruxelles: "Grand Place Brussels",
+  brussels: "Grand Place Brussels",
+  berne: "Zytglogge Bern old town",
+  bern: "Zytglogge Bern old town",
+  lisbon: "Belem Tower",
+  lisbonne: "Belem Tower",
+  porto: "Dom Luis Bridge Ribeira Porto",
+  valencia: "City of Arts and Sciences Valencia",
+  copenhagen: "Nyhavn Copenhagen",
+  stockholm: "Gamla Stan Stockholm",
+  zurich: "Lake Zurich old town",
+  dublin: "Temple Bar Trinity College Dublin",
+  edinburgh: "Edinburgh Castle Royal Mile",
+  edimbourg: "Edinburgh Castle Royal Mile",
+  warsaw: "Old Town Warsaw Stare Miasto",
+  varsovie: "Old Town Warsaw Stare Miasto",
+  sofia: "Alexander Nevsky Cathedral Sofia",
+  bucharest: "Palace of Parliament Bucharest",
+  bucarest: "Palace of Parliament Bucharest",
+  marrakech: "Koutoubia Mosque Jemaa el-Fna",
+  tunis: "Sidi Bou Said Medina Tunis",
+  alger: "Algiers bay white city",
+  hanoi: "Hoan Kiem Lake Hanoi old quarter",
+  "ho chi minh": "Notre-Dame Cathedral Bitexco Tower Saigon",
+  bali: "Uluwatu Temple rice terraces Bali",
+  phuket: "Big Buddha Phuket beach",
+  jakarta: "Monas National Monument Jakarta",
+  "los angeles": "Los Angeles skyline Griffith Observatory Hollywood Sign wide view",
+  "san francisco": "Golden Gate Bridge",
+  miami: "Miami Beach South Beach ocean skyline",
+  chicago: "Chicago skyline Willis Tower Lake Michigan",
+  seattle: "Space Needle",
+  boston: "Faneuil Hall Boston skyline",
+  philadelphia: "Philadelphia City Hall",
+  washington: "United States Capitol Washington DC",
+  "washington dc": "United States Capitol Washington DC",
+  toronto: "CN Tower",
+  montreal: "Old Montreal Old Port",
+  vancouver: "Canada Place Vancouver waterfront",
+  atlanta: "Atlanta skyline Midtown",
+  denver: "Denver skyline Rocky Mountains",
+  dallas: "Reunion Tower Dallas",
+  houston: "Houston downtown skyline",
+  "las vegas": "Las Vegas Strip Bellagio",
+  seville: "Plaza de Espana Seville",
+  malaga: "Alcazaba Malaga",
+  dubrovnik: "Dubrovnik old town walls",
+  santiago: "Gran Torre Santiago Andes",
+  lima: "Miraflores cliffs Lima Pacific",
+});
 
-const AESTHETIC_TYPE_KEYWORDS = {
-  monument: ["landmark", "architecture", "iconic monument"],
-  coastal: ["beach", "ocean", "coastline", "sea"],
-  metropolis: ["skyline", "cityscape", "city lights", "modern architecture"],
-};
+/** Extrait un libellé monument depuis la phrase EN drone (avant « aerial »), sans répéter le nom de la ville en fin de chaîne. */
+function clipLandmarkFromSceneEn(sceneEn, cityStem) {
+  const s = String(sceneEn || "")
+    .replace(/\s+aerial(\s+.*)?$/i, "")
+    .trim();
+  const words = s.split(/\s+/).filter(Boolean);
+  const cityN = normalizeKey(cityStem);
+  const out = [];
+  for (let i = 0; i < words.length && out.length < 6; i++) {
+    const w = words[i];
+    if (out.length >= 2 && normalizeKey(w) === cityN) break;
+    out.push(w);
+  }
+  if (out.length >= 2) return out.join(" ");
+  return words.slice(0, 4).join(" ");
+}
+
+/** Premier repère du catalogue (libellé FR ou mixte) — segment court avant « & ». */
+function firstIconicPlaceLabel(cityKey) {
+  const list = ICONIC_PLACES_CANONICAL[cityKey];
+  if (!list?.[0]) return "";
+  return String(list[0])
+    .split(/&/)[0]
+    .replace(/–/g, "-")
+    .trim()
+    .slice(0, 55);
+}
+
+function resolveHeroLandmarkEnglish(cityInput) {
+  const raw = String(cityInput || "").trim();
+  if (!raw) return "";
+  const { k, first } = resolveEntryKeys(raw);
+  const stem = raw.split(",")[0].trim();
+  const keys = [k, first, normalizeKey(stem)].filter(Boolean);
+  for (const key of keys) {
+    if (HERO_LANDMARK_EN_OVERRIDES[key]) return HERO_LANDMARK_EN_OVERRIDES[key];
+  }
+  for (const key of keys) {
+    const scene = CITY_DRONE_SCENES_EN[key];
+    if (scene) return clipLandmarkFromSceneEn(scene, stem);
+  }
+  for (const key of keys) {
+    const iconic = firstIconicPlaceLabel(key);
+    if (iconic) return iconic;
+  }
+  return "";
+}
+
+/** Synonymes / lieux durs : la légende Unsplash ne cite pas toujours le libellé complet du monument. */
+const HERO_UNSPLASH_EXTRA_DESC_BOOST = Object.freeze({
+  "sao paulo": [
+    "paulista",
+    "masp",
+    "skyline",
+    "skyscraper",
+    "avenida",
+    "downtown",
+    "urban",
+    "aerial",
+  ],
+  "rio de janeiro": ["cristo", "redeemer", "corcovado", "sugarloaf", "copacabana"],
+  tokyo: ["shibuya", "shinjuku", "asakusa", "sensoji"],
+  paris: ["eiffel", "trocadero", "haussmann", "louvre", "champs"],
+  london: ["westminster", "thames", "parliament", "tower bridge"],
+  rome: ["colosseum", "coliseum", "forum", "pantheon"],
+  barcelona: ["sagrada", "familia", "gaudi", "guell", "gothic", "rambla", "facade", "cathedral"],
+  barcelone: ["sagrada", "familia", "gaudi", "guell", "gothic", "rambla", "facade", "cathedral"],
+  istanbul: ["hagia", "sophia", "bosphorus", "mosque"],
+  dubai: ["burj", "khalifa", "marina"],
+  "new york": ["manhattan", "empire", "liberty", "brooklyn bridge", "central park"],
+  moscow: ["kremlin", "basil", "red square"],
+  moscou: ["kremlin", "basil", "red square"],
+  cairo: ["pyramid", "giza", "sphinx"],
+  "le caire": ["pyramid", "giza", "sphinx"],
+  beijing: ["forbidden", "tiananmen", "temple"],
+  pekin: ["forbidden", "tiananmen", "temple"],
+  bangkok: ["wat arun", "grand palace", "temple"],
+  singapore: ["marina bay", "garden", "supertree"],
+  sydney: ["opera", "harbour bridge"],
+  amsterdam: ["canal", "rijksmuseum"],
+  prague: ["charles bridge", "castle", "vltava"],
+  budapest: ["parliament", "danube", "fisherman"],
+  athens: ["acropolis", "parthenon"],
+  athenes: ["acropolis", "parthenon"],
+  lisbon: ["belem", "alfama", "tram"],
+  lisbonne: ["belem", "alfama", "tram"],
+  marrakech: ["koutoubia", "jemaa", "medina"],
+  seoul: ["gyeongbokgung", "palace", "namsan", "bukchon", "hanok"],
+  copenhagen: ["nyhavn", "colorful", "harbour"],
+  vienna: ["schonbrunn", "hofburg", "stephansdom"],
+  vienne: ["schonbrunn", "hofburg", "stephansdom"],
+  dublin: ["temple bar", "trinity", "college"],
+  edinburgh: ["castle", "royal mile"],
+  edimbourg: ["castle", "royal mile"],
+  miami: ["beach", "south beach", "ocean", "turquoise", "skyline", "biscayne", "palm", "aerial"],
+  venise: ["grand canal", "canal", "gondola", "rialto", "st mark", "san marco", "basilica", "palazzo", "lagoon"],
+  venice: ["grand canal", "canal", "gondola", "rialto", "st mark", "san marco", "basilica", "palazzo", "lagoon"],
+  "los angeles": ["griffith", "observatory", "hollywood", "skyline", "downtown", "aerial", "panorama", "cityscape"],
+  nice: ["promenade", "anglais", "baie"],
+  bordeaux: ["bourse", "miroir", "garonne"],
+  madrid: ["royal palace", "palacio", "plaza mayor", "gran via", "prado"],
+  berlin: ["brandenburg", "gate", "reichstag", "berlin wall", "alexanderplatz"],
+  florence: ["duomo", "florence", "ponte vecchio", "brunelleschi", "dome", "cathedral"],
+  firenze: ["duomo", "florence", "ponte vecchio", "brunelleschi", "dome", "cathedral"],
+  dubai: ["burj", "khalifa", "marina", "skyline", "downtown"],
+  "san francisco": ["golden gate", "bridge", "bay", "fog", "cable car"],
+  chicago: ["willis", "sears", "skyline", "millennium", "bean", "lake michigan"],
+  "cape town": ["table mountain", "waterfront", "cape"],
+  "rio de janeiro": ["cristo", "redeemer", "sugarloaf", "copacabana", "ipanema"],
+  porto: ["dom luis", "ribeira", "douro", "bridge"],
+  stockholm: ["gamla stan", "old town", "palace"],
+  lyon: ["fourviere", "basilica", "rhone", "saone"],
+  marseille: ["notre-dame", "garde", "vieux port"],
+  taipei: ["taipei 101", "tower", "skyline"],
+  seattle: ["space needle", "skyline", "mount rainier"],
+  "buenos aires": ["obelisco", "la boca", "caminito", "plaza de mayo"],
+});
+
+const HERO_BOOST_STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "city",
+  "town",
+  "iconic",
+  "landmark",
+]);
+
+function heroLandmarkTokensForUnsplashBoost(cityInput) {
+  const monument = resolveHeroLandmarkEnglish(cityInput);
+  if (!monument) return [];
+  return String(monument)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 3 && !HERO_BOOST_STOPWORDS.has(w));
+}
+
+/**
+ * Mots à valoriser dans description / alt_description Unsplash pour coller au monument (évite les « ciel seul »).
+ */
+export function getHeroUnsplashDescBoostTokens(cityInput) {
+  const raw = String(cityInput || "").trim();
+  if (!raw) return [];
+  const { k, first } = resolveEntryKeys(raw);
+  const stem = raw.split(",")[0].trim();
+  const keys = [k, first, normalizeKey(stem)].filter(Boolean);
+  const extra = [];
+  for (const key of keys) {
+    const arr = HERO_UNSPLASH_EXTRA_DESC_BOOST[key];
+    if (Array.isArray(arr)) extra.push(...arr);
+  }
+  const fromMonument = heroLandmarkTokensForUnsplashBoost(raw);
+  const seen = new Set();
+  const out = [];
+  for (const t of [...extra, ...fromMonument]) {
+    const n = String(t || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= 16) break;
+  }
+  return out;
+}
+
+/** Queue de requête : cadrage rue / architecture, lumière chaude (pas de « blue sky »), matière urbaine dense. */
+const CITY_HERO_ARCH_TAIL_URBAN =
+  "panorama cityscape travel photography landmark wide angle";
+
+const CITY_HERO_ARCH_TAIL_COASTAL =
+  "panorama waterfront travel photography landmark wide angle";
+
+/** Libellé ville en anglais dans la requête Unsplash (meilleur rappel que les exonymes FR). */
+const HERO_QUERY_CITY_EN = Object.freeze({
+  lisbonne: "Lisbon",
+  lisbon: "Lisbon",
+  roma: "Rome",
+  rome: "Rome",
+  venise: "Venice",
+  venice: "Venice",
+  milano: "Milan",
+  milan: "Milan",
+  napoli: "Naples",
+  naples: "Naples",
+  florence: "Florence",
+  firenze: "Florence",
+  pekin: "Beijing",
+  moscou: "Moscow",
+  moscow: "Moscow",
+  vienne: "Vienna",
+  vienna: "Vienna",
+  bruxelles: "Brussels",
+  brussels: "Brussels",
+  munich: "Munich",
+  munchen: "Munich",
+  cologne: "Cologne",
+  koln: "Cologne",
+  athenes: "Athens",
+  athens: "Athens",
+  "le caire": "Cairo",
+  cairo: "Cairo",
+  canton: "Guangzhou",
+  guangzhou: "Guangzhou",
+  valencia: "Valencia",
+  varsovie: "Warsaw",
+  warsaw: "Warsaw",
+  edimbourg: "Edinburgh",
+  edinburgh: "Edinburgh",
+  bucarest: "Bucharest",
+  bucharest: "Bucharest",
+  genes: "Genoa",
+  genoa: "Genoa",
+  "ho chi minh": "Ho Chi Minh City",
+  "buenos aires": "Buenos Aires",
+  "sao paulo": "Sao Paulo",
+  "kuala lumpur": "Kuala Lumpur",
+  "mexico city": "Mexico City",
+  mexico: "Mexico City",
+  "le cap": "Cape Town",
+  "cape town": "Cape Town",
+  copenhague: "Copenhagen",
+  copenhagen: "Copenhagen",
+  "saint-petersbourg": "Saint Petersburg",
+  "saint petersbourg": "Saint Petersburg",
+});
+
+/**
+ * Requête Unsplash « photographe d’architecture » : monument + ville, lumière dorée, sans insister sur le ciel vide.
+ * @param {string} cityInput — « Ville » ou « Ville, Pays »
+ */
+export function buildCityHeroUnsplashQuery(cityInput) {
+  const rawCity = String(cityInput || "")
+    .split(",")[0]
+    .trim();
+  if (!rawCity) return "";
+  const cityNorm = normalizeKey(rawCity);
+  const city = HERO_QUERY_CITY_EN[cityNorm] || rawCity;
+  const kind = kindForCity(cityInput);
+  const monument = resolveHeroLandmarkEnglish(cityInput);
+  const lead = monument ? `${monument}, ${city}` : `${city} iconic landmark`;
+  const tail = kind === "coastal" ? CITY_HERO_ARCH_TAIL_COASTAL : CITY_HERO_ARCH_TAIL_URBAN;
+  return `${lead} ${tail}`.replace(/\s+/g, " ").trim();
+}
 
 /**
  * Métropoles où la skyline / néons / towers priment sur « monument unique » pour la recherche stock.
@@ -442,7 +796,6 @@ const METROPOLIS_KEYS = new Set(
     "seattle",
     "melbourne",
     "johannesburg",
-    "sao paulo",
     "mexico city",
     "moscow",
     "tel aviv",
@@ -451,20 +804,10 @@ const METROPOLIS_KEYS = new Set(
 );
 
 /**
- * Texte de requête Unsplash : [ville] + boosters + lot sémantique selon le type.
- * @param {string} cityName — nom affiché ou extrait (seule la partie avant la première virgule est utilisée).
- * @param {string} cityType — `monument` | `coastal` | `metropolis` (voir `AESTHETIC_CITY_QUERY_TYPE`).
+ * @deprecated Conservé pour compatibilité : délègue à `buildCityHeroUnsplashQuery`.
  */
-export function buildAestheticCityUnsplashQuery(cityName, cityType) {
-  const city = String(cityName || "")
-    .split(",")[0]
-    .trim();
-  if (!city) return "";
-  const t = String(cityType || "")
-    .toLowerCase()
-    .trim();
-  const extras = AESTHETIC_TYPE_KEYWORDS[t] || AESTHETIC_TYPE_KEYWORDS.monument;
-  return [city, ...AESTHETIC_UNSPLASH_BOOSTERS, ...extras].join(" ").replace(/\s+/g, " ").trim();
+export function buildAestheticCityUnsplashQuery(cityName, _cityType) {
+  return buildCityHeroUnsplashQuery(cityName);
 }
 
 /**
@@ -483,12 +826,12 @@ export function inferAestheticCityQueryType(cityInput) {
 
 /**
  * Chaîne query-string pour `GET /search/photos` (sans auth — le Client-ID reste en header).
- * @param {{ perPage?: number }} options — défaut 3 ; plafonné à 30 côté appelant si besoin.
+ * @param {{ perPage?: number }} options — défaut 1 (meilleur résultat Unsplash) ; max 30.
  */
 export function buildAestheticCityUnsplashApiQueryString(cityName, cityType, options = {}) {
-  const query = buildAestheticCityUnsplashQuery(cityName, cityType);
+  const query = buildCityHeroUnsplashQuery(cityName);
   if (!query) return "";
-  const perPage = Math.min(30, Math.max(1, Number(options.perPage) || 3));
+  const perPage = Math.min(30, Math.max(1, Number(options.perPage) || 1));
   const params = new URLSearchParams();
   params.set("query", query);
   params.set("orientation", "landscape");
@@ -558,7 +901,8 @@ export function getCityDroneImagePackage(cityInput) {
     unsplashQuery: buildCityDroneUnsplashQuery(raw),
     unsplashStockQuery: buildCityUnsplashStockQuery(raw),
     aestheticUnsplashType: aestheticType,
-    aestheticUnsplashQuery: buildAestheticCityUnsplashQuery(displayName, aestheticType),
+    aestheticUnsplashQuery: buildCityHeroUnsplashQuery(raw),
+    cityHeroUnsplashQuery: buildCityHeroUnsplashQuery(raw),
   };
 }
 
