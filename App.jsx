@@ -4051,6 +4051,25 @@ function TripLiquidGlassShell({ imageTitle, active = false, className = "", chil
   );
 }
 
+function AvoloBrand({ size = "md", className = "", light = false }) {
+  const sizes = {
+    xs: "text-[10px] tracking-[0.32em]",
+    sm: "text-xs tracking-[0.28em]",
+    md: "text-[1.75rem] tracking-[0.18em] sm:text-4xl",
+    lg: "text-4xl tracking-[0.18em] sm:text-5xl",
+  };
+  return (
+    <span
+      className={`inline-block font-extrabold uppercase ${sizes[size] || sizes.md} ${light ? "text-white" : "text-slate-500"} ${className}`.trim()}
+      style={{ fontFamily: "'Outfit', sans-serif", letterSpacing: size === "md" || size === "lg" ? "0.22em" : undefined }}
+    >
+      {"AVOLO".split("").map((ch, i) => (
+        <span key={i} style={i === 0 ? { color: light ? "rgba(255,255,255,0.95)" : "#0f172a" } : undefined}>{ch}</span>
+      ))}
+    </span>
+  );
+}
+
 function TopNav({ onMenu, onAdd, title }) {
   return (
     <header className="sticky top-0 z-30 min-w-0 px-3 pt-4 sm:px-5">
@@ -4518,8 +4537,8 @@ function AuthView() {
                     className="relative z-[1] block h-[13.5rem] w-[13.5rem] max-w-[min(96vw,14rem)] object-contain object-top align-top [filter:drop-shadow(0_0_14px_rgba(255,255,255,0.95))_drop-shadow(0_0_36px_rgba(255,255,255,0.55))_drop-shadow(0_2px_12px_rgba(0,0,0,0.35))_brightness(1.14)_contrast(1.08)] sm:h-[17.5rem] sm:w-[17.5rem] sm:max-w-[18rem] sm:[filter:drop-shadow(0_0_16px_rgba(255,255,255,0.98))_drop-shadow(0_0_44px_rgba(255,255,255,0.5))_drop-shadow(0_3px_14px_rgba(0,0,0,0.3))_brightness(1.14)_contrast(1.08)]"
                   />
                 </div>
-                <h1 className="relative z-[1] text-center text-[1.75rem] font-bold leading-none tracking-tight text-white sm:text-4xl">
-                  {t("auth.brand")}
+                <h1 className="relative z-[1] text-center leading-none drop-shadow-[0_2px_12px_rgba(0,0,0,0.4)]">
+                  <AvoloBrand size="md" light />
                 </h1>
               </div>
               <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-7 sm:flex-none sm:justify-start sm:pt-0">
@@ -4574,7 +4593,7 @@ function AuthView() {
             {t("auth.backToWelcome")}
           </button>
         ) : null}
-        <h1 className="mb-2 text-center text-xs uppercase tracking-[0.4em] text-slate-500">{t("auth.brand")}</h1>
+        <h1 className="mb-2 text-center"><AvoloBrand size="sm" /></h1>
         <p className="mb-6 text-center text-lg font-semibold">
           {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
         </p>
