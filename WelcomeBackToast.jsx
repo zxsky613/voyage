@@ -76,7 +76,7 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
           >
             <span style={{ fontSize: "2.2rem", lineHeight: 1, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}>🌍</span>
             <div>
-              <p className="text-white/60 text-[10px] font-extrabold uppercase tracking-[0.32em] mb-1 leading-none" style={{ fontFamily: "'Outfit', sans-serif" }}>
+              <p className="text-white/60 text-[10px] font-extrabold uppercase tracking-[0.32em] mb-1 leading-none" style={{ fontFamily: "'Yeseva One', serif" }}>
                 AVOLO
               </p>
               <p className="text-white font-bold leading-snug whitespace-nowrap" style={{ fontSize: "1.2rem", textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>

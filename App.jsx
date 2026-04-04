@@ -4052,20 +4052,19 @@ function TripLiquidGlassShell({ imageTitle, active = false, className = "", chil
 }
 
 function AvoloBrand({ size = "md", className = "", light = false }) {
-  const sizes = {
-    xs: "text-[10px] tracking-[0.32em]",
-    sm: "text-xs tracking-[0.28em]",
-    md: "text-[1.75rem] tracking-[0.18em] sm:text-4xl",
-    lg: "text-4xl tracking-[0.18em] sm:text-5xl",
+  const config = {
+    xs:  { cls: "text-[10px]",  ls: "0.32em" },
+    sm:  { cls: "text-xs",      ls: "0.28em" },
+    md:  { cls: "text-[1.75rem] sm:text-4xl", ls: "0.22em" },
+    lg:  { cls: "text-4xl sm:text-5xl",       ls: "0.22em" },
   };
+  const { cls, ls } = config[size] || config.md;
   return (
     <span
-      className={`inline-block font-extrabold uppercase ${sizes[size] || sizes.md} ${light ? "text-white" : "text-slate-500"} ${className}`.trim()}
-      style={{ fontFamily: "'Outfit', sans-serif", letterSpacing: size === "md" || size === "lg" ? "0.22em" : undefined }}
+      className={`inline-block font-extrabold uppercase ${cls} ${light ? "text-white" : "text-slate-500"} ${className}`.trim()}
+      style={{ fontFamily: "'Yeseva One', serif", letterSpacing: ls, paddingLeft: ls }}
     >
-      {"AVOLO".split("").map((ch, i) => (
-        <span key={i} style={i === 0 ? { color: light ? "rgba(255,255,255,0.95)" : "#0f172a" } : undefined}>{ch}</span>
-      ))}
+      AVOLO
     </span>
   );
 }
