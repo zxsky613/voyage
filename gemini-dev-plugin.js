@@ -533,16 +533,18 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
           `${prefsBlock}\n` +
           `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-          `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+          `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
           `Règles STRICTES :\n` +
           `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+          `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
+          `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités.\n` +
           `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
-          `- Chaque "bullets" : 2 ou 3 phrases courtes. Pas de guillemet double à l'intérieur d'une phrase.\n` +
-          `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+          `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
           `${langRule}\n` +
           `Lieux réels pour cette destination (pas de lieux inventés).`;
         const systemPrompt =
           "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
+          "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
           "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
           "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
         try {
@@ -625,17 +627,19 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
         `${prefsBlock}\n` +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-        `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+        `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
         `Règles STRICTES pour que le JSON soit valide :\n` +
         `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+        `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
+        `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités.\n` +
         `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
-        `- Chaque "bullets" : 2 ou 3 phrases courtes (pas de sous-liste). Pas de guillemet double à l'intérieur d'une phrase (utilise l'apostrophe ' pour l'élision).\n` +
-        `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+        `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
         `${langRule}\n` +
         `Lieux réels pour cette destination (pas de lieux inventés).`;
 
       const itinerarySystem =
         "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
+        "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
         "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets. " +
         "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
 

@@ -6682,41 +6682,54 @@ function ItineraryResultModal({
               </div>
             </div>
           ) : null}
-          <ol className="divide-y divide-slate-100">
-            {days.map((d, idx) => {
-              const dayNum = Number(d?.day) || idx + 1;
-              const cost = Number(d?.costEur) || 0;
+          {(() => {
+            const hasContent = days.length > 0 && days.some((d) => String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0));
+            if (days.length === 0 || !hasContent) {
               return (
-                <li key={`day-${dayNum}`} className="px-5 py-4 sm:px-6">
-                  {/* Ligne titre du jour */}
-                  <div className="flex items-center gap-3">
-                    <span className="inline-flex shrink-0 items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">
-                      {t("destination.itineraryDayLabel")} {dayNum}
-                    </span>
-                    <p className="min-w-0 flex-1 text-[13px] font-semibold text-slate-900">
-                      {String(d?.title || "")}
-                    </p>
-                    {cost > 0 && (
-                      <span className="shrink-0 text-[12px] font-semibold text-slate-500">
-                        ~{cost}€
-                      </span>
-                    )}
-                  </div>
-                  {/* Activités du jour */}
-                  {Array.isArray(d?.bullets) && d.bullets.length > 0 && (
-                    <ul className="mt-2.5 space-y-1.5 pl-10">
-                      {d.bullets.map((b, j) => (
-                        <li key={j} className="flex gap-2 text-[12px] leading-relaxed text-slate-500">
-                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden />
-                          <span>{String(b)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
+                <div className="flex flex-col items-center justify-center gap-3 px-6 py-16">
+                  <span className="h-9 w-9 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" aria-hidden />
+                  <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
+                </div>
               );
-            })}
-          </ol>
+            }
+            return (
+              <ol className="divide-y divide-slate-100">
+                {days.map((d, idx) => {
+                  const dayNum = Number(d?.day) || idx + 1;
+                  const cost = Number(d?.costEur) || 0;
+                  const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
+                  const bullets = Array.isArray(d?.bullets) ? d.bullets : (Array.isArray(d?.activities) ? d.activities : []);
+                  return (
+                    <li key={`day-${dayNum}`} className="px-5 py-4 sm:px-6">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex shrink-0 items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">
+                          {t("destination.itineraryDayLabel")} {dayNum}
+                        </span>
+                        <p className="min-w-0 flex-1 text-[13px] font-semibold text-slate-900">
+                          {title}
+                        </p>
+                        {cost > 0 && (
+                          <span className="shrink-0 text-[12px] font-semibold text-slate-500">
+                            ~{cost}€
+                          </span>
+                        )}
+                      </div>
+                      {bullets.length > 0 && (
+                        <ul className="mt-2.5 space-y-1.5 pl-10">
+                          {bullets.map((b, j) => (
+                            <li key={j} className="flex gap-2 text-[12px] leading-relaxed text-slate-500">
+                              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden />
+                              <span>{String(b)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            );
+          })()}
         </div>
 
         {errLine ? (
@@ -7190,8 +7203,12 @@ function DestinationGuideView({
         sessionStorage.removeItem(ITIN_SS_KEY);
         return;
       }
-      if (Array.isArray(data.dayIdeas) && data.dayIdeas.length > 0) {
-        setGeneratedDayIdeas(data.dayIdeas);
+      const ssIdeas = Array.isArray(data.dayIdeas) ? data.dayIdeas : [];
+      const ssHasContent = ssIdeas.length > 0 && ssIdeas.some((d) =>
+        String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
+      );
+      if (ssHasContent) {
+        setGeneratedDayIdeas(ssIdeas);
         if (data.prefs) setLastItineraryPrefs(data.prefs);
         if (data.startDate) setProgramStartDate(data.startDate);
         if (data.endDate) setProgramEndDate(data.endDate);
@@ -7428,9 +7445,11 @@ function DestinationGuideView({
     } catch {
       res = null;
     }
-    const groqHasDays =
-      res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0;
-    if (!groqHasDays) {
+    const groqDays = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
+    const groqHasContent = groqDays.length > 0 && groqDays.some((d) =>
+      String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
+    );
+    if (!groqHasContent) {
       res = await fetchGeminiItinerary({ destination: dest, startDate, endDate, language, prefs });
     }
     return res;
@@ -7464,11 +7483,15 @@ function DestinationGuideView({
     setItineraryError("");
     try {
       const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
-      if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
-        setGeneratedDayIdeas(res.data.dayIdeas);
+      const ideas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
+      const ideasHaveContent = ideas.length > 0 && ideas.some((d) =>
+        String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
+      );
+      if (ideasHaveContent) {
+        setGeneratedDayIdeas(ideas);
         setLastItineraryRequest({ dest, startDate, endDate });
         setItineraryResultOpen(true);
-        saveItineraryToSession(dest, res.data.dayIdeas, prefs, startDate, endDate, true);
+        saveItineraryToSession(dest, ideas, prefs, startDate, endDate, true);
       } else {
         setItineraryError(ITIN_ERROR_EMPTY_RESULT);
       }
@@ -7505,10 +7528,14 @@ function DestinationGuideView({
     setItineraryError("");
     try {
       const res = await fetchItineraryProgram(dest, startDate, endDate, lastItineraryPrefs);
-      if (res?.ok && Array.isArray(res.data?.dayIdeas) && res.data.dayIdeas.length > 0) {
-        setGeneratedDayIdeas(res.data.dayIdeas);
+      const regenIdeas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
+      const regenHasContent = regenIdeas.length > 0 && regenIdeas.some((d) =>
+        String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
+      );
+      if (regenHasContent) {
+        setGeneratedDayIdeas(regenIdeas);
         setLastItineraryRequest({ dest, startDate, endDate });
-        saveItineraryToSession(dest, res.data.dayIdeas, lastItineraryPrefs, startDate, endDate, true);
+        saveItineraryToSession(dest, regenIdeas, lastItineraryPrefs, startDate, endDate, true);
       } else {
         setItineraryError(ITIN_ERROR_EMPTY_RESULT);
       }
@@ -8002,6 +8029,19 @@ function DestinationGuideView({
           onSkip={() => handleGenerateWithPrefs(null)}
           onClose={() => { setTripPrefsOpen(false); setPendingTripRequest(null); }}
         />
+      ) : null}
+
+      {itineraryLoading && !itineraryResultOpen ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
+            <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-sky-600 border-t-transparent" aria-hidden />
+            <p className="text-sm font-semibold text-slate-700">{t("destination.itineraryGenerating")}</p>
+          </div>
+        </div>
       ) : null}
 
       {itineraryResultOpen && Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (

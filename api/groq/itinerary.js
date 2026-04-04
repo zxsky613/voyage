@@ -29,12 +29,16 @@ export default async function handler(req, res) {
     `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
-    `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
-    `Règles : exactement ${days} objets, costEur = entier, 2-3 bullets par jour.\n` +
+    `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
+    `Règles OBLIGATOIRES :\n` +
+    `- Exactement ${days} objets dans dayIdeas.\n` +
+    `- Chaque objet DOIT avoir un champ "title" non vide (thème du jour, ex: "Vieille ville et gastronomie").\n` +
+    `- Chaque objet DOIT avoir un champ "bullets" avec 2-3 phrases courtes décrivant les activités.\n` +
+    `- costEur = entier estimé par jour.\n` +
     `Budget : ${bHint}.\n${langRule}\nLieux réels uniquement.`;
 
   const systemPrompt =
-    "Tu produis uniquement un objet JSON valide. costEur est toujours un entier JSON.";
+    "Tu produis uniquement un objet JSON valide. Chaque dayIdeas DOIT contenir title (non vide) et bullets (tableau non vide). costEur est toujours un entier JSON.";
 
   try {
     const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });

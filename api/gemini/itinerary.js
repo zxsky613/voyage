@@ -30,16 +30,18 @@ export default async function handler(req, res) {
     `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-    `{"dayIdeas":[{"day":1,"title":"titre court","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte"]}, ...]}\n` +
+    `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
     `Règles STRICTES :\n` +
     `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+    `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
+    `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités.\n` +
     `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${bHint}.\n` +
-    `- Chaque "bullets" : 2 ou 3 phrases courtes. Pas de guillemet double à l'intérieur.\n` +
-    `- Pas de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+    `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
     `${langRule}\nLieux réels pour cette destination.`;
 
   const systemInstruction =
     "Tu produis uniquement un objet JSON valide. " +
+    "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
     "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
     "Le champ costEur est toujours un entier JSON.";
 
