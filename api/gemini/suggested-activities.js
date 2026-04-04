@@ -19,19 +19,20 @@ export default async function handler(req, res) {
 
   const prompt =
     `Tu es conseiller voyage. Destination : « ${destination} ».\n` +
-    `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
+    `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown :\n` +
     `{"suggestedActivities":[...]}\n` +
     `${langRule}\n` +
-    `Au moins 6 objets avec title, location, estimatedCostEur (nombre), costNote, description.\n` +
+    `Exactement 6 objets avec title, location, estimatedCostEur (nombre JSON), costNote, description.\n` +
+    `Chaque description : 1 phrase courte. Pas de guillemet double non échappé dans les chaînes.\n` +
     `Activités réalistes et visitables sur place.`;
 
   const systemInstruction =
-    "Tu réponds uniquement par un objet JSON valide UTF-8.";
+    "Tu produis uniquement un objet JSON valide UTF-8. Les chaînes ne contiennent jamais de guillemet double non échappé.";
 
   try {
     const data = await runGeminiJson({
       key, modelId, prompt, systemInstruction,
-      generationConfigExtra: { temperature: 0.25, topP: 0.85, maxOutputTokens: 2048 },
+      generationConfigExtra: { temperature: 0.25, topP: 0.85, maxOutputTokens: 4096 },
     });
     const list = Array.isArray(data?.suggestedActivities) ? data.suggestedActivities : [];
     sendJson(res, 200, { ok: true, data: { suggestedActivities: list } });
