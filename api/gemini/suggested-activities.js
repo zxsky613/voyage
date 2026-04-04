@@ -24,6 +24,9 @@ export default async function handler(req, res) {
     `${langRule}\n` +
     `Exactement 6 objets avec title, location, estimatedCostEur (nombre JSON), costNote, description.\n` +
     `Chaque description : 1 phrase courte. Pas de guillemet double non échappé dans les chaînes.\n` +
+    `IMPORTANT : les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
+    `Ne propose PAS d'activités liées à la mer, la plage ou le littoral si la ville est dans les terres. ` +
+    `Ne propose PAS de ski ou montagne si la ville n'est pas en zone montagneuse. ` +
     `Activités réalistes et visitables sur place.`;
 
   const systemInstruction =

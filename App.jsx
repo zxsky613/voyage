@@ -1893,10 +1893,32 @@ function mergeTipsDoFromGemini(baseDo, geminiDo, cityName) {
   return merged.slice(0, 12);
 }
 
+const COASTAL_CITIES = new Set([
+  "miami", "barcelone", "barcelona", "nice", "marseille", "lisbonne", "lisbon", "lisboa",
+  "rio de janeiro", "rio", "sydney", "dubai", "dubai", "bali", "cape town", "le cap",
+  "los angeles", "san francisco", "honolulu", "cancun", "phuket", "naples", "napoli",
+  "venice", "venise", "amalfi", "porto", "athens", "athenes", "istanbul",
+  "tel aviv", "mumbai", "hong kong", "singapour", "singapore", "seattle",
+  "copenhague", "copenhagen", "stockholm", "oslo", "helsinki", "vancouver",
+  "san diego", "havana", "la havane", "cartagena", "dubrovnik", "split",
+  "mykonos", "santorini", "casablanca", "tunis", "alger", "dakar",
+  "mombasa", "zanzibar", "goa", "colombo", "abu dhabi", "doha",
+  "yokohama", "osaka", "busan", "shanghai", "qingdao",
+]);
+
+function isCityCoastal(cityName) {
+  const c = String(cityName || "").toLowerCase().trim();
+  if (COASTAL_CITIES.has(c)) return true;
+  for (const k of COASTAL_CITIES) {
+    if (c.includes(k) || k.includes(c)) return true;
+  }
+  return false;
+}
+
 function buildSuggestedActivitiesForCity(city) {
   const c = String(city || "").toLowerCase();
   const label = String(city || "").trim() || "la destination";
-  /** Suggestion locale avec coût indicatif (repli sans Gemini). */
+  const coastal = isCityCoastal(city);
   const act = (title, estimatedCostEur, costNote = "", location = "") => {
     const o = { title, estimatedCostEur: clampActivityCostEUR(estimatedCostEur) };
     const note = String(costNote || "").trim();
@@ -1905,12 +1927,15 @@ function buildSuggestedActivitiesForCity(city) {
     if (loc) o.location = loc;
     return o;
   };
+  const waterActivity = coastal
+    ? act("Balade le long du front de mer", 0, "Souvent gratuit", label)
+    : act("Balade dans les parcs et jardins", 0, "Souvent gratuit", label);
   const base = [
     act("Visite des quartiers historiques", 0, "Variable (gratuit ou billets sur place)", label),
     act("Tour culinaire local", 35, "", label),
     act("Point de vue au coucher du soleil", 0, "Souvent gratuit", label),
-    act("Musee ou galerie incontournable", 18, "Entrée type — selon lieu", label),
-    act("Balade le long de l'eau, des parcs ou du front de mer", 0, "Souvent gratuit", label),
+    act("Musee ou galerie incontournable", 18, "Entr\u00e9e type \u2014 selon lieu", label),
+    waterActivity,
     act("Marche local & specialites regionales", 0, "Gratuit (achats en sus)", label),
   ];
   if (c.includes("tokyo")) {
@@ -3861,14 +3886,17 @@ async function resolveStableCityImageForCard(canonicalCity) {
 // Atomes UI
 /** @param {{ title: string, frameClassName?: string }} props — `frameClassName` pour aligner le masque avec le parent (ex. shell chat `rounded-none`). */
 function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
+  const { t } = useI18n();
   const prompt = resolveCanonicalCity(extractCityPrompt(title));
   const safeTitle = String(prompt || title || "voyage");
   const cacheKey = getCityImageCacheKey(title);
   const [resolvedUrl, setResolvedUrl] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
     setLoadFailed(false);
+    setImgLoaded(false);
   }, [safeTitle, prompt]);
 
   useEffect(() => {
@@ -3957,7 +3985,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
 
   return (
     <div
-      className={`h-full w-full overflow-hidden bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ${frameClassName}`.trim()}
+      className={`relative h-full w-full overflow-hidden bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ${frameClassName}`.trim()}
     >
       {displaySrc ? (
         <img
@@ -3968,11 +3996,17 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
           referrerPolicy="no-referrer"
           loading="lazy"
           decoding="async"
+          onLoad={() => setImgLoaded(true)}
           onError={() => {
             if (!loadFailed) setLoadFailed(true);
           }}
         />
       ) : null}
+      {!imgLoaded && !loadFailed && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -4863,7 +4897,31 @@ function AuthView() {
   );
 }
 
+function useScrollLock(active) {
+  useEffect(() => {
+    if (!active) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = { ho: html.style.overflow, bo: body.style.overflow, bp: body.style.position, bt: body.style.top, bw: body.style.width };
+    const scrollY = window.scrollY;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    return () => {
+      html.style.overflow = prev.ho;
+      body.style.overflow = prev.bo;
+      body.style.position = prev.bp;
+      body.style.top = prev.bt;
+      body.style.width = prev.bw;
+      window.scrollTo(0, scrollY);
+    };
+  }, [active]);
+}
+
 function TripFormModal({ open, onClose, onCreate }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const today = getTodayStr();
   const [title, setTitle] = useState("");
@@ -4995,6 +5053,7 @@ function TripFormModal({ open, onClose, onCreate }) {
 }
 
 function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const [emailInput, setEmailInput] = useState("");
   const [emails, setEmails] = useState([]);
@@ -5071,6 +5130,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
 }
 
 function EditTripModal({ open, onClose, trip, onSave }) {
+  useScrollLock(open);
   const { t, language } = useI18n();
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState(getTodayStr());
@@ -5215,6 +5275,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
 
 // ── InviteEmailModal ──────────────────────────────────────────────────────────
 function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [state, setState] = useState("idle");
@@ -5339,6 +5400,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
 
 // ── ShareModal ────────────────────────────────────────────────────────────────
 function ShareModal({ open, onClose, trip, activities, inviterName }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const [copyState, setCopyState] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -5495,6 +5557,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
 }
 
 function TripParticipantsModal({ open, onClose, trip, onSave }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [list, setList] = useState(["Moi"]);
@@ -5570,6 +5633,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
 }
 
 function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
+  useScrollLock(open && !!trip);
   const { t } = useI18n();
   if (!open || !trip) return null;
   const delTitle = String(trip?.title || t("modals.tripDefault"));
@@ -5613,6 +5677,7 @@ function AccountModal({
   deleting,
   saving,
 }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const photoInputId = useId();
   const photoInputRef = useRef(null);
@@ -6318,6 +6383,7 @@ function ItineraryErrorNotice({ raw }) {
 
 // ─── TripPrefsModal ────────────────────────────────────────────────────────────
 function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
+  useScrollLock(true);
   const { t } = useI18n();
   const [pace, setPace] = useState("moderate");
   const [styles, setStyles] = useState([]);
@@ -6485,6 +6551,7 @@ function ItineraryResultModal({
   regenerating = false,
   fetchError = "",
 }) {
+  useScrollLock(true);
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const days = Array.isArray(dayIdeas) ? dayIdeas : [];
@@ -6756,6 +6823,7 @@ function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, gemini
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const titleId = useId();
   const [textLoading, setTextLoading] = useState(false);
@@ -6838,31 +6906,6 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
     };
   }, [open, rawName, city, language]);
 
-  useEffect(() => {
-    if (!open) return;
-    const html = document.documentElement;
-    const body = document.body;
-    const prevHtmlOverflow = html.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
-    const prevBodyPosition = body.style.position;
-    const prevBodyTop = body.style.top;
-    const prevBodyWidth = body.style.width;
-    const scrollY = window.scrollY;
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
-    return () => {
-      html.style.overflow = prevHtmlOverflow;
-      body.style.overflow = prevBodyOverflow;
-      body.style.position = prevBodyPosition;
-      body.style.top = prevBodyTop;
-      body.style.width = prevBodyWidth;
-      window.scrollTo(0, scrollY);
-    };
-  }, [open]);
-
   if (!open) return null;
 
   return (
@@ -6890,14 +6933,23 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
               className="h-44 w-full object-cover object-[center_45%] sm:h-52 sm:object-[center_40%]"
               loading="lazy"
               decoding="async"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
+              onError={async (e) => {
+                const el = e.currentTarget;
+                if (UNSPLASH_ACCESS_KEY && !el.dataset.unsplashTried) {
+                  el.dataset.unsplashTried = "1";
+                  try {
+                    const hint = [rawName, city].filter(Boolean).join(", ");
+                    const u = await getAestheticCityImage(hint || rawName, null);
+                    if (u) { el.src = u; return; }
+                  } catch (_e) { /* ignore */ }
+                }
+                el.style.display = "none";
               }}
             />
           ) : null}
           {imageLoading && !imageUrl ? (
             <div className="flex h-44 flex-col items-center justify-center gap-2 sm:h-52">
-              <span className="text-sm text-slate-500">{t("destination.mustSeePlaceLoading")}</span>
+              <span className="animate-pulse text-sm text-slate-500">{t("destination.mustSeePlaceLoading")}</span>
             </div>
           ) : null}
           {!imageLoading && !imageUrl ? (
@@ -6920,11 +6972,13 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
           </h2>
           <div className="mt-4">
             {textLoading ? (
-              <p className="text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceLoading")}</p>
+              <p className="animate-pulse text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceLoading")}</p>
             ) : extract ? (
               <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{extract}</p>
             ) : (
-              <p className="text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceNoDesc")}</p>
+              <p className="text-sm leading-relaxed text-slate-500">
+                {t("destination.mustSeePlaceNoDescCtx", { place: displayName, city }) || t("destination.mustSeePlaceNoDesc")}
+              </p>
             )}
           </div>
           <button
@@ -6993,6 +7047,9 @@ function DestinationGuideView({
   /** Dernier contexte de génération (dest + dates) — pour « Régénérer » sans repasser par les modales. */
   const [lastItineraryRequest, setLastItineraryRequest] = useState(null);
   const [itineraryRegenerating, setItineraryRegenerating] = useState(false);
+
+  useScrollLock(addModalOpen);
+  useScrollLock(itineraryModalOpen);
 
   // ── sessionStorage helpers ────────────────────────────────────────────────
   const ITIN_SS_KEY = "tp_last_itinerary_result";
@@ -7558,7 +7615,11 @@ function DestinationGuideView({
                             getStorageMirrorHeroUrl(cityStem) ||
                             ""
                         ).trim();
-                  if (!heroSrc) return null;
+                  if (!heroSrc) return (
+                    <div className="flex h-full w-full items-center justify-center">
+                      <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
+                    </div>
+                  );
                   return (
                     <img
                       key={`${cityStem || String(displayGuide.city)}|${heroSrc.slice(0, 48)}`}
@@ -8311,15 +8372,14 @@ function DestinationGuideView({
                 <X size={18} />
               </button>
             </div>
-            <div className="flex w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
-              <ModalDateField value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-              <div className="flex shrink-0 justify-center py-0.5 sm:px-0.5 sm:py-0">
-                <div className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
-                  <Plane size={14} className="animate-bounce" />
-                </div>
-              </div>
-              <ModalDateField value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
+            <TripDateRangeField
+              startDate={startDate}
+              endDate={endDate}
+              onRangeChange={(s, e) => {
+                setStartDate(s);
+                setEndDate(e);
+              }}
+            />
             <div className="mt-5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
                 {t("destination.addActivitiesTitle")}
@@ -9218,6 +9278,7 @@ function normalizeTripExpenseRow(row) {
 }
 
 function GroupExpenseModal({ open, onClose, trip, participants, displayForParticipant, initial, onSave, saving }) {
+  useScrollLock(open);
   const { t } = useI18n();
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
@@ -10521,6 +10582,12 @@ export default function App() {
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
 
+  useScrollLock(menuOpen);
+  useScrollLock(accountOpen);
+  useScrollLock(!!budgetDetailTrip);
+  useScrollLock(!!chatTripId);
+  useScrollLock(tripDateConflictModalOpen);
+
   /** Ids d'activités insérées récemment — fusion avec loadActivities pour éviter l'écrasement par une lecture vide / en retard. */
   const activityInsertGraceRef = useRef(new Map());
   /** Évite double insertion voyage (double clic, double appel concurrent). */
@@ -11288,21 +11355,11 @@ export default function App() {
     const normalizedItems = raw
       .map((item) => {
         if (typeof item === "string") {
-          return {
-            title: String(item || "").trim(),
-            date: "",
-            time: "",
-            location: "",
-            cost: 0,
-            description: "",
-          };
+          return { title: String(item || "").trim(), date: "", time: "", location: "", cost: 0, description: "" };
         }
         return {
           title: String(item?.title || "").trim(),
-          date:
-            item?.date != null && String(item.date).trim() !== ""
-              ? toYMDLoose(item.date) || toYMD(item.date, "")
-              : "",
+          date: item?.date != null && String(item.date).trim() !== "" ? toYMDLoose(item.date) || toYMD(item.date, "") : "",
           time: String(item?.time || "").trim(),
           location: String(item?.location || "").trim(),
           cost: clampActivityCostEUR(item?.cost),
@@ -11314,78 +11371,45 @@ export default function App() {
     const tripDayList = listTripDatesInclusive(startYmd, endYmd);
     const tripDaySet = new Set(tripDayList);
     const fallbackDates = assignActivityDatesRoundRobin(startYmd, endYmd, normalizedItems.length);
-    const insertErrorMsgs = [];
-    for (let i = 0; i < normalizedItems.length; i += 1) {
-      const { title, date: inDate, time: inTime, location, cost, description } = normalizedItems[i];
-      const safeDate =
-        inDate && tripDaySet.has(inDate)
-          ? inDate
-          : toYMD(fallbackDates[i], toYMD(startYmd, getTodayStr()));
-      const assignedTime =
-        normalizeActivityTimeHHMM(inTime) || String(slots[i % slots.length]).slice(0, 5);
-      const activityPrompt = `${title} ${safeDate} ${assignedTime}`;
-      const fallbackPhoto =
-        seededPicsumUrl(activityPrompt, 1200, 800) || seededPicsumUrl(`${title}|${tripId}`, 1200, 800);
-      let actPayload = {
-        trip_id: normTripId(tripId),
-        date: safeDate,
-        date_key: safeDate,
-        activity_date: safeDate,
-        time: assignedTime,
-        title,
-        name: title,
-        description: String(description || ""),
-        cost: clampActivityCostEUR(cost),
-        location: String(location || ""),
-        photo_url: String(fallbackPhoto || ""),
-        image_url: String(fallbackPhoto || ""),
+
+    let rows = normalizedItems.map((item, i) => {
+      const safeDate = item.date && tripDaySet.has(item.date) ? item.date : toYMD(fallbackDates[i], toYMD(startYmd, getTodayStr()));
+      const assignedTime = normalizeActivityTimeHHMM(item.time) || String(slots[i % slots.length]).slice(0, 5);
+      const activityPrompt = `${item.title} ${safeDate} ${assignedTime}`;
+      const fallbackPhoto = seededPicsumUrl(activityPrompt, 1200, 800) || seededPicsumUrl(`${item.title}|${tripId}`, 1200, 800);
+      const row = {
+        trip_id: normTripId(tripId), date: safeDate, date_key: safeDate, activity_date: safeDate,
+        time: assignedTime, title: item.title, name: item.title, description: String(item.description || ""),
+        cost: clampActivityCostEUR(item.cost), location: String(item.location || ""),
+        photo_url: String(fallbackPhoto || ""), image_url: String(fallbackPhoto || ""),
       };
-      if (String(userId || "").trim()) {
-        actPayload.owner_id = String(userId).trim();
+      if (String(userId || "").trim()) row.owner_id = String(userId).trim();
+      return row;
+    });
+
+    let insertOk = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const { error } = await supabase.from("activities").insert(rows);
+      if (!error) { insertOk = true; break; }
+      const msg = String(error?.message || "");
+      const missing = parseMissingSchemaColumnName(error);
+      if (missing && rows[0] && Object.prototype.hasOwnProperty.call(rows[0], missing)) {
+        rows = rows.map((r) => { const { [missing]: _, ...rest } = r; return rest; });
+        continue;
       }
-      let insertFailed = true;
-      let lastInsertErr = null;
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        const { error: actErr } = await supabase.from("activities").insert(actPayload);
-        if (!actErr) {
-          insertFailed = false;
-          break;
-        }
-        lastInsertErr = actErr;
-        const msg = String(actErr?.message || "");
-        const missing = parseMissingSchemaColumnName(actErr);
-        if (missing && Object.prototype.hasOwnProperty.call(actPayload, missing)) {
-          const { [missing]: _removed, ...rest } = actPayload;
-          actPayload = rest;
-          continue;
-        }
-        if (/uuid|22P02|invalid input syntax/i.test(msg) && Object.prototype.hasOwnProperty.call(actPayload, "owner_id")) {
-          const { owner_id: _o, ...rest } = actPayload;
-          actPayload = rest;
-          continue;
-        }
-        break;
+      if (/uuid|22P02|invalid input syntax/i.test(msg) && rows[0]?.owner_id !== undefined) {
+        rows = rows.map(({ owner_id: _, ...rest }) => rest);
+        continue;
       }
-      if (insertFailed && lastInsertErr) {
-        const em = lastInsertErr;
-        const parts = [em?.message, em?.details, em?.hint].filter(Boolean).map(String);
-        insertErrorMsgs.push(parts.length ? parts.join(" — ") : "Impossible d'enregistrer une activite.");
-      }
+      setNotice(String(error?.message || "Erreur enregistrement activités"));
+      break;
     }
-    if (insertErrorMsgs.length > 0) {
-      setNotice(
-        insertErrorMsgs.length === 1
-          ? insertErrorMsgs[0]
-          : `${insertErrorMsgs.length} activite(s) non enregistree(s). ${insertErrorMsgs[0]}`
-      );
-    }
+
     try {
       const fresh = await fetchActivitiesRowsForTrip(tripId);
       replaceTripActivitiesInState(normTripId(tripId), fresh);
-    } catch (_e) {
-      /* ignore */
-    }
-    return insertErrorMsgs.length === 0;
+    } catch (_e) { /* ignore */ }
+    return insertOk;
   };
 
   const createTrip = async (payload) => {
@@ -11511,7 +11535,6 @@ export default function App() {
           }
 
           setTripModalOpen(false);
-          // Pas de message "success" : on laisse l'UI se mettre à jour via le fetch/les subscriptions.
           if (activitiesInsertOk) {
             setNotice(inviteNotice);
           } else if (inviteNotice) {
@@ -11520,77 +11543,34 @@ export default function App() {
               return base ? `${base} — ${inviteNotice}` : inviteNotice;
             });
           }
-          // Force immediate UI refresh (subscription can lag).
-          try {
-            let data = null;
-            let lastError = null;
 
-            for (let i = 0; i < TRIPS_SELECT_ATTEMPTS.length; i += 1) {
-              const { data: d, error: selErr } = await supabase
-                .from("trips")
-                .select(TRIPS_SELECT_ATTEMPTS[i]);
-              if (!selErr) {
-                data = d;
-                lastError = null;
-                break;
+          {
+            const optimisticTrip = { ...body, id: newTripId };
+            setTrips((prev) => [...(prev || []), optimisticTrip]);
+            const tripStart = toYMD(body.start_date, getTodayStr());
+            if (newTripId) {
+              setSelectedTripId(normTripId(newTripId));
+              setSelectedDate(tripStart);
+              const md = new Date(`${tripStart}T12:00:00`);
+              if (!Number.isNaN(md.getTime())) {
+                setMonthCursor(new Date(md.getFullYear(), md.getMonth(), 1));
               }
-              lastError = selErr;
             }
+          }
 
-            if (lastError) throw lastError;
-
-            const visibleAfterCreate = visibleTripsForSession(data, session);
-            setTrips(visibleAfterCreate);
-            // Priorité à l’id renvoyé par l’insert (fiable) ; repli si absent du jeu visible (RLS / latence).
+          // Background refresh
+          (async () => {
             try {
-              const tripStart = toYMD(body.start_date, getTodayStr());
-              const wantedStart = toYMD(body.start_date, "");
-              const wantedEnd = toYMD(body.end_date, "");
-              const wantedTitle = String(body.destination || body.title || safeTitle || "");
-              let pickId = normTripId(newTripId);
-              if (!pickId || !visibleAfterCreate.some((t) => normTripId(t?.id) === pickId)) {
-                const fallback =
-                  visibleAfterCreate.find((t) => {
-                    const tStart = String(t.start_date || "");
-                    const tEnd = String(t.end_date || "");
-                    const tTitle = String(t.title || "");
-                    return (
-                      tStart === wantedStart &&
-                      tEnd === wantedEnd &&
-                      (tTitle === wantedTitle || tTitle.toLowerCase() === wantedTitle.toLowerCase())
-                    );
-                  }) ||
-                  visibleAfterCreate.find(
-                    (t) => String(t.start_date || "") === wantedStart && String(t.end_date || "") === wantedEnd
-                  ) ||
-                  visibleAfterCreate[0];
-                pickId = normTripId(fallback?.id);
+              for (let i = 0; i < TRIPS_SELECT_ATTEMPTS.length; i += 1) {
+                const { data: d, error: selErr } = await supabase.from("trips").select(TRIPS_SELECT_ATTEMPTS[i]);
+                if (!selErr) { setTrips(visibleTripsForSession(d, session)); break; }
               }
-              if (pickId) {
-                setSelectedTripId(pickId);
-                setSelectedDate(tripStart);
-                const md = new Date(`${tripStart}T12:00:00`);
-                if (!Number.isNaN(md.getTime())) {
-                  setMonthCursor(new Date(md.getFullYear(), md.getMonth(), 1));
-                }
-              }
-            } catch (_matchErr) {
-              const pid = normTripId(newTripId);
-              if (pid) setSelectedTripId(pid);
-              else if (visibleAfterCreate.length > 0) setSelectedTripId(String(visibleAfterCreate[0].id));
-            }
-
-            if (newTripId && itemsToInsert.length > 0) {
-              try {
+              if (newTripId && itemsToInsert.length > 0) {
                 const actRows = await fetchActivitiesRowsForTrip(newTripId);
                 replaceTripActivitiesInState(newTripId, actRows);
-              } catch (_actRefetchErr) {
-                /* ignore */
               }
-            }
-          } catch (_refreshErr) {
-            // keep success message; user will retry once
-          }
+            } catch (_e) { /* ignore */ }
+          })()
           return true;
         }
 
@@ -12177,42 +12157,40 @@ export default function App() {
     if (tid == null || tid === "") return;
     const idStr = String(tid);
     setDeletingTrip(true);
+
+    // Optimistic UI : fermer la modal et retirer le voyage immédiatement
+    setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
+    setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
+    setChatMessagesByTrip((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[idStr];
+      return next;
+    });
+    if (String(chatTripId) === idStr) {
+      setChatTripId("");
+      setChatMessages([]);
+      setActivityVotes([]);
+      setChatActivities([]);
+    }
+    if (String(selectedTripId) === idStr) setSelectedTripId("");
+    setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
+    setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
+    setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
+    setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
+    setTripToDelete(null);
+    setDeletingTrip(false);
+
+    // Suppression serveur en arrière-plan (enfants en parallèle)
     try {
-      // Enfants d’abord : sinon la FK peut faire échouer la suppression ou laisser l’UI attendre le realtime.
-      const childTables = ["activity_votes", "chat_messages", "activities"];
-      for (const table of childTables) {
-        await supabase.from(table).delete().eq("trip_id", idStr);
-      }
+      await Promise.all([
+        supabase.from("activity_votes").delete().eq("trip_id", idStr),
+        supabase.from("chat_messages").delete().eq("trip_id", idStr),
+        supabase.from("activities").delete().eq("trip_id", idStr),
+      ]);
       const { error } = await supabase.from("trips").delete().eq("id", tid);
       if (error) throw error;
-
-      setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
-      setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
-      setChatMessagesByTrip((prev) => {
-        const next = { ...(prev || {}) };
-        delete next[idStr];
-        return next;
-      });
-      if (String(chatTripId) === idStr) {
-        setChatTripId("");
-        setChatMessages([]);
-        setActivityVotes([]);
-        setChatActivities([]);
-      }
-      if (String(selectedTripId) === idStr) {
-        setSelectedTripId("");
-      }
-      setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
-      setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
-      setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
-      setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
-
-      setNotice("");
-      setTripToDelete(null);
     } catch (e) {
       setNotice(String(e?.message || "Erreur suppression voyage"));
-    } finally {
-      setDeletingTrip(false);
     }
   };
 

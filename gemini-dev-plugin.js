@@ -681,6 +681,9 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), estimation en euros ; 0 si gratuit avéré.\n` +
         `- "costNote" : courte précision dans la même langue (ex. billet adulte, gratuit, déjeuner moyen).\n` +
         `- "description" : une phrase utile dans la même langue (durée, horaire type, conseil).\n` +
+        `IMPORTANT : les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
+        `Ne propose PAS d'activités liées à la mer, la plage ou le littoral si la ville est dans les terres. ` +
+        `Ne propose PAS de ski ou montagne si la ville n'est pas en zone montagneuse. ` +
         `Activités réalistes et visitables sur place.`;
       const systemInstruction =
         "Tu réponds uniquement par un objet JSON valide UTF-8. Le tableau suggestedActivities contient des activités touristiques concrètes dans la ville indiquée.";

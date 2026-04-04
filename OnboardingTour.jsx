@@ -140,12 +140,12 @@ const STEPS = [
 /* ─── SVG spotlight overlay ─────────────────────────────────────────────── */
 function SpotlightOverlay({ rect }) {
   if (!rect) return null;
-  const PAD = 10;
+  const PAD = 14;
   const cx = rect.x - PAD;
   const cy = rect.y - PAD;
   const cw = rect.width + PAD * 2;
   const ch = rect.height + PAD * 2;
-  const r = Math.min(20, ch / 2);
+  const r = Math.min(24, ch / 2);
 
   return (
     <svg
@@ -166,7 +166,8 @@ function SpotlightOverlay({ rect }) {
           <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="black" />
         </mask>
       </defs>
-      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.80)" mask="url(#tp-tour-mask)" />
+      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask="url(#tp-tour-mask)" />
+      <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="rgba(255,255,255,0.13)" stroke="none" />
       <rect
         x={cx}
         y={cy}
@@ -174,10 +175,12 @@ function SpotlightOverlay({ rect }) {
         height={ch}
         rx={r}
         fill="none"
-        stroke="rgba(99,102,241,0.9)"
-        strokeWidth="2.5"
-        style={{ filter: "drop-shadow(0 0 8px rgba(99,102,241,0.55))" }}
-      />
+        stroke="rgba(255,255,255,0.85)"
+        strokeWidth="3"
+        style={{ filter: "drop-shadow(0 0 12px rgba(99,102,241,0.7)) drop-shadow(0 0 28px rgba(255,255,255,0.35))" }}
+      >
+        <animate attributeName="stroke-opacity" values="0.85;0.4;0.85" dur="1.8s" repeatCount="indefinite" />
+      </rect>
     </svg>
   );
 }
