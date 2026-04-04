@@ -17,7 +17,7 @@ const MIN_RATIO = Number(process.env.MIN_HERO_WH_RATIO || "1.4");
 const DELAY_MS = Number(process.env.HERO_PROBE_DELAY_MS || "900");
 
 const UA =
-  "TriPlanner/1.0 (https://github.com/; verify-city-heroes; +https://foundation.wikimedia.org/wiki/Policy:User-Agent_Policy)";
+  "AVOLO/1.0 (https://github.com/; verify-city-heroes; +https://foundation.wikimedia.org/wiki/Policy:User-Agent_Policy)";
 
 const probeOpts = { headers: { "User-Agent": UA } };
 

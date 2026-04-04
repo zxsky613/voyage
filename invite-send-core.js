@@ -2,7 +2,7 @@
  * Envoi d’invitations voyage via Resend — partagé entre l’API Vercel et le middleware Vite (dev).
  */
 
-const DEFAULT_FROM = "Voyage Planner <onboarding@resend.dev>";
+const DEFAULT_FROM = "AVOLO <onboarding@resend.dev>";
 
 /**
  * @param {object} opts
@@ -64,7 +64,7 @@ export async function sendTripInvitesWithResend(opts) {
       "En ouvrant le lien, on te demandera ton prenom/nom puis si tu veux creer un compte.",
       "",
       "A bientot,",
-      "Voyage Planner",
+      "AVOLO",
     ]
       .filter(Boolean)
       .join("\n");
@@ -77,7 +77,7 @@ export async function sendTripInvitesWithResend(opts) {
           ${finalLink ? `<p><strong>Lien invitation:</strong> <a href="${escapeAttr(finalLink)}">${escapeHtml(finalLink)}</a></p>` : ""}
           ${progHtml}
           <p>En ouvrant le lien, on te demandera ton prenom/nom puis si tu veux creer un compte.</p>
-          <p>A bientot,<br/>Voyage Planner</p>
+          <p>A bientot,<br/>AVOLO</p>
         </div>
       `;
 

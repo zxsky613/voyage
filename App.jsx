@@ -4513,7 +4513,7 @@ function AuthView() {
                     aria-hidden
                   />
                   <AuthLandingLogoImg
-                    src="/LogoTriPlanner.png"
+                    src="/LogoAvolo.png"
                     alt={t("auth.logoAlt")}
                     className="relative z-[1] block h-[13.5rem] w-[13.5rem] max-w-[min(96vw,14rem)] object-contain object-top align-top [filter:drop-shadow(0_0_14px_rgba(255,255,255,0.95))_drop-shadow(0_0_36px_rgba(255,255,255,0.55))_drop-shadow(0_2px_12px_rgba(0,0,0,0.35))_brightness(1.14)_contrast(1.08)] sm:h-[17.5rem] sm:w-[17.5rem] sm:max-w-[18rem] sm:[filter:drop-shadow(0_0_16px_rgba(255,255,255,0.98))_drop-shadow(0_0_44px_rgba(255,255,255,0.5))_drop-shadow(0_3px_14px_rgba(0,0,0,0.3))_brightness(1.14)_contrast(1.08)]"
                   />
