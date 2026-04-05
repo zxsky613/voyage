@@ -384,9 +384,12 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isGroqItinerary   = pathname === "/api/groq/itinerary";
     const isGroqTips        = pathname === "/api/groq/tips";
     const isGroqDescription = pathname === "/api/groq/description";
+    const isGroqSuggestions = pathname === "/api/groq/suggestions";
+    const isGroqSuggestedActivities = pathname === "/api/groq/suggested-activities";
     if (
       !isSuggestions && !isSuggestedActivities && !isItinerary &&
-      !isFoursquare && !isGroqItinerary && !isGroqTips && !isGroqDescription
+      !isFoursquare && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
+      !isGroqSuggestions && !isGroqSuggestedActivities
     ) return next();
 
     // ── Route Foursquare ──────────────────────────────────────────────────────
@@ -440,7 +443,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     }
 
     // ── Routes Groq ──────────────────────────────────────────────────────────
-    if (isGroqItinerary || isGroqTips || isGroqDescription) {
+    if (isGroqItinerary || isGroqTips || isGroqDescription || isGroqSuggestions || isGroqSuggestedActivities) {
       const groqKey = readGroqKey(envDir);
       if (!groqKey) {
         sendJson(res, 503, {
@@ -561,6 +564,66 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         }
         return;
       }
+
+      // ── /api/groq/suggestions ─────────────────────────────────────────────
+      if (isGroqSuggestions) {
+        const uiLang = resolveGeminiUiLanguage(parsed);
+        const langRule = geminiLangRuleParagraph(uiLang);
+        const prompt =
+          `Tu agis comme un expert en voyage et conseiller touristique.\n` +
+          `DESTINATION UNIQUE : « ${destination} ».\n` +
+          `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
+          `{"places":[...],"tips":{"do":[...],"dont":[...]},"suggestedActivities":[...]}\n` +
+          `\nTableau "places" : 5 à 7 NOMS PROPRES de lieux RÉELS et CONCRETS à visiter.\n` +
+          `Chaque entrée DOIT être un nom propre précis : monument, musée, rue célèbre, sentier de randonnée, paysage, site naturel, place ou quartier iconique.\n` +
+          `Exemples de bons noms : "Calanques de Marseille", "Musée du Louvre", "Piazza San Marco".\n` +
+          `Exemples de MAUVAIS noms (INTERDIT) : "Musées et galeries", "Balade en ville", "Quartiers historiques".\n` +
+          `\n"tips.do" : 3 conseils pratiques spécifiques à « ${destination} ».\n` +
+          `"tips.dont" : 3 pièges à éviter.\n` +
+          `"suggestedActivities" : exactement 6 objets avec :\n` +
+          `- "title" : NOM PROPRE d'un lieu concret.\n` +
+          `- "location" : quartier ou adresse précise.\n` +
+          `- "estimatedCostEur" (nombre), "costNote", "description" (1 phrase).\n` +
+          `${langRule}`;
+        const systemPrompt =
+          "Tu réponds uniquement par un objet JSON valide UTF-8. " +
+          "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux réels.";
+        try {
+          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
+          if (data && typeof data === "object" && Array.isArray(data.places)) {
+            data.places = sanitizeMustSeePlaces(data.places, destination);
+          }
+          sendJson(res, 200, { ok: true, data });
+        } catch (e) {
+          sendJson(res, 502, { error: String(e?.message || e) });
+        }
+        return;
+      }
+
+      // ── /api/groq/suggested-activities ────────────────────────────────────
+      if (isGroqSuggestedActivities) {
+        const uiLang = resolveGeminiUiLanguage(parsed);
+        const langRule = geminiLangRuleParagraph(uiLang);
+        const prompt =
+          `Tu es conseiller voyage expert. Destination : « ${destination} ».\n` +
+          `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
+          `{"suggestedActivities":[...]}\n` +
+          `${langRule}\n` +
+          `Exactement 6 objets avec title, location, estimatedCostEur (nombre), costNote, description.\n` +
+          `Chaque "title" DOIT être le NOM PROPRE d'un lieu réel et concret.\n` +
+          `Les activités doivent correspondre à la géographie réelle de « ${destination} ».\n` +
+          `Variété : mélange monuments, musées, quartiers, nature, gastronomie locale.`;
+        const systemPrompt =
+          "Tu produis uniquement un objet JSON valide UTF-8. Chaque title doit être un nom propre de lieu réel.";
+        try {
+          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.25 });
+          const list = Array.isArray(data?.suggestedActivities) ? data.suggestedActivities : [];
+          sendJson(res, 200, { ok: true, data: { suggestedActivities: list } });
+        } catch (e) {
+          sendJson(res, 502, { error: String(e?.message || e) });
+        }
+        return;
+      }
     }
 
     const { key, env } = resolveGeminiApiKey(mode, envDir);
@@ -673,24 +736,26 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       const uiLang = resolveGeminiUiLanguage(parsed);
       const langRule = geminiLangRuleParagraph(uiLang);
       const prompt =
-        `Tu es conseiller voyage. Destination : « ${destination} ».\n` +
+        `Tu es conseiller voyage expert. Destination : « ${destination} ».\n` +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, de la forme exacte :\n` +
         `{"suggestedActivities":[...]}\n` +
         `\n` +
         `${langRule}\n` +
         `\n` +
-        `Tableau "suggestedActivities" : au moins 6 objets (pas de simples chaînes), chacun avec :\n` +
-        `- "title" : titre court dans la langue indiquée.\n` +
-        `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, repère réel), dans la même langue.\n` +
+        `Tableau "suggestedActivities" : exactement 6 objets (pas de simples chaînes), chacun avec :\n` +
+        `- "title" : le NOM PROPRE d'un lieu, monument, musée, sentier, rue ou site CONCRET et RÉEL.\n` +
+        `  Exemples de bons titres : "Musée du Louvre", "Sentier des douaniers (GR34)", "Quartier Shibuya", "Brooklyn Bridge".\n` +
+        `  Exemples de MAUVAIS titres (INTERDIT) : "Visite des musées", "Balade en ville", "Tour culinaire", "Point de vue".\n` +
+        `- "location" : quartier ou adresse précise dans « ${destination} ».\n` +
         `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), estimation en euros ; 0 si gratuit avéré.\n` +
         `- "costNote" : courte précision dans la même langue (ex. billet adulte, gratuit, déjeuner moyen).\n` +
         `- "description" : une phrase utile dans la même langue (durée, horaire type, conseil).\n` +
-        `IMPORTANT : les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
-        `Ne propose PAS d'activités liées à la mer, la plage ou le littoral si la ville est dans les terres. ` +
-        `Ne propose PAS de ski ou montagne si la ville n'est pas en zone montagneuse. ` +
-        `Activités réalistes et visitables sur place.`;
+        `Les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
+        `Ne propose PAS d'activités liées à la mer si la ville est dans les terres. ` +
+        `Ne propose PAS de ski si la ville n'est pas en zone montagneuse.\n` +
+        `Variété : mélange monuments, musées, quartiers, nature, gastronomie locale.`;
       const systemInstruction =
-        "Tu réponds uniquement par un objet JSON valide UTF-8. Le tableau suggestedActivities contient des activités touristiques concrètes dans la ville indiquée.";
+        "Tu réponds uniquement par un objet JSON valide UTF-8. Chaque title doit être un nom propre de lieu réel et concret, jamais une description générique.";
       try {
         const data = await runGeminiJson({
           key,
@@ -735,27 +800,28 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `(Pas de champ "summary" : la description affichée vient de Wikipédia côté app.)\n` +
       `\n` +
       `Tableau "places" — lieux incontournables (OBLIGATOIRE) :\n` +
-      `- Entre 5 et 7 entrées : minimum 5, maximum 7.\n` +
-      `- Uniquement des monuments, musées, parcs, places, quartiers emblématiques, points de vue, sites classiques que les touristes vont réellement voir à « ${destination} ».\n` +
+      `- Entre 5 et 7 NOMS PROPRES de lieux RÉELS et CONCRETS.\n` +
+      `- Chaque entrée DOIT être un nom propre précis : monument, musée, rue célèbre, sentier de randonnée, paysage naturel, site classé, place ou quartier iconique.\n` +
+      `- Exemples de bons noms : "Calanques de Marseille", "Musée du Louvre", "Piazza San Marco", "GR20 (étape Vizzavona)".\n` +
+      `- Exemples de MAUVAIS noms (INTERDIT) : "Musées et galeries", "Quartiers historiques", "Points de vue", "Architecture locale".\n` +
       `- Noms courts (2 à 8 mots), comme sur Google Maps ou un guide Lonely Planet pour CETTE ville.\n` +
       `\n` +
       `"tips.do" : exactement 3 chaînes — conseils d’expert PRATIQUES et SPÉCIFIQUES à « ${destination} » ` +
       `(transports réels, monuments ou quartiers nommés, usages locaux, pièges typiques de cette ville). ` +
-      `Interdit : phrases génériques valables pour n’importe quelle ville (« réserve à l’avance » sans dire quoi, « respecte les locaux » sans contexte).\n` +
-      `"tips.dont" : au moins 3 pièges ou erreurs à éviter, eux aussi ancrés dans « ${destination} » quand c’est possible.\n` +
+      `Interdit : phrases génériques valables pour n'importe quelle ville.\n` +
+      `"tips.dont" : au moins 3 pièges ou erreurs à éviter, eux aussi ancrés dans « ${destination} ».\n` +
       `\n` +
-      `Tableau "suggestedActivities" — au moins 6 objets (pas de simples chaînes), chaque objet avec :\n` +
-      `- "title" : titre court de l’activité.\n` +
-      `- "location" : où la faire dans ou près de « ${destination} » (quartier, monument, adresse approximative ou point de repère réel, ex. "Alfama, Lisbonne" ou "Miradouro da Senhora do Monte"), dans la langue de sortie.\n` +
-      `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), entier ou une décimale, estimation réaliste en euros pour un visiteur type (billets, repas, transport local si pertinent) ; 0 seulement si gratuit avéré.\n` +
-      `- "costNote" : courte précision dans la langue de sortie (ex. billet adulte, gratuit, déjeuner moyen).\n` +
+      `Tableau "suggestedActivities" — exactement 6 objets, chaque objet avec :\n` +
+      `- "title" : NOM PROPRE d'un lieu concret et réel (même règle que places — jamais de description générique).\n` +
+      `- "location" : quartier ou adresse précise dans « ${destination} ».\n` +
+      `- "estimatedCostEur" : nombre JSON uniquement, estimation réaliste en euros ; 0 si gratuit avéré.\n` +
+      `- "costNote" : courte précision dans la langue de sortie (ex. billet adulte, gratuit).\n` +
       `- "description" : une phrase utile (horaires types, durée, conseil pratique) dans la langue de sortie.\n` +
-      `Pas de dates inventées pour le séjour.\n` +
       `${langRule}`;
 
     const systemInstruction =
       "Tu réponds uniquement par un objet JSON valide UTF-8. " +
-      "Le tableau \"places\" ne contient que des lieux géographiques visitables dans la ville nommée dans la consigne, jamais des personnes ni des œuvres de fiction.";
+      "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux géographiques réels visitables dans la ville nommée, jamais de descriptions génériques, personnes ni œuvres de fiction.";
 
     try {
       const data = await runGeminiJson({

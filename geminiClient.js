@@ -90,6 +90,36 @@ export async function fetchGroqItinerary({ destination, startDate, endDate, lang
 }
 
 /**
+ * Suggestions complètes (places + tips + activities) via Groq — prioritaire sur Gemini.
+ */
+export async function fetchGroqTripSuggestions({ destination, days = 3, language = "fr" }) {
+  const r = await fetch("/api/groq/suggestions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, days, language }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
+  }
+  return j;
+}
+
+/** Activités proposées via Groq — prioritaire sur Gemini. */
+export async function fetchGroqSuggestedActivities({ destination, language = "fr" }) {
+  const r = await fetch("/api/groq/suggested-activities", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, language }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
+  }
+  return j;
+}
+
+/**
  * Génère des conseils d'expert (do / don't) via Groq pour une destination.
  * Retourne { ok, data: { tips: { do: string[], dont: string[] } } }.
  */

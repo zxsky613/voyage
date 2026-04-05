@@ -38,6 +38,8 @@ import {
   fetchGeminiItinerary,
   fetchGroqItinerary,
   fetchGroqTips,
+  fetchGroqTripSuggestions,
+  fetchGroqSuggestedActivities,
 } from "./geminiClient.js";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
@@ -1352,7 +1354,7 @@ function dedupeImageUrlChain(urls) {
   return out;
 }
 
-async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 3200) {
+async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 1920, { rejectPortrait = false } = {}) {
   const t = String(title || "").trim();
   if (!t) return "";
   try {
@@ -1366,6 +1368,9 @@ async function fetchWikiPageImageApi(wikiHost, title, thumbSize = 3200) {
     if (!pages || typeof pages !== "object") return "";
     const page = Object.values(pages)[0];
     if (!page || page.missing === true || Number(page.pageid) < 0) return "";
+    const tw = Number(page.thumbnail?.width || 0);
+    const th = Number(page.thumbnail?.height || 0);
+    if (rejectPortrait && tw > 0 && th > 0 && th > tw * 1.15) return "";
     const thumb = String(page.thumbnail?.source || "").trim();
     return thumb ? upgradeLandscapeImageUrl(thumb) : "";
   } catch (_e) {
@@ -1485,8 +1490,6 @@ const CITY_HERO_IMAGE_URL_LISTS = Object.freeze({
   ],
 });
 
-const WIKIMEDIA_THUMB_MIN_WIDTH = 1600;
-const WIKIMEDIA_THUMB_MAX_WIDTH = 2400;
 
 /**
  * Passe les miniatures Commons (/320px-, /800px-, …) à une largeur adaptée aux cartes HD / mobile retina.
@@ -1495,15 +1498,7 @@ const WIKIMEDIA_THUMB_MAX_WIDTH = 2400;
 function upgradeWikimediaCommonsThumbUrl(url) {
   const u = String(url || "").trim();
   if (!u.includes("upload.wikimedia.org") || !u.includes("/thumb/")) return u;
-  return u.replace(/\/(\d{2,4})px-([^/?#]+)$/i, (full, w, rest) => {
-    const cur = parseInt(w, 10) || 0;
-    if (cur >= WIKIMEDIA_THUMB_MIN_WIDTH) return full;
-    const nw = Math.min(
-      Math.max(WIKIMEDIA_THUMB_MIN_WIDTH, cur),
-      WIKIMEDIA_THUMB_MAX_WIDTH
-    );
-    return `/${nw}px-${rest}`;
-  });
+  return u.replace(/\/\d+px-([^/?#]+)$/i, "/1920px-$1");
 }
 
 /** Unsplash : élargit w= dans l’URL (regular ~1080px → ~2400px si la photo le permet). */
@@ -1560,6 +1555,8 @@ function isLikelyWikiBrandOrLogoImage(url, fileTitle = "") {
   if (/\blogo\b/i.test(ft) && /\.(svg|png|gif)/i.test(ft)) return true;
   if (u.includes(".svg.png") && /logo|wordmark|emblem|icon/i.test(hay)) return true;
   if (/^file:[^|]+_logo\.(svg|png)/i.test(String(fileTitle || ""))) return true;
+  if (/\b(openstreetmap|osm[_-]|locator[_-]?map|location[_-]?map|map[_-]?of[_-]|relief[_-]?map|carte[_-]|karte[_-]|plan[_-]d|stadtplan|lageplan)\b/i.test(hay)) return true;
+  if (/\bmap\.(?:svg|png)\b/i.test(hay)) return true;
   return false;
 }
 
@@ -1614,6 +1611,8 @@ function scoreWikiMediaItemForPlaceHero(fileTitle, pageUrl, sectionId) {
     if (sec >= 49) s -= 40;
   }
   if (/_met_dt|_met_dp|_met_ada|_dp\d|_dt\d|standing_hippopotamus|pendant_mask|oil_on_canvas|portrait of|by_|\bminiature\b/i.test(hay)) s -= 28;
+  if (/\b(openstreetmap|osm[_-]|locator[_-]?map|location[_-]?map|map[_-]?of[_-]|relief[_-]?map|carte[_-]|karte[_-]|plan[_-]d|stadtplan|lageplan)\b/i.test(hay)) s -= 500;
+  if (/\bmap\.(?:svg|png)\b/i.test(hay)) s -= 500;
   return s;
 }
 
@@ -1716,7 +1715,7 @@ function buildCityImageUrl(prompt) {
 
 function getCityImageCacheKey(cityInput) {
   const stem = heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || String(cityInput || "").trim();
-  return `v54:${String(stem)
+  return `v58:${String(stem)
     .trim()
     .toLowerCase()}`;
 }
@@ -1918,7 +1917,6 @@ function isCityCoastal(cityName) {
 function buildSuggestedActivitiesForCity(city) {
   const c = String(city || "").toLowerCase();
   const label = String(city || "").trim() || "la destination";
-  const coastal = isCityCoastal(city);
   const act = (title, estimatedCostEur, costNote = "", location = "") => {
     const o = { title, estimatedCostEur: clampActivityCostEUR(estimatedCostEur) };
     const note = String(costNote || "").trim();
@@ -1927,58 +1925,254 @@ function buildSuggestedActivitiesForCity(city) {
     if (loc) o.location = loc;
     return o;
   };
-  const waterActivity = coastal
-    ? act("Balade le long du front de mer", 0, "Souvent gratuit", label)
-    : act("Balade dans les parcs et jardins", 0, "Souvent gratuit", label);
-  const base = [
-    act("Visite des quartiers historiques", 0, "Variable (gratuit ou billets sur place)", label),
-    act("Tour culinaire local", 35, "", label),
-    act("Point de vue au coucher du soleil", 0, "Souvent gratuit", label),
-    act("Musee ou galerie incontournable", 18, "Entr\u00e9e type \u2014 selon lieu", label),
-    waterActivity,
-    act("Marche local & specialites regionales", 0, "Gratuit (achats en sus)", label),
-  ];
   if (c.includes("tokyo")) {
     return [
-      act("Shibuya & Shinjuku", 0, "Gratuit (déplacements en sus)", "Tokyo"),
-      act("Temple Senso-ji", 0, "Gratuit (temple)", "Tokyo"),
-      act("Sushi local", 45, "Repas type", "Tokyo"),
-      act("Vue depuis Shibuya Sky", 24, "", "Tokyo"),
-      act("Sanctuaire Meiji & Yoyogi", 0, "Gratuit (sanctuaire)", "Tokyo"),
-      act("Tsukiji / Toyosu — marche & street food", 25, "Repas selon stands", "Tokyo"),
+      act("Croisement de Shibuya", 0, "Gratuit", "Shibuya, Tokyo"),
+      act("Temple Senso-ji", 0, "Gratuit", "Asakusa, Tokyo"),
+      act("Marché Tsukiji Outer Market", 25, "Street food", "Chuo, Tokyo"),
+      act("Shibuya Sky", 24, "Billet adulte", "Shibuya, Tokyo"),
+      act("Sanctuaire Meiji-jingu", 0, "Gratuit", "Harajuku, Tokyo"),
+      act("Parc Ueno & Musée national", 10, "Entrée musée", "Ueno, Tokyo"),
     ];
   }
   if (c.includes("paris")) {
     return [
-      act("Tour Eiffel", 29, "", "Paris"),
-      act("Musée du Louvre", 22, "", "Paris"),
-      act("Croisière sur la Seine", 16, "", "Paris"),
-      act("Montmartre", 0, "Gratuit (balade — musées / funiculaire en sus)", "Paris"),
-      act("Le Marais — balade & patrimoine", 0, "Gratuit (musées en sus)", "Paris"),
-      act("Musée d'Orsay", 16, "Entrée indicative", "Paris"),
+      act("Tour Eiffel", 29, "Billet sommet", "Champ de Mars, Paris"),
+      act("Musée du Louvre", 22, "Billet adulte", "1er arr., Paris"),
+      act("Basilique du Sacré-Cœur", 0, "Gratuit", "Montmartre, Paris"),
+      act("Champs-Élysées & Arc de Triomphe", 16, "Montée Arc de Triomphe", "8e arr., Paris"),
+      act("Le Marais & Place des Vosges", 0, "Gratuit", "3e-4e arr., Paris"),
+      act("Musée d'Orsay", 16, "Billet adulte", "7e arr., Paris"),
     ];
   }
   if (c.includes("bali")) {
     return [
-      act("Temple Uluwatu", 5, "Entrée indicative", "Bali"),
-      act("Rizières de Tegallalang", 3, "Don / parking selon accès", "Bali"),
-      act("Plage de Canggu", 0, "Gratuit", "Bali"),
-      act("Session surf", 25, "Cours / location board — ordre de grandeur", "Bali"),
-      act("Ubud — rizières & ateliers artisanaux", 0, "Gratuit (cours / achats en sus)", "Bali"),
-      act("Massage balinais traditionnel", 35, "Selon spa", "Bali"),
+      act("Temple Uluwatu", 5, "Entrée indicative", "Pecatu, Bali"),
+      act("Rizières de Tegallalang", 3, "Don / parking", "Ubud, Bali"),
+      act("Plage de Seminyak", 0, "Gratuit", "Seminyak, Bali"),
+      act("Forêt des singes d'Ubud", 5, "Entrée", "Ubud, Bali"),
+      act("Temple Tirta Empul", 5, "Entrée", "Tampaksiring, Bali"),
+      act("Mont Batur (lever de soleil)", 35, "Guide + transport", "Kintamani, Bali"),
     ];
   }
   if (c.includes("new york")) {
     return [
-      act("Central Park", 0, "Gratuit", "New York"),
-      act("Brooklyn Bridge", 0, "Gratuit", "New York"),
-      act("Top of the Rock", 44, "", "New York"),
-      act("SoHo & Greenwich", 0, "Gratuit (shopping / repas en sus)", "New York"),
-      act("High Line", 0, "Gratuit", "New York"),
-      act("MET ou MoMA", 28, "Entrée indicative — selon musée", "New York"),
+      act("Central Park", 0, "Gratuit", "Manhattan, New York"),
+      act("Brooklyn Bridge", 0, "Gratuit", "Brooklyn / Manhattan"),
+      act("Top of the Rock", 44, "Billet adulte", "Rockefeller Center, NYC"),
+      act("High Line", 0, "Gratuit", "Chelsea, Manhattan"),
+      act("Metropolitan Museum of Art", 30, "Donation suggérée", "Upper East Side, NYC"),
+      act("Times Square & Broadway", 0, "Gratuit (spectacles en sus)", "Midtown, Manhattan"),
     ];
   }
-  return base;
+  if (c.includes("london") || c.includes("londres")) {
+    return [
+      act("British Museum", 0, "Gratuit", "Bloomsbury, Londres"),
+      act("Tower of London", 33, "Billet adulte", "Tower Hill, Londres"),
+      act("Buckingham Palace", 0, "Gratuit (relève de la garde)", "Westminster, Londres"),
+      act("Borough Market", 0, "Gratuit (repas en sus)", "Southwark, Londres"),
+      act("Hyde Park & Kensington Gardens", 0, "Gratuit", "Westminster, Londres"),
+      act("Tate Modern", 0, "Gratuit", "Bankside, Londres"),
+    ];
+  }
+  if (c.includes("barcelona") || c.includes("barcelone")) {
+    return [
+      act("Sagrada Família", 26, "Billet adulte", "Eixample, Barcelone"),
+      act("Parc Güell", 10, "Billet zone monumentale", "Gràcia, Barcelone"),
+      act("La Rambla & Marché de la Boqueria", 0, "Gratuit (achats en sus)", "Ciutat Vella, Barcelone"),
+      act("Quartier Gothique (Barri Gòtic)", 0, "Gratuit", "Ciutat Vella, Barcelone"),
+      act("Plage de la Barceloneta", 0, "Gratuit", "Barceloneta, Barcelone"),
+      act("Casa Batlló", 35, "Billet adulte", "Passeig de Gràcia, Barcelone"),
+    ];
+  }
+  if (c.includes("rome") || c.includes("roma")) {
+    return [
+      act("Colisée", 18, "Billet combiné Forum", "Centro Storico, Rome"),
+      act("Basilique Saint-Pierre", 0, "Gratuit (coupole 8€)", "Vatican, Rome"),
+      act("Fontaine de Trevi", 0, "Gratuit", "Centro Storico, Rome"),
+      act("Panthéon", 5, "Billet adulte", "Piazza della Rotonda, Rome"),
+      act("Quartier du Trastevere", 0, "Gratuit", "Trastevere, Rome"),
+      act("Forum romain & Palatin", 18, "Billet combiné Colisée", "Centro Storico, Rome"),
+    ];
+  }
+  if (c.includes("amsterdam")) {
+    return [
+      act("Rijksmuseum", 22, "Billet adulte", "Museumplein, Amsterdam"),
+      act("Maison d'Anne Frank", 16, "Réservation obligatoire", "Prinsengracht, Amsterdam"),
+      act("Vondelpark", 0, "Gratuit", "Amsterdam-Zuid"),
+      act("Quartier Jordaan", 0, "Gratuit", "Jordaan, Amsterdam"),
+      act("Croisière sur les canaux", 16, "Billet type", "Centre, Amsterdam"),
+      act("Musée Van Gogh", 20, "Billet adulte", "Museumplein, Amsterdam"),
+    ];
+  }
+  if (c.includes("marseille")) {
+    return [
+      act("Vieux-Port", 0, "Gratuit", "Vieux-Port, Marseille"),
+      act("Basilique Notre-Dame de la Garde", 0, "Gratuit", "Colline de la Garde, Marseille"),
+      act("Calanques de Marseille", 0, "Gratuit (randonnée)", "Parc national des Calanques"),
+      act("MuCEM", 11, "Billet adulte", "J4, Marseille"),
+      act("Quartier du Panier", 0, "Gratuit", "Le Panier, Marseille"),
+      act("Château d'If", 6, "Billet + navette", "Île d'If, Marseille"),
+    ];
+  }
+  if (c.includes("lyon")) {
+    return [
+      act("Vieux Lyon & traboules", 0, "Gratuit", "Vieux Lyon, Lyon"),
+      act("Basilique de Fourvière", 0, "Gratuit", "Fourvière, Lyon"),
+      act("Parc de la Tête d'Or", 0, "Gratuit", "6e arr., Lyon"),
+      act("Halles Paul Bocuse", 0, "Gratuit (repas en sus)", "Part-Dieu, Lyon"),
+      act("Musée des Confluences", 12, "Billet adulte", "Confluence, Lyon"),
+      act("Place Bellecour & Presqu'île", 0, "Gratuit", "2e arr., Lyon"),
+    ];
+  }
+  if (c.includes("istanbul")) {
+    return [
+      act("Sainte-Sophie", 25, "Billet adulte", "Sultanahmet, Istanbul"),
+      act("Mosquée Bleue", 0, "Gratuit", "Sultanahmet, Istanbul"),
+      act("Grand Bazar", 0, "Gratuit (achats en sus)", "Beyazıt, Istanbul"),
+      act("Palais de Topkapı", 20, "Billet adulte", "Sultanahmet, Istanbul"),
+      act("Croisière sur le Bosphore", 15, "Billet ferry public", "Eminönü, Istanbul"),
+      act("Tour de Galata", 10, "Billet adulte", "Beyoğlu, Istanbul"),
+    ];
+  }
+  if (c.includes("dubai") || c.includes("dubaï")) {
+    return [
+      act("Burj Khalifa — At the Top", 45, "Billet 124e étage", "Downtown Dubai"),
+      act("Souk de l'Or & Souk aux Épices", 0, "Gratuit", "Deira, Dubaï"),
+      act("Dubai Mall & Fontaines", 0, "Gratuit", "Downtown Dubai"),
+      act("Quartier historique Al Fahidi", 0, "Gratuit", "Bur Dubai"),
+      act("Désert — safari en 4x4", 60, "Excursion demi-journée", "Désert de Dubaï"),
+      act("Plage de Jumeirah", 0, "Gratuit", "Jumeirah, Dubaï"),
+    ];
+  }
+  if (c.includes("marrakech")) {
+    return [
+      act("Place Jemaa el-Fna", 0, "Gratuit", "Médina, Marrakech"),
+      act("Jardin Majorelle", 14, "Billet adulte", "Guéliz, Marrakech"),
+      act("Palais Bahia", 7, "Billet adulte", "Médina, Marrakech"),
+      act("Souks de la Médina", 0, "Gratuit (achats en sus)", "Médina, Marrakech"),
+      act("Tombeaux Saadiens", 7, "Billet adulte", "Kasbah, Marrakech"),
+      act("Médersa Ben Youssef", 5, "Billet adulte", "Médina, Marrakech"),
+    ];
+  }
+  if (c.includes("lisbonne") || c.includes("lisbon") || c.includes("lisboa")) {
+    return [
+      act("Tour de Belém", 10, "Billet adulte", "Belém, Lisbonne"),
+      act("Monastère des Hiéronymites", 10, "Billet adulte", "Belém, Lisbonne"),
+      act("Tramway 28", 3, "Ticket trajet", "Graça → Estrela, Lisbonne"),
+      act("Quartier de l'Alfama", 0, "Gratuit", "Alfama, Lisbonne"),
+      act("Pastéis de Belém", 5, "Dégustation", "Belém, Lisbonne"),
+      act("Miradouro da Graça", 0, "Gratuit", "Graça, Lisbonne"),
+    ];
+  }
+  if (c.includes("caire") || c.includes("cairo")) {
+    return [
+      act("Pyramides de Gizeh", 15, "Billet adulte", "Gizeh, Le Caire"),
+      act("Sphinx de Gizeh", 0, "Inclus avec Pyramides", "Gizeh, Le Caire"),
+      act("Musée égyptien du Caire", 10, "Billet adulte", "Place Tahrir, Le Caire"),
+      act("Khan el-Khalili", 0, "Gratuit (achats en sus)", "Vieux Caire"),
+      act("Mosquée Mohammed Ali", 5, "Billet adulte", "Citadelle, Le Caire"),
+      act("Quartier copte du Vieux Caire", 0, "Gratuit", "Vieux Caire"),
+    ];
+  }
+  if (c.includes("athènes") || c.includes("athens") || c.includes("athina") || c.includes("athenes")) {
+    return [
+      act("Acropole & Parthénon", 20, "Billet combiné", "Acropole, Athènes"),
+      act("Musée de l'Acropole", 10, "Billet adulte", "Makrigianni, Athènes"),
+      act("Quartier de Pláka", 0, "Gratuit", "Pláka, Athènes"),
+      act("Agora antique", 10, "Billet adulte", "Monastiráki, Athènes"),
+      act("Place Syntagma & Relève de la garde", 0, "Gratuit", "Syntagma, Athènes"),
+      act("Mont Lycabette", 0, "Gratuit (téléphérique ~7€)", "Kolonáki, Athènes"),
+    ];
+  }
+  if (c.includes("berlin")) {
+    return [
+      act("Porte de Brandebourg", 0, "Gratuit", "Mitte, Berlin"),
+      act("Île aux Musées (Museumsinsel)", 19, "Pass musées", "Mitte, Berlin"),
+      act("East Side Gallery", 0, "Gratuit", "Friedrichshain, Berlin"),
+      act("Mémorial du Mur de Berlin", 0, "Gratuit", "Bernauer Straße, Berlin"),
+      act("Reichstag (Coupole)", 0, "Gratuit (réservation)", "Mitte, Berlin"),
+      act("Checkpoint Charlie", 0, "Gratuit", "Kreuzberg, Berlin"),
+    ];
+  }
+  if (c.includes("prague") || c.includes("praha")) {
+    return [
+      act("Pont Charles", 0, "Gratuit", "Vieille Ville / Malá Strana, Prague"),
+      act("Château de Prague", 15, "Circuit long", "Hradčany, Prague"),
+      act("Place de la Vieille-Ville & Horloge astronomique", 0, "Gratuit", "Staré Město, Prague"),
+      act("Quartier Josefov (ancien ghetto juif)", 12, "Billet combiné", "Josefov, Prague"),
+      act("Mur John Lennon", 0, "Gratuit", "Malá Strana, Prague"),
+      act("Petřín (colline & tour)", 5, "Billet tour", "Petřín, Prague"),
+    ];
+  }
+  if (c.includes("bangkok")) {
+    return [
+      act("Grand Palais (Wat Phra Kaeo)", 15, "Billet adulte", "Phra Nakhon, Bangkok"),
+      act("Wat Pho (Bouddha couché)", 5, "Billet adulte", "Phra Nakhon, Bangkok"),
+      act("Wat Arun (Temple de l'Aube)", 3, "Billet adulte", "Bangkok Yai, Bangkok"),
+      act("Marché flottant de Damnoen Saduak", 10, "Transport + entrée", "Ratchaburi, Bangkok"),
+      act("Chatuchak Weekend Market", 0, "Gratuit (achats en sus)", "Chatuchak, Bangkok"),
+      act("Chinatown de Bangkok (Yaowarat)", 0, "Gratuit (street food en sus)", "Samphanthawong, Bangkok"),
+    ];
+  }
+  if (c.includes("séville") || c.includes("seville") || c.includes("sevilla")) {
+    return [
+      act("Alcázar de Séville", 14, "Billet adulte", "Santa Cruz, Séville"),
+      act("Cathédrale de Séville & Giralda", 12, "Billet adulte", "Centre, Séville"),
+      act("Plaza de España", 0, "Gratuit", "Parque de María Luisa, Séville"),
+      act("Quartier de Santa Cruz", 0, "Gratuit", "Santa Cruz, Séville"),
+      act("Spectacle de Flamenco", 25, "Billet type", "Triana, Séville"),
+      act("Torre del Oro", 3, "Billet adulte", "Arenal, Séville"),
+    ];
+  }
+  if (c.includes("vienne") || c.includes("vienna") || c.includes("wien")) {
+    return [
+      act("Château de Schönbrunn", 22, "Grand Tour", "Hietzing, Vienne"),
+      act("Cathédrale Saint-Étienne (Stephansdom)", 0, "Gratuit (tours payantes)", "Innere Stadt, Vienne"),
+      act("Palais du Belvédère", 16, "Billet adulte", "Landstraße, Vienne"),
+      act("Hofburg (Palais impérial)", 18, "Billet combiné", "Innere Stadt, Vienne"),
+      act("Naschmarkt", 0, "Gratuit (repas en sus)", "Mariahilf, Vienne"),
+      act("Prater & Grande Roue", 13, "Billet Grande Roue", "Leopoldstadt, Vienne"),
+    ];
+  }
+  if (c.includes("milan") || c.includes("milano")) {
+    return [
+      act("Dôme de Milan (Duomo)", 15, "Billet terrasses", "Piazza del Duomo, Milan"),
+      act("La Cène de Léonard de Vinci", 15, "Réservation obligatoire", "Santa Maria delle Grazie, Milan"),
+      act("Galerie Vittorio Emanuele II", 0, "Gratuit", "Piazza del Duomo, Milan"),
+      act("Château des Sforza", 5, "Billet musées", "Parco Sempione, Milan"),
+      act("Quartier des Navigli", 0, "Gratuit", "Navigli, Milan"),
+      act("Pinacothèque de Brera", 15, "Billet adulte", "Brera, Milan"),
+    ];
+  }
+  if (c.includes("sydney")) {
+    return [
+      act("Opéra de Sydney", 30, "Visite guidée", "Bennelong Point, Sydney"),
+      act("Harbour Bridge", 0, "Gratuit (BridgeClimb ~200€)", "Sydney Harbour"),
+      act("Bondi Beach", 0, "Gratuit", "Bondi, Sydney"),
+      act("Royal Botanic Garden", 0, "Gratuit", "Sydney CBD"),
+      act("The Rocks (quartier historique)", 0, "Gratuit", "The Rocks, Sydney"),
+      act("Taronga Zoo", 38, "Billet adulte", "Mosman, Sydney"),
+    ];
+  }
+  if (c.includes("singapour") || c.includes("singapore")) {
+    return [
+      act("Gardens by the Bay", 20, "Billet Flower Dome + Cloud Forest", "Marina Bay, Singapour"),
+      act("Marina Bay Sands SkyPark", 23, "Billet adulte", "Marina Bay, Singapour"),
+      act("Chinatown & Temple de la Dent de Bouddha", 0, "Gratuit", "Chinatown, Singapour"),
+      act("Little India", 0, "Gratuit", "Little India, Singapour"),
+      act("Sentosa Island", 0, "Gratuit (attractions en sus)", "Sentosa, Singapour"),
+      act("Hawker centres (Maxwell ou Lau Pa Sat)", 5, "Repas type", "Centre, Singapour"),
+    ];
+  }
+  return [
+    act("Centre historique de " + label, 0, "Gratuit", label),
+    act("Principal musée de " + label, 15, "Entrée type", label),
+    act("Monument emblématique de " + label, 10, "Entrée type", label),
+    act("Marché local de " + label, 0, "Gratuit (achats en sus)", label),
+    act("Parc ou jardin principal de " + label, 0, "Gratuit", label),
+    act("Quartier pittoresque de " + label, 0, "Gratuit", label),
+  ];
 }
 
 /**
@@ -2399,6 +2593,12 @@ function expandMustSeePlaceSegments(rawTitle) {
   }
   add(chunks[0] || p);
   if (chunks.length > 1) add(p);
+  const stripped = p.replace(/\s*\(.*?\)\s*/g, " ").replace(/\s*[—–]\s*.+$/, "").trim();
+  if (stripped && stripped !== p) add(stripped);
+  for (const c of chunks) {
+    const cs = c.replace(/\s*\(.*?\)\s*/g, " ").replace(/\s*[—–]\s*.+$/, "").trim();
+    if (cs && cs !== c) add(cs);
+  }
   return ordered;
 }
 
@@ -2412,14 +2612,119 @@ function enWikipediaAliasTitles(segment) {
     const t = String(x || "").trim();
     if (t && !out.includes(t)) out.push(t);
   };
-  if (/statue\s+de\s+la\s+libert/i.test(s)) push("Statue of Liberty");
-  if (/ellis\s+island/i.test(lower)) push("Ellis Island");
-  if (/one\s*world\s*(trade|center|tower)/i.test(lower)) push("One World Trade Center");
-  if (/high\s*line/i.test(lower)) push("High Line");
-  if (/times\s*square/i.test(lower)) push("Times Square");
-  if (/brooklyn\s*bridge/i.test(lower)) push("Brooklyn Bridge");
-  if (/central\s*park/i.test(lower)) push("Central Park");
-  if (/empire\s*state/i.test(lower)) push("Empire State Building");
+  const MAP = [
+    [/statue\s+de\s+la\s+libert/i, "Statue of Liberty"],
+    [/ellis\s+island/i, "Ellis Island"],
+    [/one\s*world\s*(trade|center|tower)/i, "One World Trade Center"],
+    [/high\s*line/i, "High Line"],
+    [/times\s*square/i, "Times Square"],
+    [/brooklyn\s*bridge/i, "Brooklyn Bridge"],
+    [/central\s*park/i, "Central Park"],
+    [/empire\s*state/i, "Empire State Building"],
+    [/tour\s*eiffel/i, "Eiffel Tower"],
+    [/mus[eé]+e?\s*(du\s+)?louvre/i, "Louvre"],
+    [/mus[eé]+e?\s*(du\s+)?prado/i, "Museo del Prado"],
+    [/mus[eé]+e?\s*d['']?orsay/i, "Musée d'Orsay"],
+    [/arc\s*de\s*triomphe/i, "Arc de Triomphe"],
+    [/notre[\s-]*dame\b/i, "Notre-Dame de Paris"],
+    [/sacr[eé][\s-]*c[oœ]ur/i, "Basilica of the Sacred Heart of Paris"],
+    [/champs[\s-]*[eé]lys[eé]+s/i, "Champs-Élysées"],
+    [/sagrada\s*fam[ií]lia/i, "Sagrada Família"],
+    [/parc?\s*g[uü]ell/i, "Park Güell"],
+    [/casa\s*batll[oó]/i, "Casa Batlló"],
+    [/la\s*rambla/i, "La Rambla, Barcelona"],
+    [/colis[eé]+/i, "Colosseum"],
+    [/colis[eé]+o/i, "Colosseum"],
+    [/colosseum/i, "Colosseum"],
+    [/fontaine\s*de\s*tr[eé]vi/i, "Trevi Fountain"],
+    [/panth[eé]on\s*.*rom/i, "Pantheon, Rome"],
+    [/chapelle\s*sixtine/i, "Sistine Chapel"],
+    [/basilique\s*saint[\s-]*pierre/i, "St. Peter's Basilica"],
+    [/place\s*saint[\s-]*marc/i, "Piazza San Marco"],
+    [/pont\s*du\s*rialto/i, "Rialto Bridge"],
+    [/palais\s*des\s*doges/i, "Doge's Palace"],
+    [/big\s*ben/i, "Big Ben"],
+    [/tower\s*bridge/i, "Tower Bridge"],
+    [/tower\s*of\s*london/i, "Tower of London"],
+    [/buckingham/i, "Buckingham Palace"],
+    [/westminster\s*(abbey|abb)/i, "Westminster Abbey"],
+    [/british\s*museum/i, "British Museum"],
+    [/hagia\s*sophia/i, "Hagia Sophia"],
+    [/sainte[\s-]*sophie/i, "Hagia Sophia"],
+    [/mosqu[eé]+e?\s*(bleue|sultan\s*ahmed)/i, "Sultan Ahmed Mosque"],
+    [/topkapi/i, "Topkapı Palace"],
+    [/grand\s*bazar/i, "Grand Bazaar, Istanbul"],
+    [/palais\s*royal\s*.*madrid/i, "Royal Palace of Madrid"],
+    [/plaza\s*mayor/i, "Plaza Mayor, Madrid"],
+    [/vieux[\s-]*port\s*.*marseille/i, "Old Port of Marseille"],
+    [/vieux[\s-]*port/i, "Old Port of Marseille"],
+    [/basilique\s*notre[\s-]*dame\s*(de\s*la\s*garde)?/i, "Basilica of Notre-Dame de la Garde"],
+    [/burj\s*khalifa/i, "Burj Khalifa"],
+    [/burj\s*al\s*arab/i, "Burj Al Arab"],
+    [/palm\s*jumeirah/i, "Palm Jumeirah"],
+    [/place\s*jemaa\s*el[\s-]*fna/i, "Jemaa el-Fnaa"],
+    [/jemaa\s*el[\s-]*fna/i, "Jemaa el-Fnaa"],
+    [/tour\s*hassan/i, "Hassan Tower"],
+    [/koutoubia/i, "Koutoubia Mosque"],
+    [/rijksmuseum/i, "Rijksmuseum"],
+    [/anne\s*frank/i, "Anne Frank House"],
+    [/dam\s*square/i, "Dam Square"],
+    [/vondelpark/i, "Vondelpark"],
+    [/mont[\s-]*fuji/i, "Mount Fuji"],
+    [/temple\s*(senso[\s-]*ji|sensoji)/i, "Sensō-ji"],
+    [/senso[\s-]*ji/i, "Sensō-ji"],
+    [/meiji[\s-]*(jingu|shrine)/i, "Meiji Shrine"],
+    [/shibuya\s*crossing/i, "Shibuya Crossing"],
+    [/tour\s*de\s*tokyo/i, "Tokyo Tower"],
+    [/palais\s*imp[eé]rial.*tokyo/i, "Tokyo Imperial Palace"],
+    [/op[eé]ra\s*de\s*sydney/i, "Sydney Opera House"],
+    [/machu\s*picchu/i, "Machu Picchu"],
+    [/christ\s*(r[eé]dempteur|the\s*redeemer)/i, "Christ the Redeemer (statue)"],
+    [/taj\s*mahal/i, "Taj Mahal"],
+    [/grande\s*muraille/i, "Great Wall of China"],
+    [/cit[eé]\s*interdite/i, "Forbidden City"],
+    [/petra/i, "Petra"],
+    [/acropole/i, "Acropolis of Athens"],
+    [/parth[eé]non/i, "Parthenon"],
+    [/tour\s*de\s*b[eé]l[eé]m/i, "Belém Tower"],
+    [/monast[eè]re\s*des\s*j[eé]r[oó]nimos/i, "Jerónimos Monastery"],
+    [/porte\s*de\s*brandebourg/i, "Brandenburg Gate"],
+    [/brandenburger\s*tor/i, "Brandenburg Gate"],
+    [/alexanderplatz/i, "Alexanderplatz"],
+    [/fernsehturm/i, "Fernsehturm Berlin"],
+    [/mur\s*d[eu]\s*berlin/i, "Berlin Wall"],
+    [/east\s*side\s*gallery/i, "East Side Gallery"],
+    [/m[eé]morial\s*de\s*l['']?holocauste/i, "Memorial to the Murdered Jews of Europe"],
+    [/mus[eé]+e?\s*de\s*pergame/i, "Pergamon Museum"],
+    [/pergamonmuseum/i, "Pergamon Museum"],
+    [/checkpoint\s*charlie/i, "Checkpoint Charlie"],
+    [/[iî]le\s*aux?\s*mus[eé]+e?s/i, "Museum Island"],
+    [/reichstag/i, "Reichstag building"],
+    [/tiergarten/i, "Tiergarten"],
+    [/potsdamer\s*platz/i, "Potsdamer Platz"],
+    [/cath[eé]drale\s*de\s*berlin/i, "Berlin Cathedral"],
+    [/berliner\s*dom/i, "Berlin Cathedral"],
+    [/château\s*de\s*charlottenburg/i, "Charlottenburg Palace"],
+    [/mus[eé]+e?\s*juif\s*de\s*berlin/i, "Jewish Museum Berlin"],
+    [/colonne\s*de\s*la\s*victoire/i, "Berlin Victory Column"],
+    [/porte\s*d['']?ishtar/i, "Ishtar Gate"],
+    [/unter\s*den\s*linden/i, "Unter den Linden"],
+    [/kurf[uü]rstendamm/i, "Kurfürstendamm"],
+    [/jardin\s*majorelle/i, "Majorelle Garden"],
+    [/m[eé]dersa\s*ben\s*youssef/i, "Ben Youssef Madrasa"],
+    [/tombeaux?\s*saadiens/i, "Saadian Tombs"],
+    [/palais\s*bahia/i, "Bahia Palace"],
+    [/palais\s*el\s*badi/i, "El Badi Palace"],
+    [/kasbah\s*des\s*oudayas/i, "Kasbah of the Udayas"],
+    [/pyramides?\s*de\s*gizeh/i, "Giza pyramid complex"],
+    [/sphinx\s*de\s*gizeh/i, "Great Sphinx of Giza"],
+    [/mus[eé]+e?\s*[eé]gyptien/i, "Egyptian Museum"],
+    [/khan\s*el[\s-]*khalili/i, "Khan el-Khalili"],
+    [/mosqu[eé]+e?\s*mohammed\s*ali/i, "Mosque of Muhammad Ali"],
+  ];
+  for (const [re, en] of MAP) {
+    if (re.test(s) || re.test(lower)) push(en);
+  }
   return out;
 }
 
@@ -2448,7 +2753,60 @@ async function wikiOpenSearchFirstTitle(lang, searchQuery) {
   }
 }
 
-/** Post-traitement vignette (logo → photo) — réutilisable en parallèle avec d’autres requêtes. */
+/**
+ * Recherche directe d'image Wikipedia pour un lieu nommé via l'API pageimages.
+ * Plus rapide que la chaîne complète (un seul appel réseau par tentative).
+ */
+async function fetchWikiDirectPlaceImage(placeName, cityName, uiLang) {
+  const place = String(placeName || "").trim();
+  if (!place) return "";
+  const city = String(cityName || "").trim();
+  const wikiLang = WIKI_LANG_CODES[String(uiLang || "fr").toLowerCase()] || "fr";
+  const langsTry = [wikiLang, "en", "fr"].filter((l, i, arr) => arr.indexOf(l) === i);
+  const titles = [];
+  const addT = (t) => { const s = String(t || "").trim(); if (s && !titles.includes(s)) titles.push(s); };
+  const segments = expandMustSeePlaceSegments(place);
+  for (const seg of segments) {
+    addT(seg);
+    if (city) addT(`${seg} (${city})`);
+  }
+  for (const alias of enWikipediaAliasTitles(place)) {
+    addT(alias);
+    if (city) addT(`${alias} (${city})`);
+  }
+  const stripped = place.replace(/\s*\(.*?\)\s*/g, " ").replace(/\s*[\u2014\u2013]\s*.+$/, "").trim();
+  if (stripped && stripped !== place) addT(stripped);
+  const jobs = [];
+  for (const lang of langsTry) {
+    for (const title of titles) {
+      jobs.push({ lang, title });
+    }
+  }
+  const results = await Promise.all(
+    jobs.map(async ({ lang, title }) => {
+      try {
+        const api = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&format=json&origin=*&pithumbsize=1920&redirects=1`;
+        const r = await fetch(api);
+        if (!r.ok) return null;
+        const j = await r.json();
+        const page = Object.values(j?.query?.pages || {})[0];
+        if (!page || page.missing === true) return null;
+        const tw = Number(page.thumbnail?.width || 0);
+        const th = Number(page.thumbnail?.height || 0);
+        const src = String(page.thumbnail?.source || "").trim();
+        if (!src) return null;
+        const img = upgradeLandscapeImageUrl(src);
+        if (!img || isLikelyWikiBrandOrLogoImage(img, title)) return null;
+        const isPortrait = tw > 0 && th > 0 && th > tw * 1.15;
+        return { img, isPortrait, lang, title };
+      } catch { return null; }
+    })
+  );
+  const landscape = results.find((r) => r && !r.isPortrait);
+  if (landscape) return landscape.img;
+  const portrait = results.find((r) => r && r.isPortrait);
+  return portrait ? portrait.img : "";
+}
 async function finalizeWikiPlaceThumb(lang, res) {
   if (!res) return res;
   const out = { ...res };
@@ -2498,7 +2856,7 @@ const _MUST_SEE_MODAL_CACHE_MAX = 48;
 
 function mustSeePlaceModalCacheKey(rawName, city, lang) {
   const L = String(lang || "fr").toLowerCase().split("-")[0];
-  return `${String(rawName || "").trim()}\x1e${String(city || "").trim().toLowerCase()}\x1e${L}`;
+  return `v4\x1e${String(rawName || "").trim()}\x1e${String(city || "").trim().toLowerCase()}\x1e${L}`;
 }
 
 function readMustSeePlaceModalCache(rawName, city, lang) {
@@ -2508,10 +2866,13 @@ function readMustSeePlaceModalCache(rawName, city, lang) {
     if (row) _MUST_SEE_MODAL_CACHE.delete(k);
     return null;
   }
+  if (!row.imageUrl) return null;
   return row;
 }
 
 function writeMustSeePlaceModalCache(rawName, city, lang, extract, imageUrl) {
+  const img = String(imageUrl || "").trim();
+  if (!img) return;
   const k = mustSeePlaceModalCacheKey(rawName, city, lang);
   if (_MUST_SEE_MODAL_CACHE.size >= _MUST_SEE_MODAL_CACHE_MAX) {
     const first = _MUST_SEE_MODAL_CACHE.keys().next().value;
@@ -2519,7 +2880,7 @@ function writeMustSeePlaceModalCache(rawName, city, lang, extract, imageUrl) {
   }
   _MUST_SEE_MODAL_CACHE.set(k, {
     extract: String(extract || ""),
-    imageUrl: String(imageUrl || ""),
+    imageUrl: img,
     ts: Date.now(),
   });
 }
@@ -3277,6 +3638,9 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
   const landmarkDescBoost = Array.isArray(options.landmarkDescBoostTokens)
     ? options.landmarkDescBoostTokens.map((t) => normalizeTextForSearch(t)).filter(Boolean)
     : [];
+  const placeRelevance = Array.isArray(options.placeRelevanceTokens)
+    ? options.placeRelevanceTokens.map((t) => normalizeTextForSearch(t)).filter(Boolean)
+    : [];
   const heroPenalizeSkyOnly = !!options.heroPenalizeSkyOnly;
   const closeupHints = [
     "close-up", "closeup", "close up", "macro", "detail",
@@ -3398,6 +3762,35 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
         }
       }
 
+      let bwPenalty = 0;
+      const photoColor = String(item?.color || "").toLowerCase();
+      if (photoColor) {
+        const hex = photoColor.replace("#", "");
+        if (hex.length === 6) {
+          const r = parseInt(hex.slice(0, 2), 16);
+          const g = parseInt(hex.slice(2, 4), 16);
+          const b = parseInt(hex.slice(4, 6), 16);
+          const maxC = Math.max(r, g, b);
+          const minC = Math.min(r, g, b);
+          const saturation = maxC === 0 ? 0 : (maxC - minC) / maxC;
+          if (saturation < 0.08) bwPenalty = 500;
+          else if (saturation < 0.15) bwPenalty = 200;
+          const brightness = (r + g + b) / 3;
+          if (brightness < 50) bwPenalty += 150;
+        }
+      }
+      const bwDescHits = ["black and white", "black white", "monochrome", "grayscale", "greyscale", "bw", "noir"].filter(
+        (kw) => desc.includes(kw)
+      ).length;
+      if (bwDescHits > 0) bwPenalty += 300;
+
+      let placeRelevanceScore = 0;
+      if (placeRelevance.length > 0) {
+        const hits = placeRelevance.filter((tok) => desc.includes(tok)).length;
+        if (hits === 0) placeRelevanceScore = -200;
+        else placeRelevanceScore = hits * 60;
+      }
+
       const likes = Number(item?.likes || 0);
       const qualityBoost = Math.min(60, Math.round(likes / 10));
 
@@ -3410,11 +3803,13 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
         firstBias +
         cityBoostScore +
         landmarkBoostScore +
+        placeRelevanceScore +
         ratioBonus +
         resolutionBonus -
         avoidPenalty -
         skyOnlyPenalty -
-        closeupPenalty;
+        closeupPenalty -
+        bwPenalty;
       return { item, score };
     });
     scored.sort((a, b) => b.score - a.score);
@@ -3513,6 +3908,8 @@ async function getCityHeroImage(cityInput) {
       "lifeguard", "graffiti", "trash", "parking",
       "narrow street", "alley", "back street", "wall",
       "person", "couple", "group", "crowd",
+      "black and white", "black white", "monochrome", "grayscale", "greyscale",
+      "noir et blanc", "noir blanc", "sepia", "desaturated", "bw photo",
       ...getUnsplashHeroConflictAvoidKeywords(stem),
     ],
     cityBoostTokens: [...cityTok, normalizeTextForSearch(stem).split(/\s+/)[0]].filter(Boolean),
@@ -3527,6 +3924,46 @@ async function getAestheticCityImage(cityName, cityType) {
   return getCityHeroImage(cityName);
 }
 
+async function fetchPlaceLandmarkImage(placeName, cityName) {
+  if (!UNSPLASH_ACCESS_KEY) return "";
+  const place = String(placeName || "").trim();
+  const city = String(cityName || "").trim();
+  if (!place) return "";
+  const cleanPlace = place
+    .replace(/\s*\(.*?\)\s*/g, " ")
+    .replace(/\s*[—–-]\s*.+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const placeTokens = normalizeTextForSearch(cleanPlace)
+    .split(/\s+/)
+    .filter((t) => t.length > 2 && !["the", "les", "des", "del", "der", "von", "de", "du", "la", "le", "di", "das"].includes(t));
+  const queries = [
+    `${cleanPlace} ${city} landmark`,
+    `${cleanPlace} ${city}`,
+    `${cleanPlace}`,
+    city ? `${cleanPlace} ${city} travel` : `${cleanPlace} travel`,
+  ];
+  for (const q of queries) {
+    try {
+      const url = await fetchUnsplashImageByQuery(q, {
+        pickFirst: true,
+        perPage: 15,
+        contentFilter: "high",
+        preferDaylight: true,
+        preferredKeywords: ["landmark", "monument", "travel", "tourism", "architecture", "nature", "beach", "park"],
+        avoidKeywords: [
+          "black and white", "black white", "monochrome", "grayscale", "greyscale",
+          "sepia", "desaturated", "bw photo", "noir et blanc",
+          "logo", "icon", "drawing", "illustration",
+        ],
+        placeRelevanceTokens: placeTokens,
+      });
+      if (url) return url;
+    } catch { /* try next */ }
+  }
+  return "";
+}
+
 async function fetchActivityImageFromUnsplash(activityLike) {
   const query = buildActivityImageQuery(activityLike);
   if (!query) return "";
@@ -3534,7 +3971,11 @@ async function fetchActivityImageFromUnsplash(activityLike) {
     pickFirst: true,
     preferDaylight: false,
     preferredKeywords: ["activity", "person", "travel", "outdoor", "sport"],
-    avoidKeywords: ["logo", "icon", "drawing", "illustration"],
+    avoidKeywords: [
+      "logo", "icon", "drawing", "illustration",
+      "black and white", "black white", "monochrome", "grayscale", "greyscale",
+      "sepia", "desaturated", "bw photo",
+    ],
   });
 }
 
@@ -4719,7 +5160,7 @@ function AuthView() {
         </footer>
       </div>
       {invitePromptOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setInvitePromptOpen(false); setInviteAccepted(false); clearInviteParams(); } }}>
+        <div className="fixed -inset-1 z-[70] flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setInvitePromptOpen(false); setInviteAccepted(false); clearInviteParams(); } }}>
           <div
             className="w-full max-w-md overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[2rem]"
             style={{ maxHeight: "92svh" }}
@@ -4867,7 +5308,7 @@ function AuthView() {
 
       {emailExistsModalOpen ? (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          className="fixed -inset-1 z-[80] flex items-center justify-center bg-black/40 p-3 sm:p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="auth-email-exists-title"
@@ -4915,25 +5356,45 @@ function AuthView() {
   );
 }
 
+const _scrollLockState = { count: 0, scrollY: 0 };
 function useScrollLock(active) {
   useEffect(() => {
     if (!active) return;
-    const html = document.documentElement;
-    const body = document.body;
-    const prev = { ho: html.style.overflow, bo: body.style.overflow, bp: body.style.position, bt: body.style.top, bw: body.style.width };
-    const scrollY = window.scrollY;
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
+    const s = _scrollLockState;
+    if (s.count === 0) {
+      s.scrollY = window.scrollY;
+      const html = document.documentElement;
+      const body = document.body;
+      html.style.overflow = "hidden";
+      body.style.overflow = "hidden";
+      body.style.position = "fixed";
+      body.style.top = `-${s.scrollY}px`;
+      body.style.width = "100%";
+      html.classList.add("modal-open");
+      body.querySelectorAll("header, [class*='sticky']").forEach((el) => {
+        el.dataset.prevVis = el.style.visibility || "";
+        el.style.visibility = "hidden";
+      });
+    }
+    s.count++;
     return () => {
-      html.style.overflow = prev.ho;
-      body.style.overflow = prev.bo;
-      body.style.position = prev.bp;
-      body.style.top = prev.bt;
-      body.style.width = prev.bw;
-      window.scrollTo(0, scrollY);
+      s.count--;
+      if (s.count <= 0) {
+        s.count = 0;
+        const html = document.documentElement;
+        const body = document.body;
+        html.style.overflow = "";
+        body.style.overflow = "";
+        body.style.position = "";
+        body.style.top = "";
+        body.style.width = "";
+        html.classList.remove("modal-open");
+        body.querySelectorAll("header, [class*='sticky']").forEach((el) => {
+          el.style.visibility = el.dataset.prevVis || "";
+          delete el.dataset.prevVis;
+        });
+        window.scrollTo(0, s.scrollY);
+      }
     };
   }, [active]);
 }
@@ -4969,7 +5430,7 @@ function TripFormModal({ open, onClose, onCreate }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("tripForm.title")}</h2>
@@ -5093,7 +5554,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="min-w-0 text-xs uppercase tracking-[0.32em] text-slate-500">
@@ -5173,7 +5634,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
   const tripDatesReadOnly = isTripPastByEndDate(trip);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.editTripTitle")}</h2>
@@ -5366,7 +5827,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+      className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
@@ -5469,7 +5930,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
   return (
     <>
       <div
-        className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+        className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
         onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       >
         <div
@@ -5589,7 +6050,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
   if (!open || !trip) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -5656,7 +6117,7 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
   if (!open || !trip) return null;
   const delTitle = String(trip?.title || t("modals.tripDefault"));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting) onCancel(); }}>
+    <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting) onCancel(); }}>
       <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("common.confirmation")}</h2>
         <p className="mb-6 break-words text-sm text-slate-700">
@@ -5762,7 +6223,7 @@ function AccountModal({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting && !saving) onClose(); }}>
+    <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
           <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("menu.account")}</h2>
@@ -6450,7 +6911,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
     onConfirm({ pace, styles, travelers, budget, wishes: wishes.trim() });
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed -inset-1 z-[70] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div
         role="dialog"
         aria-modal="true"
@@ -6597,7 +7058,7 @@ function ItineraryResultModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+      className="fixed -inset-1 z-[80] flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -6859,6 +7320,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
   const titleId = useId();
   const [textLoading, setTextLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
+  const [imgRendered, setImgRendered] = useState(false);
   const [extract, setExtract] = useState("");
   const [imageUrl, setImageUrl] = useState("");
 
@@ -6868,6 +7330,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
       setImageUrl("");
       setTextLoading(false);
       setImageLoading(false);
+      setImgRendered(false);
       return;
     }
     const cached = readMustSeePlaceModalCache(rawName, city, language);
@@ -6882,46 +7345,59 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
     let cancelled = false;
     setTextLoading(true);
     setImageLoading(true);
+    setImgRendered(false);
     setExtract("");
     setImageUrl("");
 
-    const textP = fetchWikiPlaceSummaryForPlace(rawName, city, language, { resolveImage: false }).catch(
-      () => ({ extract: "", thumb: "", wikiTitle: "", wikiHostLang: "" })
-    );
-    const imgEarlyP = fetchWikiPlaceHeroImageEarly(rawName, city, language).catch(() => "");
-    const imgMetaP = textP
-      .then(async (d) => {
-        if (!d?.wikiTitle) return "";
-        const fin = await finalizeWikiPlaceThumb(d.wikiHostLang, d);
-        return String(fin?.thumb || "").trim();
-      })
-      .catch(() => "");
+    const WIKI_TIMEOUT_MS = 15000;
+    const withTimeout = (p, ms) => Promise.race([
+      p,
+      new Promise((r) => setTimeout(() => r(null), ms)),
+    ]);
+
+    const wikiDirectP = withTimeout(
+      fetchWikiDirectPlaceImage(rawName, city, language).catch(() => ""),
+      WIKI_TIMEOUT_MS
+    ).then((u) => u || "");
+
+    const textP = withTimeout(
+      fetchWikiPlaceSummaryForPlace(rawName, city, language, { resolveImage: false }).catch(
+        () => ({ extract: "", thumb: "", wikiTitle: "", wikiHostLang: "" })
+      ),
+      WIKI_TIMEOUT_MS
+    ).then((d) => d || { extract: "", thumb: "", wikiTitle: "", wikiHostLang: "" });
+
+    const unsplashP = UNSPLASH_ACCESS_KEY
+      ? fetchPlaceLandmarkImage(rawName, city).catch(() => "")
+      : Promise.resolve("");
+
+    wikiDirectP.then((u) => {
+      if (cancelled || !u) return;
+      setImageUrl(String(u).trim());
+    });
 
     textP.then((d) => {
       if (cancelled) return;
       setExtract(String(d?.extract || ""));
       setTextLoading(false);
-    });
-
-    imgEarlyP.then((u) => {
-      if (cancelled || !u) return;
-      setImageUrl((prev) => (prev ? prev : String(u).trim()));
-    });
-
-    imgMetaP.then((u) => {
-      if (cancelled || !u) return;
-      setImageUrl(String(u).trim());
+      const thumb = String(d?.thumb || "").trim();
+      if (thumb && !isLikelyWikiBrandOrLogoImage(thumb, "")) {
+        setImageUrl((prev) => (prev ? prev : thumb));
+      }
     });
 
     (async () => {
       try {
-        const [data, early, meta] = await Promise.all([textP, imgEarlyP, imgMetaP]);
+        const [wikiDirect, data, unsplash] = await Promise.all([wikiDirectP, textP, unsplashP]);
         if (cancelled) return;
-        let img = String(meta || early || data?.thumb || "").trim();
+        let img = String(wikiDirect || "").trim();
+        if (!img) {
+          const thumb = String(data?.thumb || "").trim();
+          if (thumb && !isLikelyWikiBrandOrLogoImage(thumb, "")) img = thumb;
+        }
+        if (!img) img = String(unsplash || "").trim();
         if (!img && UNSPLASH_ACCESS_KEY) {
-          const hint = [rawName, city].filter(Boolean).join(", ");
-          const u = await getAestheticCityImage(hint || rawName, null);
-          img = String(u || "").trim();
+          img = await fetchPlaceLandmarkImage(city, "").catch(() => "");
         }
         if (!cancelled) {
           if (img) setImageUrl(img);
@@ -6944,7 +7420,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[85] flex items-end justify-center overscroll-none bg-black/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      className="fixed -inset-1 z-[85] flex items-end justify-center overscroll-none bg-black/40 p-0 sm:items-center sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -6958,32 +7434,41 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
       >
         <div className="relative shrink-0 bg-slate-100">
           {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt=""
-              className="h-44 w-full object-cover object-[center_45%] sm:h-52 sm:object-[center_40%]"
-              loading="lazy"
-              decoding="async"
-              onError={async (e) => {
-                const el = e.currentTarget;
-                if (UNSPLASH_ACCESS_KEY && !el.dataset.unsplashTried) {
-                  el.dataset.unsplashTried = "1";
-                  try {
-                    const hint = [rawName, city].filter(Boolean).join(", ");
-                    const u = await getAestheticCityImage(hint || rawName, null);
-                    if (u) { el.src = u; return; }
-                  } catch (_e) { /* ignore */ }
-                }
-                el.style.display = "none";
-              }}
-            />
+            <>
+              {!imgRendered ? (
+                <div className="absolute inset-0 z-[1] flex h-44 flex-col items-center justify-center gap-2.5 bg-gradient-to-br from-slate-100 to-slate-200 sm:h-52">
+                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" aria-hidden />
+                  <span className="animate-pulse text-xs font-medium text-slate-400">{t("destination.mustSeePlaceLoading")}</span>
+                </div>
+              ) : null}
+              <img
+                src={imageUrl}
+                alt=""
+                className="relative z-[2] h-44 w-full object-cover object-[center_45%] sm:h-52 sm:object-[center_40%]"
+                decoding="async"
+                onLoad={() => setImgRendered(true)}
+                onError={async (e) => {
+                  const el = e.currentTarget;
+                  if (UNSPLASH_ACCESS_KEY && !el.dataset.unsplashTried) {
+                    el.dataset.unsplashTried = "1";
+                    try {
+                      const u = await fetchPlaceLandmarkImage(rawName, city);
+                      if (u) { el.src = u; return; }
+                    } catch (_e) { /* ignore */ }
+                  }
+                  el.style.display = "none";
+                  setImgRendered(true);
+                }}
+              />
+            </>
           ) : null}
-          {imageLoading && !imageUrl ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-2 sm:h-52">
-              <span className="animate-pulse text-sm text-slate-500">{t("destination.mustSeePlaceLoading")}</span>
+          {!imageUrl && imageLoading ? (
+            <div className="flex h-44 flex-col items-center justify-center gap-2.5 bg-gradient-to-br from-slate-100 to-slate-200 sm:h-52">
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" aria-hidden />
+              <span className="animate-pulse text-xs font-medium text-slate-400">{t("destination.mustSeePlaceLoading")}</span>
             </div>
           ) : null}
-          {!imageLoading && !imageUrl ? (
+          {!imageUrl && !imageLoading ? (
             <div className="flex h-36 items-center justify-center bg-gradient-to-br from-sky-100 to-indigo-100 sm:h-44">
               <MapPin className="h-12 w-12 text-sky-400/80" strokeWidth={1.5} aria-hidden />
             </div>
@@ -7348,9 +7833,21 @@ function DestinationGuideView({
     }
 
     if (GEMINI_DESTINATION_ENRICH) {
-      fetchGeminiTripSuggestions({ destination: dest, language })
+      fetchGroqTripSuggestions({ destination: dest, language })
         .then((res) => {
           if (cancelled) return;
+          if (res?.ok && res.data) {
+            const norm = normalizeGeminiGuidePayload(res.data, dest);
+            if (norm && (Array.isArray(norm.places) && norm.places.length > 0)) {
+              setGeminiContent(norm);
+              setGeminiError("");
+              return null;
+            }
+          }
+          return fetchGeminiTripSuggestions({ destination: dest, language });
+        })
+        .then((res) => {
+          if (cancelled || !res) return;
           if (res?.ok && res.data) {
             const norm = normalizeGeminiGuidePayload(res.data, dest);
             setGeminiContent(norm);
@@ -7373,9 +7870,22 @@ function DestinationGuideView({
       };
     }
 
-    fetchGeminiSuggestedActivities({ destination: dest, language })
+    fetchGroqSuggestedActivities({ destination: dest, language })
       .then((res) => {
         if (cancelled) return;
+        if (res?.ok && res.data) {
+          const norm = normalizeGeminiSuggestedActivitiesPayload(res.data, dest);
+          const padded = ensureMinSuggestedActivities(norm, dest);
+          if (padded.length > 0) {
+            setGeminiAiSuggestedActivities(padded);
+            setGeminiError("");
+            return null;
+          }
+        }
+        return fetchGeminiSuggestedActivities({ destination: dest, language });
+      })
+      .then((res) => {
+        if (cancelled || !res) return;
         if (res?.ok && res.data) {
           const norm = normalizeGeminiSuggestedActivitiesPayload(res.data, dest);
           const padded = ensureMinSuggestedActivities(norm, dest);
@@ -8033,7 +8543,7 @@ function DestinationGuideView({
 
       {itineraryLoading && !itineraryResultOpen ? (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          className="fixed -inset-1 z-[80] flex items-center justify-center bg-black/40"
           role="status"
           aria-live="polite"
         >
@@ -8078,7 +8588,7 @@ function DestinationGuideView({
           />
           {itineraryCalendarConflict ? (
             <div
-              className="fixed inset-0 z-[90] flex items-end justify-center bg-black/55 p-3 backdrop-blur-sm sm:items-center sm:p-4"
+              className="fixed -inset-1 z-[90] flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4"
               role="dialog"
               aria-modal="true"
               aria-labelledby="tp-itin-cal-conflict-title"
@@ -8231,7 +8741,7 @@ function DestinationGuideView({
       ) : null}
 
       {itineraryModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setItineraryModalOpen(false); }}>
+        <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setItineraryModalOpen(false); }}>
           <div
             role="dialog"
             aria-modal="true"
@@ -8304,7 +8814,7 @@ function DestinationGuideView({
 
       {itineraryPremiumGateOpen ? (
         <div
-          className="fixed inset-0 z-[65] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          className="fixed -inset-1 z-[65] flex items-center justify-center bg-black/40 p-3 sm:p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               setItineraryPremiumGateOpen(false);
@@ -8354,7 +8864,7 @@ function DestinationGuideView({
 
       {itineraryQuotaModalOpen ? (
         <div
-          className="fixed inset-0 z-[66] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-4"
+          className="fixed -inset-1 z-[66] flex items-center justify-center bg-black/40 p-3 sm:p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               setItineraryQuotaModalOpen(false);
@@ -8414,7 +8924,7 @@ function DestinationGuideView({
       ) : null}
 
       {addModalOpen && displayGuide ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-x-hidden bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddModalOpen(false); }}>
+        <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddModalOpen(false); }}>
           <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
@@ -9013,7 +9523,7 @@ function PlannerView({
       </div>
 
       {activityModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
+        <div className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
           <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.newActivityTitle")}</h2>
@@ -9121,7 +9631,7 @@ function PlannerView({
       ) : null}
 
       {activityDetailsOpen && viewingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityDetailsOpen(false); setViewingActivity(null); } }}>
+        <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityDetailsOpen(false); setViewingActivity(null); } }}>
           <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">{t("planner.detailsTitle")}</h2>
@@ -9183,7 +9693,7 @@ function PlannerView({
       ) : null}
 
       {editActivityModalOpen && editingActivity ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
+        <div className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
           <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
               <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.editActivityTitle")}</h2>
@@ -9274,7 +9784,7 @@ function PlannerView({
       ) : null}
 
       {activityToDelete ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setActivityToDelete(null); }}>
+        <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setActivityToDelete(null); }}>
           <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.confirmTitle")}</h2>
             <p className="mb-6 break-words text-sm text-slate-700">
@@ -9381,7 +9891,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-3 backdrop-blur-sm sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
+    <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <h3 className="min-w-0 flex-1 text-xs uppercase tracking-[0.35em] text-slate-500">
@@ -9611,7 +10121,7 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
       : "";
   return (
     <div
-      className="fixed inset-0 z-[45] flex items-end justify-center bg-black/40 p-0 backdrop-blur-md sm:items-center sm:p-4"
+      className="fixed -inset-1 z-[45] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="budget-trip-detail-title"
@@ -10028,7 +10538,7 @@ function TripExpenseDetail({
 
       {editingActivity ? (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
           onClick={() => setEditingActivity(null)}
         >
           <div
@@ -10238,7 +10748,7 @@ function ChatHubView({
       </div>
 
       {activeTrip ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-x-hidden bg-black/32 p-3 backdrop-blur-[1px] sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setChatTripId(""); }}>
+        <div className="fixed -inset-1 z-[70] flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setChatTripId(""); }}>
           <div
             className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-[0_24px_64px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/90 sm:max-h-[88vh]"
             role="dialog"
@@ -12322,7 +12832,7 @@ export default function App() {
       style={{
         color: TEXT,
         background:
-          "radial-gradient(circle at 18% -8%, #ffffff 0%, #eef4fa 40%, #e3edf6 100%)",
+          "radial-gradient(circle at 18% -8%, #f4f8fc 0%, #eef4fa 40%, #e3edf6 100%)",
       }}
     >
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
@@ -12687,7 +13197,7 @@ export default function App() {
       />
       {destinationInvalidModalOpen ? (
         <div
-          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          className="fixed -inset-1 z-[72] flex items-center justify-center bg-black/40 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="tp-dest-invalid-title"
@@ -12710,7 +13220,7 @@ export default function App() {
       ) : null}
       {tripDateConflictModalOpen ? (
         <div
-          className="fixed inset-0 z-[73] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          className="fixed -inset-1 z-[73] flex items-center justify-center bg-black/40 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="tp-trip-date-conflict-title"

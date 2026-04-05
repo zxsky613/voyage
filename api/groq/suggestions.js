@@ -1,21 +1,20 @@
 import {
-  handleCors, sendJson, parseBody, getGeminiKey, getGeminiModel,
-  runGeminiJson, resolveUiLanguage, langRuleParagraph, formatError,
+  handleCors, sendJson, parseBody, getGroqKey,
+  runGroqJson, resolveUiLanguage, langRuleParagraph, formatError,
 } from "../_helpers.js";
 import { sanitizeMustSeePlaces } from "../../placeGuards.js";
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
 
-  const key = getGeminiKey();
-  if (!key) return sendJson(res, 503, { error: "GEMINI_API_KEY non configurée sur le serveur." });
+  const groqKey = getGroqKey();
+  if (!groqKey) return sendJson(res, 503, { error: "GROQ_API_KEY non configurée sur le serveur." });
 
-  const parsed = parseBody(req);
-  const modelId = getGeminiModel();
-  const destination = String(parsed.destination || "").trim();
+  const body = parseBody(req);
+  const destination = String(body.destination || "").trim();
   if (!destination || destination.length > 120) return sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
 
-  const uiLang = resolveUiLanguage(parsed);
+  const uiLang = resolveUiLanguage(body);
   const langRule = langRuleParagraph(uiLang);
 
   const prompt =
@@ -35,21 +34,17 @@ export default async function handler(req, res) {
     `- "estimatedCostEur" (nombre), "costNote", "description" (1 phrase).\n` +
     `${langRule}`;
 
-  const systemInstruction =
+  const systemPrompt =
     "Tu réponds uniquement par un objet JSON valide UTF-8. " +
     "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux géographiques réels visitables dans la ville nommée, jamais de descriptions génériques.";
 
   try {
-    const data = await runGeminiJson({
-      key, modelId, prompt, systemInstruction,
-      generationConfigExtra: { temperature: 0.2, topP: 0.8, maxOutputTokens: 4096 },
-    });
+    const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
     if (data && typeof data === "object" && Array.isArray(data.places)) {
       data.places = sanitizeMustSeePlaces(data.places, destination);
     }
     sendJson(res, 200, { ok: true, data });
   } catch (e) {
-    const msg = formatError(e);
-    sendJson(res, /429|Too Many Requests/i.test(msg) ? 429 : 502, { error: msg });
+    sendJson(res, 502, { error: formatError(e) });
   }
 }

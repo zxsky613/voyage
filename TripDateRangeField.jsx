@@ -167,7 +167,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
   const pickerOverlay =
     pickerOpen && !readOnly && typeof document !== "undefined" ? (
       <div
-        className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+        className="fixed -inset-1 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget) setPickerOpen(false);
         }}
