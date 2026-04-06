@@ -7,6 +7,7 @@
  * - Pendant le tour : scroll de la page bloqué ; bascule automatique sur l’onglet illustré
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -138,18 +139,39 @@ const STEPS = [
 ];
 
 /* ─── SVG spotlight overlay ─────────────────────────────────────────────── */
+/** Marge pour stroke + drop-shadow (WebKit rogne si le trou dépasse du viewport / overflow-x-clip). */
+function spotlightFrameFromRect(rect, pad = 14, glowBleed = 18) {
+  if (typeof window === "undefined") return null;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const left = rect.left;
+  const top = rect.top;
+  const right = rect.right;
+  const bottom = rect.bottom;
+  const padL = Math.min(pad, Math.max(0, left - glowBleed));
+  const padT = Math.min(pad, Math.max(0, top - glowBleed));
+  const padR = Math.min(pad, Math.max(0, vw - right - glowBleed));
+  const padB = Math.min(pad, Math.max(0, vh - bottom - glowBleed));
+  return {
+    cx: left - padL,
+    cy: top - padT,
+    cw: rect.width + padL + padR,
+    ch: rect.height + padT + padB,
+  };
+}
+
 function SpotlightOverlay({ rect }) {
   if (!rect) return null;
   const PAD = 14;
-  const cx = rect.x - PAD;
-  const cy = rect.y - PAD;
-  const cw = rect.width + PAD * 2;
-  const ch = rect.height + PAD * 2;
+  const frame = spotlightFrameFromRect(rect, PAD, 18);
+  if (!frame) return null;
+  const { cx, cy, cw, ch } = frame;
   const r = Math.min(24, ch / 2);
 
   return (
     <svg
       aria-hidden="true"
+      overflow="visible"
       style={{
         position: "fixed",
         inset: 0,
@@ -210,12 +232,22 @@ function useTourScrollLock(active) {
     if (!active) return undefined;
     const html = document.documentElement;
     const body = document.body;
-    const prevHtml = html.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlO = html.style.overflow;
+    const prevHtmlOx = html.style.overflowX;
+    const prevHtmlOy = html.style.overflowY;
+    const prevBodyO = body.style.overflow;
+    const prevBodyOx = body.style.overflowX;
+    const prevBodyOy = body.style.overflowY;
     const prevBodyTouch = body.style.touchAction;
     const prevHtmlTouch = html.style.touchAction;
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
+    /* Pas de shorthand overflow:hidden : il ferait repasser overflow-x à auto avec overflow-y hidden. */
+    html.style.overflow = "";
+    body.style.overflow = "";
+    html.style.overflowY = "hidden";
+    body.style.overflowY = "hidden";
+    /* index.css impose overflow-x: clip sur html/body — rogne le halo SVG du spotlight près des bords. */
+    html.style.overflowX = "visible";
+    body.style.overflowX = "visible";
     html.style.touchAction = "none";
     body.style.touchAction = "none";
 
@@ -223,8 +255,12 @@ function useTourScrollLock(active) {
     window.addEventListener("touchmove", blockMove, { passive: false });
 
     return () => {
-      html.style.overflow = prevHtml;
-      body.style.overflow = prevBodyOverflow;
+      html.style.overflow = prevHtmlO;
+      html.style.overflowX = prevHtmlOx;
+      html.style.overflowY = prevHtmlOy;
+      body.style.overflow = prevBodyO;
+      body.style.overflowX = prevBodyOx;
+      body.style.overflowY = prevBodyOy;
       html.style.touchAction = prevHtmlTouch;
       body.style.touchAction = prevBodyTouch;
       window.removeEventListener("touchmove", blockMove);
@@ -323,69 +359,65 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
 
   const CARD_W = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 32 : 300);
 
-  /* ── Welcome modal (centré comme les autres étapes) ── */
-  if (isWelcome) {
-    return (
+  const welcomeLayer = (
+    <div
+      className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-all duration-300 ${
+        visible ? "opacity-100" : "opacity-0"
+      }`}
+      style={{
+        background: "rgba(15, 23, 42, 0.65)",
+        backdropFilter: "blur(6px)",
+        touchAction: "none",
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <div
-        className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-all duration-300 ${
-          visible ? "opacity-100" : "opacity-0"
+        className={`relative w-full max-w-sm rounded-[2rem] bg-white shadow-2xl transition-all duration-500 ${
+          visible ? "translate-y-0 scale-100" : "translate-y-4 scale-[0.98]"
         }`}
-        style={{
-          background: "rgba(15, 23, 42, 0.65)",
-          backdropFilter: "blur(6px)",
-          touchAction: "none",
-        }}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
+        style={{ maxWidth: CARD_W + 32, touchAction: "manipulation" }}
       >
-        <div
-          className={`relative w-full max-w-sm rounded-[2rem] bg-white shadow-2xl transition-all duration-500 ${
-            visible ? "translate-y-0 scale-100" : "translate-y-4 scale-[0.98]"
-          }`}
-          style={{ maxWidth: CARD_W + 32, touchAction: "manipulation" }}
-        >
-          <div className="flex flex-col items-center gap-5 px-8 pb-8 pt-10 text-center">
-            <div className="relative">
-              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-xl shadow-indigo-200">
-                <Plane className="h-9 w-9 text-white" strokeWidth={1.5} />
-              </div>
-              <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 shadow-md">
-                <Sparkles className="h-3.5 w-3.5 text-white" strokeWidth={2} />
-              </div>
+        <div className="flex flex-col items-center gap-5 px-8 pb-8 pt-10 text-center">
+          <div className="relative">
+            <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-xl shadow-indigo-200">
+              <Plane className="h-9 w-9 text-white" strokeWidth={1.5} />
             </div>
-
-            <div>
-              <h2 className="text-xl font-bold text-slate-900">{t("onboarding.welcome.title")}</h2>
-              <p className="mt-2 max-w-xs text-sm leading-relaxed text-slate-500">
-                {t("onboarding.welcome.subtitle")}
-              </p>
+            <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 shadow-md">
+              <Sparkles className="h-3.5 w-3.5 text-white" strokeWidth={2} />
             </div>
-
-            <TourDots step={step} total={TOTAL} goTo={goTo} />
-
-            <button
-              type="button"
-              onClick={() => goTo(1)}
-              className="w-full rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-600 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition-transform active:scale-95"
-            >
-              {t("onboarding.welcome.cta")} →
-            </button>
-
-            <button
-              type="button"
-              onClick={() => dismissTour(false)}
-              className="-mt-1 text-xs font-medium text-slate-400 underline decoration-slate-300 underline-offset-2 transition-colors hover:text-slate-600"
-            >
-              {t("onboarding.skipDemo")}
-            </button>
           </div>
+
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">{t("onboarding.welcome.title")}</h2>
+            <p className="mt-2 max-w-xs text-sm leading-relaxed text-slate-500">
+              {t("onboarding.welcome.subtitle")}
+            </p>
+          </div>
+
+          <TourDots step={step} total={TOTAL} goTo={goTo} />
+
+          <button
+            type="button"
+            onClick={() => goTo(1)}
+            className="w-full rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-600 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition-transform active:scale-95"
+          >
+            {t("onboarding.welcome.cta")} →
+          </button>
+
+          <button
+            type="button"
+            onClick={() => dismissTour(false)}
+            className="-mt-1 text-xs font-medium text-slate-400 underline decoration-slate-300 underline-offset-2 transition-colors hover:text-slate-600"
+          >
+            {t("onboarding.skipDemo")}
+          </button>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  /* ── Spotlight : carte toujours centrée, pas de flèche, pas de croix ── */
-  return (
+  const spotlightLayer = (
     <>
       <SpotlightOverlay rect={targetRect} />
 
@@ -453,4 +485,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
       </div>
     </>
   );
+
+  if (typeof document === "undefined" || !document.body) return null;
+  return createPortal(isWelcome ? welcomeLayer : spotlightLayer, document.body);
 }
