@@ -6,7 +6,7 @@
  * - Fermeture : « Passer la démonstration » uniquement (pas de croix en conflit avec le +)
  * - Pendant le tour : scroll de la page bloqué ; bascule automatique sur l’onglet illustré
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
@@ -139,8 +139,22 @@ const STEPS = [
 ];
 
 /* ─── SVG spotlight overlay ─────────────────────────────────────────────── */
+/** Copie immuable : getBoundingClientRect() est vivant ; React ne rerend pas si les nombres changent in-place. */
+function snapshotDomRect(el) {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return {
+    top: r.top,
+    left: r.left,
+    right: r.right,
+    bottom: r.bottom,
+    width: r.width,
+    height: r.height,
+  };
+}
+
 /** Marge pour stroke + drop-shadow (WebKit rogne si le trou dépasse du viewport / overflow-x-clip). */
-function spotlightFrameFromRect(rect, pad = 14, glowBleed = 18) {
+function spotlightFrameFromRect(rect, pad = 14, glowBleed = 22) {
   if (typeof window === "undefined") return null;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -161,9 +175,10 @@ function spotlightFrameFromRect(rect, pad = 14, glowBleed = 18) {
 }
 
 function SpotlightOverlay({ rect }) {
+  const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
   if (!rect) return null;
   const PAD = 14;
-  const frame = spotlightFrameFromRect(rect, PAD, 18);
+  const frame = spotlightFrameFromRect(rect, PAD, 22);
   if (!frame) return null;
   const { cx, cy, cw, ch } = frame;
   const r = Math.min(24, ch / 2);
@@ -183,12 +198,12 @@ function SpotlightOverlay({ rect }) {
       }}
     >
       <defs>
-        <mask id="tp-tour-mask">
+        <mask id={maskId}>
           <rect width="100%" height="100%" fill="white" />
           <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="black" />
         </mask>
       </defs>
-      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask="url(#tp-tour-mask)" />
+      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
       <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="rgba(255,255,255,0.13)" stroke="none" />
       <rect
         x={cx}
@@ -292,8 +307,8 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
     return () => clearTimeout(id);
   }, []);
 
-  /* Onglet cible puis mesure spotlight après paint (double rAF). */
-  useEffect(() => {
+  /* Onglet cible + mesure spotlight : 1ère connexion (post-inscription) peut bouger encore (polices, barre iOS, layout). */
+  useLayoutEffect(() => {
     if (isWelcome) {
       setTargetRect(null);
       return undefined;
@@ -302,23 +317,50 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
     const tab = currentStep.navigateTab;
     if (tab) onNavigateRef.current?.(tab);
 
-    let rafOuter = 0;
-    let rafInner = 0;
     const measure = () => {
       const el = document.querySelector(`[data-tour-id="${tourId}"]`);
-      if (el) setTargetRect(el.getBoundingClientRect());
-      else setTargetRect(null);
+      setTargetRect(snapshotDomRect(el));
     };
-    rafOuter = requestAnimationFrame(() => {
-      rafInner = requestAnimationFrame(measure);
+
+    measure();
+
+    let raf1 = 0;
+    let raf2 = 0;
+    let raf3 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        raf3 = requestAnimationFrame(measure);
+      });
     });
+
+    const delays = [40, 120, 280, 550];
+    const timers = delays.map((ms) => setTimeout(measure, ms));
+
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
+
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", measure);
+    vv?.addEventListener("scroll", measure);
+
+    let fontsCancel = false;
+    const fr = document.fonts?.ready;
+    if (fr && typeof fr.then === "function") {
+      fr.then(() => {
+        if (!fontsCancel) measure();
+      });
+    }
+
     return () => {
-      cancelAnimationFrame(rafOuter);
-      cancelAnimationFrame(rafInner);
+      fontsCancel = true;
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      cancelAnimationFrame(raf3);
+      timers.forEach(clearTimeout);
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
+      vv?.removeEventListener("resize", measure);
+      vv?.removeEventListener("scroll", measure);
     };
   }, [step, isWelcome, currentStep.tourId, currentStep.navigateTab]);
 

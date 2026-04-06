@@ -4512,7 +4512,7 @@ function AvoloBrand({ size = "md", className = "", light = false }) {
 
 function TopNav({ onMenu, onAdd, title }) {
   return (
-    <header className="sticky top-0 z-30 min-w-0 px-3 pt-4 sm:px-5">
+    <header className="sticky top-0 z-30 min-w-0 px-3 pt-[max(1rem,env(safe-area-inset-top,0px))] sm:px-5">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(30,58,95,0.09)] backdrop-blur-xl ring-1 ring-sky-100/55 sm:px-6 sm:py-4">
         <button
           type="button"
