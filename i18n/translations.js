@@ -237,9 +237,13 @@ export const translations = {
       itineraryEnd: "Fin",
       itineraryDuration: "Durée : {{n}} jour(s) inclus.",
       itineraryDatesError: "Vérifie les dates.",
-      itineraryCalendarConflictHint:
-        "Choisis une période libre ci-dessous (début et fin sur le même calendrier, comme pour générer le programme).",
+      itineraryCalendarConflictHint: "Choisis une autre période ci-dessous.",
+      itineraryCalendarOverlapOneBeforeCity: "Chevauchement avec le voyage à ",
+      itineraryCalendarOverlapOneAfterCity: " (",
+      itineraryCalendarOverlapOneAfterRange: ").",
+      itineraryCalendarOverlapManyIntro: "Chevauchement avec les voyages :",
       itineraryCalendarApplyAdd: "Mettre à jour les dates et ajouter",
+      itineraryCalendarApplyContinue: "Mettre à jour les dates et continuer",
       itineraryCalendarStillConflict: "Ces dates se chevauchent encore avec un autre voyage.",
       itineraryCalendarNeedDays:
         "La période doit couvrir au moins {{n}} jour(s), comme le nombre de jours de ce programme.",
@@ -297,6 +301,9 @@ export const translations = {
       tripSaved: "Voyage enregistré.",
       activitySaveError: "Erreur lors de la modification de l'activité.",
       activityDeleteError: "Erreur lors de la suppression de l'activité.",
+      technicalIssueGeneric: "Un problème technique est survenu. Réessaie plus tard.",
+      tripOrInviteTechnicalGeneric:
+        "Tes modifications sont enregistrées, mais une invitation ou un envoi n’a pas pu aboutir. Réessaie plus tard.",
     },
     chat: {
       selectTrip: "Sélectionne un voyage dans la liste « Groupes voyages » pour ouvrir sa conversation.",
@@ -328,8 +335,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "Dates déjà réservées",
-      tripDateIntro:
-        "Ces dates se chevauchent avec un voyage déjà prévu. Modifie les dates du nouveau voyage ou modifie l’existant.",
+      tripDateIntro: "Ces dates chevauchent au moins un voyage déjà prévu.",
       destinationConflictTitle: "Dates déjà réservées",
       inviteParticipantsTitle: "Inviter des participants",
       inviteEmailPlaceholder: "email@exemple.com",
@@ -433,6 +439,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "Voyage actif",
+      participantsListTitle: "Participants au voyage",
+      participantsListHint: "Compagnons liés à ce voyage (invitations, budget partagé).",
+      participantsListAria: "Voir tous les participants",
       calendarLegend:
         "Chiffre en haut à droite d'une case = nombre d'activités ce jour. Le point en bas = jour inclus dans un voyage (pas forcément d'activité).",
       addActivity: "+ Ajouter une activité",
@@ -700,9 +709,13 @@ export const translations = {
       itineraryEnd: "End",
       itineraryDuration: "Duration: {{n}} day(s).",
       itineraryDatesError: "Check your dates.",
-      itineraryCalendarConflictHint:
-        "Pick free dates below (start and end on the same calendar, like when generating the itinerary).",
+      itineraryCalendarConflictHint: "Pick another date range below.",
+      itineraryCalendarOverlapOneBeforeCity: "Overlaps with your trip to ",
+      itineraryCalendarOverlapOneAfterCity: " (",
+      itineraryCalendarOverlapOneAfterRange: ").",
+      itineraryCalendarOverlapManyIntro: "Overlaps with these trips:",
       itineraryCalendarApplyAdd: "Update dates and add to calendar",
+      itineraryCalendarApplyContinue: "Update dates and continue",
       itineraryCalendarStillConflict: "These dates still overlap another trip.",
       itineraryCalendarNeedDays:
         "The range must cover at least {{n}} day(s) to match this itinerary’s length.",
@@ -760,6 +773,9 @@ export const translations = {
       tripSaved: "Trip saved.",
       activitySaveError: "Error updating activity.",
       activityDeleteError: "Error deleting activity.",
+      technicalIssueGeneric: "Something went wrong on our side. Please try again later.",
+      tripOrInviteTechnicalGeneric:
+        "Your changes were saved, but we couldn’t finish invitations or email delivery. Please try again later.",
     },
     chat: {
       selectTrip: 'Select a trip under "Trip groups" to open its conversation.',
@@ -791,8 +807,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "Dates already booked",
-      tripDateIntro:
-        "These dates overlap a trip you already have. Change the new trip’s dates or edit the existing one.",
+      tripDateIntro: "These dates overlap at least one trip you already have.",
       destinationConflictTitle: "Dates already booked",
       inviteParticipantsTitle: "Invite participants",
       inviteEmailPlaceholder: "email@example.com",
@@ -895,6 +910,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "Active trip",
+      participantsListTitle: "Trip participants",
+      participantsListHint: "People on this trip (invites, shared budget).",
+      participantsListAria: "View all participants",
       calendarLegend:
         "The number at the top-right of a day is how many activities that day. The dot at the bottom means the day falls within a trip (not necessarily with activities).",
       addActivity: "+ Add activity",
@@ -1169,9 +1187,13 @@ export const translations = {
       itineraryEnd: "Ende",
       itineraryDuration: "Dauer: {{n}} Tag(e).",
       itineraryDatesError: "Überprüfe die Daten.",
-      itineraryCalendarConflictHint:
-        "Wähle unten einen freien Zeitraum (Start und Ende im gleichen Kalender wie bei der Programmgenerierung).",
+      itineraryCalendarConflictHint: "Wähle unten einen anderen Zeitraum.",
+      itineraryCalendarOverlapOneBeforeCity: "Überschneidung mit der Reise nach ",
+      itineraryCalendarOverlapOneAfterCity: " (",
+      itineraryCalendarOverlapOneAfterRange: ").",
+      itineraryCalendarOverlapManyIntro: "Überschneidung mit diesen Reisen:",
       itineraryCalendarApplyAdd: "Daten aktualisieren und hinzufügen",
+      itineraryCalendarApplyContinue: "Daten aktualisieren und fortfahren",
       itineraryCalendarStillConflict: "Diese Daten überschneiden sich weiterhin mit einer anderen Reise.",
       itineraryCalendarNeedDays:
         "Der Zeitraum muss mindestens {{n}} Tag(e) umfassen, passend zur Länge dieses Programms.",
@@ -1229,6 +1251,9 @@ export const translations = {
       tripSaved: "Reise gespeichert.",
       activitySaveError: "Fehler beim Aktualisieren der Aktivität.",
       activityDeleteError: "Fehler beim Löschen der Aktivität.",
+      technicalIssueGeneric: "Es ist ein technisches Problem aufgetreten. Bitte versuche es später erneut.",
+      tripOrInviteTechnicalGeneric:
+        "Deine Änderungen wurden gespeichert, aber Einladungen oder E-Mails konnten nicht vollständig versendet werden. Bitte versuche es später erneut.",
     },
     chat: {
       selectTrip: "Wähle unter „Reisegruppen“ eine Reise, um den Chat zu öffnen.",
@@ -1260,8 +1285,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "Daten bereits belegt",
-      tripDateIntro:
-        "Diese Daten überschneiden sich mit einer bestehenden Reise. Ändere die Daten oder die andere Reise.",
+      tripDateIntro: "Diese Daten überschneiden sich mit mindestens einer bestehenden Reise.",
       destinationConflictTitle: "Daten bereits belegt",
       inviteParticipantsTitle: "Teilnehmer einladen",
       inviteEmailPlaceholder: "email@beispiel.de",
@@ -1365,6 +1389,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "Aktive Reise",
+      participantsListTitle: "Reiseteilnehmer",
+      participantsListHint: "Personen auf dieser Reise (Einladungen, geteiltes Budget).",
+      participantsListAria: "Alle Teilnehmer anzeigen",
       calendarLegend:
         "Die Zahl oben rechts = Anzahl Aktivitäten an diesem Tag. Der Punkt unten = Tag liegt innerhalb einer Reise (nicht zwingend mit Aktivitäten).",
       addActivity: "+ Aktivität hinzufügen",
@@ -1639,9 +1666,13 @@ export const translations = {
       itineraryEnd: "Fin",
       itineraryDuration: "Duración: {{n}} día(s).",
       itineraryDatesError: "Comprueba las fechas.",
-      itineraryCalendarConflictHint:
-        "Elige fechas libres abajo (inicio y fin en el mismo calendario, como al generar el itinerario).",
+      itineraryCalendarConflictHint: "Elige otro periodo abajo.",
+      itineraryCalendarOverlapOneBeforeCity: "Se solapa con el viaje a ",
+      itineraryCalendarOverlapOneAfterCity: " (",
+      itineraryCalendarOverlapOneAfterRange: ").",
+      itineraryCalendarOverlapManyIntro: "Se solapa con estos viajes:",
       itineraryCalendarApplyAdd: "Actualizar fechas y añadir",
+      itineraryCalendarApplyContinue: "Actualizar fechas y continuar",
       itineraryCalendarStillConflict: "Estas fechas siguen solapándose con otro viaje.",
       itineraryCalendarNeedDays:
         "El periodo debe cubrir al menos {{n}} día(s), como la duración de este programa.",
@@ -1699,6 +1730,9 @@ export const translations = {
       tripSaved: "Viaje guardado.",
       activitySaveError: "Error al actualizar la actividad.",
       activityDeleteError: "Error al eliminar la actividad.",
+      technicalIssueGeneric: "Ha ocurrido un problema técnico. Inténtalo de nuevo más tarde.",
+      tripOrInviteTechnicalGeneric:
+        "Tus cambios se guardaron, pero no pudimos completar las invitaciones o el envío por correo. Inténtalo de nuevo más tarde.",
     },
     chat: {
       selectTrip: 'Elige un viaje en "Grupos de viaje" para abrir la conversación.',
@@ -1730,8 +1764,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "Fechas ya reservadas",
-      tripDateIntro:
-        "Estas fechas se solapan con un viaje ya planificado. Cambia las fechas del nuevo viaje o el existente.",
+      tripDateIntro: "Estas fechas se solapan con al menos un viaje ya planificado.",
       destinationConflictTitle: "Fechas ya reservadas",
       inviteParticipantsTitle: "Invitar participantes",
       inviteEmailPlaceholder: "correo@ejemplo.com",
@@ -1835,6 +1868,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "Viaje activo",
+      participantsListTitle: "Participantes del viaje",
+      participantsListHint: "Personas en este viaje (invitaciones, presupuesto compartido).",
+      participantsListAria: "Ver todos los participantes",
       calendarLegend:
         "El número arriba a la derecha = actividades ese día. El punto abajo = día dentro de un viaje (no siempre con actividades).",
       addActivity: "+ Añadir actividad",
@@ -2109,9 +2145,13 @@ export const translations = {
       itineraryEnd: "Fine",
       itineraryDuration: "Durata: {{n}} giorno/i.",
       itineraryDatesError: "Controlla le date.",
-      itineraryCalendarConflictHint:
-        "Scegli un periodo libero qui sotto (inizio e fine sullo stesso calendario, come per generare il programma).",
+      itineraryCalendarConflictHint: "Scegli un altro periodo qui sotto.",
+      itineraryCalendarOverlapOneBeforeCity: "Sovrapposizione con il viaggio a ",
+      itineraryCalendarOverlapOneAfterCity: " (",
+      itineraryCalendarOverlapOneAfterRange: ").",
+      itineraryCalendarOverlapManyIntro: "Sovrapposizione con questi viaggi:",
       itineraryCalendarApplyAdd: "Aggiorna le date e aggiungi",
+      itineraryCalendarApplyContinue: "Aggiorna le date e continua",
       itineraryCalendarStillConflict: "Queste date si sovrappongono ancora a un altro viaggio.",
       itineraryCalendarNeedDays:
         "Il periodo deve coprire almeno {{n}} giorno/i, come la lunghezza di questo programma.",
@@ -2169,6 +2209,9 @@ export const translations = {
       tripSaved: "Viaggio salvato.",
       activitySaveError: "Errore nell'aggiornamento dell'attività.",
       activityDeleteError: "Errore nell'eliminazione dell'attività.",
+      technicalIssueGeneric: "Si è verificato un problema tecnico. Riprova più tardi.",
+      tripOrInviteTechnicalGeneric:
+        "Le modifiche sono state salvate, ma non abbiamo potuto completare inviti o invio e-mail. Riprova più tardi.",
     },
     chat: {
       selectTrip: 'Scegli un viaggio in "Gruppi viaggio" per aprire la conversazione.',
@@ -2200,8 +2243,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "Date già occupate",
-      tripDateIntro:
-        "Queste date si sovrappongono a un viaggio già pianificato. Modifica le date del nuovo viaggio o di quello esistente.",
+      tripDateIntro: "Queste date si sovrappongono ad almeno un viaggio già pianificato.",
       destinationConflictTitle: "Date già occupate",
       inviteParticipantsTitle: "Invita partecipanti",
       inviteEmailPlaceholder: "email@esempio.com",
@@ -2305,6 +2347,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "Viaggio attivo",
+      participantsListTitle: "Partecipanti al viaggio",
+      participantsListHint: "Persone in questo viaggio (inviti, budget condiviso).",
+      participantsListAria: "Vedi tutti i partecipanti",
       calendarLegend:
         "Il numero in alto a destra = attività in quel giorno. Il punto in basso = giorno compreso in un viaggio (non sempre con attività).",
       addActivity: "+ Aggiungi attività",
@@ -2573,9 +2618,13 @@ export const translations = {
       itineraryEnd: "结束",
       itineraryDuration: "时长：{{n}}天。",
       itineraryDatesError: "请检查日期。",
-      itineraryCalendarConflictHint:
-        "在下方选择空闲日期（在同一日历上选择到达与离开，与生成行程时相同）。",
+      itineraryCalendarConflictHint: "在下方选择其他日期范围。",
+      itineraryCalendarOverlapOneBeforeCity: "与前往",
+      itineraryCalendarOverlapOneAfterCity: "的行程重叠（",
+      itineraryCalendarOverlapOneAfterRange: "）。",
+      itineraryCalendarOverlapManyIntro: "与以下行程重叠：",
       itineraryCalendarApplyAdd: "更新日期并添加到日历",
+      itineraryCalendarApplyContinue: "更新日期并继续",
       itineraryCalendarStillConflict: "这些日期仍与其他行程重叠。",
       itineraryCalendarNeedDays: "日期范围至少需要 {{n}} 天，以匹配此行程的天数。",
       itineraryCancel: "取消",
@@ -2632,6 +2681,8 @@ export const translations = {
       tripSaved: "旅行已保存。",
       activitySaveError: "更新活动时出错。",
       activityDeleteError: "删除活动时出错。",
+      technicalIssueGeneric: "出现技术问题，请稍后再试。",
+      tripOrInviteTechnicalGeneric: "更改已保存，但邀请或邮件发送未能完成，请稍后再试。",
     },
     chat: {
       selectTrip: "在「旅行群组」中选择一项旅行以打开对话。",
@@ -2663,7 +2714,7 @@ export const translations = {
     },
     modals: {
       tripDateTitle: "日期已被占用",
-      tripDateIntro: "这些日期与已有旅行重叠。请更改新旅行的日期或调整已有旅行。",
+      tripDateIntro: "这些日期与至少一个已有旅行重叠。",
       destinationConflictTitle: "日期已被占用",
       inviteParticipantsTitle: "邀请参与者",
       inviteEmailPlaceholder: "email@example.com",
@@ -2749,6 +2800,9 @@ export const translations = {
     },
     planner: {
       activeTrip: "当前旅行",
+      participantsListTitle: "行程参与者",
+      participantsListHint: "本行程相关人员（邀请、共享预算）。",
+      participantsListAria: "查看全部参与者",
       calendarLegend:
         "格子右上的数字表示当天的活动数量。下方圆点表示该日在某段行程内（不一定有活动）。",
       addActivity: "+ 添加活动",

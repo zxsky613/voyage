@@ -143,7 +143,7 @@ export function LanguageSelector({ className = "" }) {
   const groupLabel = t("menu.language");
   return (
     <div className={className}>
-      <span className="mb-2 block text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">
+      <span className="mb-2 block font-display text-[11px] font-normal uppercase tracking-[0.22em] text-slate-500">
         {groupLabel}
       </span>
       <div className="flex flex-wrap gap-2" role="group" aria-label={groupLabel}>

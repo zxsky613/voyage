@@ -15,13 +15,15 @@
  *   du monument (ex. détail sculpté de la Sagrada Família sans les tours).
  * - Éviter les photos **d’intérieur / sol / détail** pour le bandeau (ex. carrelage médina) si ce n’est pas la signature de la ville.
  *
- * Après modification des URLs : `npm run verify:city-heroes` (ratio largeur/hauteur + accessibilité).
+ * Après modification des URLs :
+ * - `npm run verify:city-heroes` — ratio largeur/hauteur ≥ 1,4 + URL joignables ;
+ * - `npm run audit:city-heroes` — heuristique 1re image (jour / côte = eau) à relire.
  */
 export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   madrid: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Madrid_Gran_Via_Navidad_2008.jpg/1920px-Madrid_Gran_Via_Navidad_2008.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Plaza_Mayor_de_Madrid%2C_Panorama_2.jpg/1920px-Plaza_Mayor_de_Madrid%2C_Panorama_2.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Madrid_-_Plaza_Mayor_2012.jpg/1920px-Madrid_-_Plaza_Mayor_2012.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Madrid_Gran_Via_Navidad_2008.jpg/1920px-Madrid_Gran_Via_Navidad_2008.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/2/29/Madrid-Almudena_Cathedral_and_Royal_Palace.jpg",
   ],
   barcelona: [
@@ -138,6 +140,7 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Hafen_von_Marseille-Notre_Dame_de_la_Garde.jpg/1920px-Hafen_von_Marseille-Notre_Dame_de_la_Garde.jpg",
   ],
   toulouse: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Panorama_du_Capitole_de_Toulouse.jpg/1920px-Panorama_du_Capitole_de_Toulouse.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Toulouse_Capitole_Night_Wikimedia_Commons.jpg/1920px-Toulouse_Capitole_Night_Wikimedia_Commons.jpg",
   ],
   cannes: [
@@ -223,9 +226,8 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   ],
   "san francisco": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Golden_Gate_Bridge_Panorama_Photo.jpg/1920px-Golden_Gate_Bridge_Panorama_Photo.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg/1920px-Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg/1920px-San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/GoldenGateBridge-001.jpg/1920px-GoldenGateBridge-001.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg/1920px-Golden_Gate_Bridge_and_San_Francisco_skyline_from_Hawk_Hill_at_Blue_Hour_dllu.jpg",
   ],
   toronto: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Sunset_Toronto_Skyline_Panorama_Crop_from_Snake_Island.jpg/1920px-Sunset_Toronto_Skyline_Panorama_Crop_from_Snake_Island.jpg",
@@ -236,9 +238,31 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   ],
   miami: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/MiamiSouthBeachPanoramaEdit.jpg/1920px-MiamiSouthBeachPanoramaEdit.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/DowntownMiamiPanorama.jpg/1920px-DowntownMiamiPanorama.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Brickell_neighborhood_skyline_%2860062p%29.jpg/1920px-Brickell_neighborhood_skyline_%2860062p%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG/1920px-Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Downtown_Miami_Panorama_from_the_Rusty_Pelican_photo_D_Ramey_Logan.jpg/1920px-Downtown_Miami_Panorama_from_the_Rusty_Pelican_photo_D_Ramey_Logan.jpg",
+  ],
+  mykonos: [
+    // Règle côte : mer + front de mer reconnaissables en premier ; jour lisible ; moulins en second repli
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Little_Venice%2C_Mykonos.jpg/1920px-Little_Venice%2C_Mykonos.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Mykonos_windmills_with_a_view_of_the_Aegean_Sea_in_Greece_-_50662259091.jpg/1920px-Mykonos_windmills_with_a_view_of_the_Aegean_Sea_in_Greece_-_50662259091.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Windmills_of_the_Mykonos_Island%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg/1920px-Windmills_of_the_Mykonos_Island%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Little_Venice_in_Chora_of_Mykonos%2C_0502315.jpg/1920px-Little_Venice_in_Chora_of_Mykonos%2C_0502315.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/74/Little_Venice%2C_Mykonos%2C_2024.jpg/1920px-Little_Venice%2C_Mykonos%2C_2024.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Windmills_in_Mykonos_02.jpg/1920px-Windmills_in_Mykonos_02.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Windmills_of_Mykonos%2C_2024.jpg/1920px-Windmills_of_Mykonos%2C_2024.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/Panoramic_view_of_iconic_Mykonos_Island_Windmills%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg/1920px-Panoramic_view_of_iconic_Mykonos_Island_Windmills%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg",
+  ],
+  // Faute d’orthographe fréquente — mêmes URLs que mykonos
+  myconos: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Little_Venice%2C_Mykonos.jpg/1920px-Little_Venice%2C_Mykonos.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Mykonos_windmills_with_a_view_of_the_Aegean_Sea_in_Greece_-_50662259091.jpg/1920px-Mykonos_windmills_with_a_view_of_the_Aegean_Sea_in_Greece_-_50662259091.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Windmills_of_the_Mykonos_Island%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg/1920px-Windmills_of_the_Mykonos_Island%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Little_Venice_in_Chora_of_Mykonos%2C_0502315.jpg/1920px-Little_Venice_in_Chora_of_Mykonos%2C_0502315.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/74/Little_Venice%2C_Mykonos%2C_2024.jpg/1920px-Little_Venice%2C_Mykonos%2C_2024.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Windmills_in_Mykonos_02.jpg/1920px-Windmills_in_Mykonos_02.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Windmills_of_Mykonos%2C_2024.jpg/1920px-Windmills_of_Mykonos%2C_2024.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/Panoramic_view_of_iconic_Mykonos_Island_Windmills%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg/1920px-Panoramic_view_of_iconic_Mykonos_Island_Windmills%2C_Chora._Cyclades%2C_Agean_Sea%2C_Greece.jpg",
   ],
   "new york": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Lower_Manhattan_from_Brooklyn_May_2015_panorama.jpg/1920px-Lower_Manhattan_from_Brooklyn_May_2015_panorama.jpg",
@@ -258,9 +282,9 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/Doha_-_Museum_of_Islamic_Art_01.jpg/1920px-Doha_-_Museum_of_Islamic_Art_01.jpg",
   ],
   shanghai: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Shanghai_Lujiazui_night_skyline_2017_-_Flickr.jpg/1920px-Shanghai_Lujiazui_night_skyline_2017_-_Flickr.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Pudong_Shanghai_November_2017_HDR_panorama.jpg/1920px-Pudong_Shanghai_November_2017_HDR_panorama.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Pudong_Shanghai_November_2017_panorama.jpg/1920px-Pudong_Shanghai_November_2017_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Pudong_Shanghai_November_2017_HDR_panorama.jpg/1920px-Pudong_Shanghai_November_2017_HDR_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Shanghai_Lujiazui_night_skyline_2017_-_Flickr.jpg/1920px-Shanghai_Lujiazui_night_skyline_2017_-_Flickr.jpg",
   ],
   beijing: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Gate_of_Divine_Might_%28Forbidden_City%29_2015_December_%28wide%29.jpg/1920px-Gate_of_Divine_Might_%28Forbidden_City%29_2015_December_%28wide%29.jpg",
@@ -299,31 +323,40 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Unique_Moment_with_the_Moon_and_Christ_the_Redeemer_3.jpg/1920px-Unique_Moment_with_the_Moon_and_Christ_the_Redeemer_3.jpg",
   ],
   "sao paulo": [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg/1920px-Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg/1920px-Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Avenida_Paulista_street.jpg/1920px-Avenida_Paulista_street.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg/1920px-Reflection_of_Parque_Cultural_Paulista_building_in_Avenida_Paulista%2C_Brazil.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg/1920px-Night_Panorama_-_S%C3%A3o_Paulo_-_Skyline_120705-3147-jikatu.jpg",
   ],
   valencia: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/City_of_Arts_Science_Panorama02.jpg/1920px-City_of_Arts_Science_Panorama02.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG/1920px-Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Hemispheric_Twilight_-_Valencia%2C_Spain_-_Jan_2007.jpg/1920px-Hemispheric_Twilight_-_Valencia%2C_Spain_-_Jan_2007.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/City_of_Arts_and_Sciences_by_Night_%2835427641542%29.jpg/1920px-City_of_Arts_and_Sciences_by_Night_%2835427641542%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG/1920px-Museo_Pr%C3%ADncipe_Felipe%2C_Ciudad_de_las_Artes_y_las_Ciencias%2C_Valencia%2C_Espa%C3%B1a%2C_2014-06-29%2C_DD_56.JPG",
   ],
   phuket: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg/1920px-The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Kata_Beach_Phuket_panorama.jpg/1920px-Kata_Beach_Phuket_panorama.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Big_Buddha_-_Phuket%2C_Thailand.JPG/1920px-Big_Buddha_-_Phuket%2C_Thailand.JPG",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Patong_Beach%2C_Phuket%2C_Thailand_Panorama.jpg/1920px-Patong_Beach%2C_Phuket%2C_Thailand_Panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg/1920px-The_Big_Buddha_Phuket_Panorama_2011_-_panoramio.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Big_Buddha_-_Phuket%2C_Thailand.JPG/1920px-Big_Buddha_-_Phuket%2C_Thailand.JPG",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Phuket%2C_The_Big_Buddha_-_panoramio.jpg/1920px-Phuket%2C_The_Big_Buddha_-_panoramio.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/6/65/Panorama_of_Southern_Phuket_-_Nai_Harn%2C_Ya_Nui%2C_Ao_Sane_beach_and_Promthep_Cape._October_2019_%2848868685346%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg/1920px-Phuket_Thailand_Big-Buddha-of-Phuket-05.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Sunset_at_Mai_Khao_Beach.jpg/1920px-Sunset_at_Mai_Khao_Beach.jpg",
   ],
   "le caire": [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg/1920px-Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg",
+    // Pyramides en premier (repère immédiat) ; Sphinx en dernier repli
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Great_Pyramid_of_Giza_panorama.jpg/1920px-Great_Pyramid_of_Giza_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/All_pyramids_of_Giza_panorama_1.jpg/1920px-All_pyramids_of_Giza_panorama_1.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/All_pyramids_of_Giza_panorama_2.jpg/1920px-All_pyramids_of_Giza_panorama_2.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Giza_Pyramids_Panorama.jpg/1920px-Giza_Pyramids_Panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Sphinx_and_pyramids_of_Giza_panorama.jpg/1920px-Sphinx_and_pyramids_of_Giza_panorama.jpg",
   ],
   cairo: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg/1920px-Giza_Pyramids_during_%22Forever_is_Now%22_exhibition.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Great_Pyramid_of_Giza_panorama.jpg/1920px-Great_Pyramid_of_Giza_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/All_pyramids_of_Giza_panorama_1.jpg/1920px-All_pyramids_of_Giza_panorama_1.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/All_pyramids_of_Giza_panorama_2.jpg/1920px-All_pyramids_of_Giza_panorama_2.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Giza_Pyramids_Panorama.jpg/1920px-Giza_Pyramids_Panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Sphinx_and_pyramids_of_Giza_panorama.jpg/1920px-Sphinx_and_pyramids_of_Giza_panorama.jpg",
   ],
   marrakech: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Marrakech_Koutoubia_Mosque_%2854273634927%29.jpg/1920px-Marrakech_Koutoubia_Mosque_%2854273634927%29.jpg",

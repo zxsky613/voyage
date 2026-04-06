@@ -181,18 +181,23 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
           aria-labelledby={titleId}
         >
           <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
-            <h3 id={titleId} className="min-w-0 text-sm font-semibold text-slate-800">
+            <h3
+              id={titleId}
+              className="min-w-0 font-display text-sm font-normal tracking-[0.04em] text-slate-800"
+            >
               {t("tripForm.dateRangeTitle")}
             </h3>
             <button
               type="button"
               onClick={() => setPickerOpen(false)}
-              className="shrink-0 rounded-full px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
+              className="shrink-0 rounded-full px-3 py-1.5 font-display text-sm font-normal tracking-[0.03em] text-slate-600 hover:bg-slate-100"
             >
               {t("tripForm.dateRangeCancel")}
             </button>
           </div>
-          <p className="mb-3 shrink-0 text-xs leading-snug text-slate-500">{t("tripForm.dateRangeHint")}</p>
+          <p className="mb-3 shrink-0 font-display text-xs font-normal leading-snug tracking-[0.02em] text-slate-500">
+            {t("tripForm.dateRangeHint")}
+          </p>
 
           <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
             <button
@@ -203,7 +208,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
             >
               <ChevronLeft size={22} />
             </button>
-            <span className="min-w-0 flex-1 truncate text-center text-sm font-medium capitalize text-slate-800">
+            <span className="min-w-0 flex-1 truncate text-center font-display text-sm font-normal capitalize tracking-[0.03em] text-slate-800">
               {monthTitle}
             </span>
             <button
@@ -216,7 +221,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
             </button>
           </div>
 
-          <div className="mb-1 grid shrink-0 grid-cols-7 gap-0 text-center text-[0.65rem] font-medium uppercase leading-tight tracking-wide text-slate-400">
+          <div className="mb-1 grid shrink-0 grid-cols-7 gap-0 text-center font-display text-[0.65rem] font-normal uppercase leading-tight tracking-[0.12em] text-slate-400">
             {weekdayLabels.map((w, i) => (
               <div key={`dow-${i}`} className="truncate px-0.5 py-1">
                 {w}
@@ -247,7 +252,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
                     key={cell.key}
                     type="button"
                     onClick={() => onDayClick(ymd)}
-                    className={`flex h-10 min-h-0 min-w-0 w-full items-center justify-center text-sm font-medium transition sm:h-11 ${cellBg} ${
+                    className={`flex h-10 min-h-0 min-w-0 w-full items-center justify-center font-display text-sm font-normal tabular-nums transition sm:h-11 ${cellBg} ${
                       isToday && !inRange ? "ring-1 ring-inset ring-slate-300" : ""
                     } ${isToday && inRange && !(isLo || isHi) ? "ring-1 ring-inset ring-slate-300/60" : ""} hover:z-10 hover:brightness-95 active:brightness-90`}
                   >
@@ -259,15 +264,15 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
           </div>
 
           <div className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
-            <div className="min-w-0 text-xs text-slate-600">
-              <span className="font-medium text-slate-800">{formatYmdDisplay(draftStart)}</span>
+            <div className="min-w-0 font-display text-xs font-normal tracking-[0.02em] text-slate-600">
+              <span className="text-slate-800">{formatYmdDisplay(draftStart)}</span>
               <span className="mx-1 text-slate-400">→</span>
-              <span className="font-medium text-slate-800">{formatYmdDisplay(draftEnd || draftStart)}</span>
+              <span className="text-slate-800">{formatYmdDisplay(draftEnd || draftStart)}</span>
             </div>
             <button
               type="button"
               onClick={apply}
-              className="shrink-0 rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
+              className="shrink-0 rounded-2xl bg-slate-900 px-5 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white shadow-sm hover:bg-slate-800"
             >
               {t("tripForm.dateRangeApply")}
             </button>
@@ -288,14 +293,18 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
           aria-label={t("modals.pastTripDatesHint")}
           className={`${rowClass} cursor-not-allowed border-slate-200/80 bg-slate-50/90`}
         >
-          <span className="min-w-0 truncate text-base text-slate-700">{formatYmdDisplay(startDate)}</span>
+          <span className="min-w-0 truncate font-display text-base font-normal tracking-[0.02em] text-slate-700">
+            {formatYmdDisplay(startDate)}
+          </span>
           <span className="flex shrink-0 justify-center sm:px-0.5">
             <span className="rounded-full bg-slate-200/80 p-1.5 text-slate-500 sm:p-2">
               <Plane size={14} aria-hidden />
             </span>
           </span>
           <span className="flex min-w-0 items-center justify-end gap-2 sm:justify-end">
-            <span className="min-w-0 truncate text-base text-slate-700">{formatYmdDisplay(endDate)}</span>
+            <span className="min-w-0 truncate font-display text-base font-normal tracking-[0.02em] text-slate-700">
+              {formatYmdDisplay(endDate)}
+            </span>
             <Lock size={18} className="shrink-0 text-slate-400" aria-hidden />
           </span>
         </div>
@@ -305,14 +314,18 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
           onClick={() => setPickerOpen(true)}
           className={`${rowClass} bg-white transition hover:bg-slate-50/80`}
         >
-          <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(startDate)}</span>
+          <span className="min-w-0 truncate font-display text-base font-normal tracking-[0.02em] text-slate-900">
+            {formatYmdDisplay(startDate)}
+          </span>
           <span className="flex shrink-0 justify-center sm:px-0.5">
             <span className="rounded-full bg-slate-100/90 p-1.5 text-slate-500 shadow-sm sm:p-2">
               <Plane size={14} className="animate-bounce" aria-hidden />
             </span>
           </span>
           <span className="flex min-w-0 items-center justify-end gap-2 sm:justify-end">
-            <span className="min-w-0 truncate text-base text-slate-900">{formatYmdDisplay(endDate)}</span>
+            <span className="min-w-0 truncate font-display text-base font-normal tracking-[0.02em] text-slate-900">
+              {formatYmdDisplay(endDate)}
+            </span>
             <Calendar size={18} className="shrink-0 text-slate-400" aria-hidden />
           </span>
         </button>

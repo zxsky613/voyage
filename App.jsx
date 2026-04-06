@@ -63,6 +63,7 @@ import {
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
+import { formatNoticeForEndUser } from "./devUiNotices.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -667,6 +668,144 @@ function initialsFromLabel(label) {
   return (t.slice(0, 2) || "??").toUpperCase();
 }
 
+/** Pastel vifs lisibles avec initiales claires ou sombres. */
+const INITIALS_AVATAR_BG_PALETTE = [
+  "#4F46E5",
+  "#0891B2",
+  "#059669",
+  "#CA8A04",
+  "#C2410C",
+  "#BE185D",
+  "#7C3AED",
+  "#0D9488",
+  "#2563EB",
+  "#DB2777",
+  "#9333EA",
+  "#EA580C",
+];
+
+function hashSeedToUint(str) {
+  const s = String(str || "");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function initialsBgFromSeed(seed) {
+  const idx = hashSeedToUint(seed) % INITIALS_AVATAR_BG_PALETTE.length;
+  return INITIALS_AVATAR_BG_PALETTE[idx];
+}
+
+function randomInitialsBgFromPalette() {
+  return INITIALS_AVATAR_BG_PALETTE[Math.floor(Math.random() * INITIALS_AVATAR_BG_PALETTE.length)];
+}
+
+function luminanceOfHex(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return 0.5;
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+function textColorOnInitialsBg(bgHex) {
+  return luminanceOfHex(bgHex) > 0.55 ? "#0f172a" : "#ffffff";
+}
+
+/**
+ * Couleur de fond pour initiales : compte connecté = métadonnée (assignée à l’inscription),
+ * autres pastilles = couleur stable dérivée de l’e-mail / libellé (invités sans profil partagé).
+ */
+function initialsAvatarBgForParticipant(raw, session) {
+  if (isParticipantRawCurrentUser(raw, session)) {
+    const stored = String(session?.user?.user_metadata?.initials_avatar_bg || "").trim();
+    if (/^#[0-9A-Fa-f]{6}$/i.test(stored)) return stored;
+    const uid = String(session?.user?.id || session?.user?.email || "me").trim();
+    return initialsBgFromSeed(uid);
+  }
+  const key = String(raw || "").trim().toLowerCase();
+  return initialsBgFromSeed(key || "?");
+}
+
+/** « Moi » ou e-mail identique au compte connecté. */
+function isParticipantRawCurrentUser(raw, session) {
+  const r = String(raw || "").trim().toLowerCase();
+  if (r === "moi") return true;
+  const em = String(session?.user?.email || "").trim().toLowerCase();
+  return Boolean(em && r === em);
+}
+
+function currentUserProfileAvatarUrl(session) {
+  return String(session?.user?.user_metadata?.avatar_url || "").trim();
+}
+
+/**
+ * Pastille ronde (chat, listes) : photo profil si c’est l’utilisateur et qu’une URL est enregistrée, sinon initiales.
+ * @param {"palette"|"none"} [initialsFill="palette"] — `none` : le parent impose le fond (ex. verre dépoli sur les cartes chat).
+ */
+function ParticipantCircleAvatar({ raw, session, displayLabel, className, initialsFill = "palette" }) {
+  const isMe = isParticipantRawCurrentUser(raw, session);
+  const photoUrl = isMe ? currentUserProfileAvatarUrl(session) : "";
+  const [imgBroken, setImgBroken] = useState(false);
+  useEffect(() => {
+    setImgBroken(false);
+  }, [photoUrl]);
+  const initials = initialsFromLabel(displayLabel);
+  const showImg = Boolean(photoUrl && !imgBroken);
+  const paletteBg =
+    !showImg && initialsFill === "palette" ? initialsAvatarBgForParticipant(raw, session) : null;
+  const initialsInk = paletteBg ? textColorOnInitialsBg(paletteBg) : undefined;
+  return (
+    <span
+      className={className}
+      title={String(displayLabel)}
+      style={paletteBg ? { backgroundColor: paletteBg, color: initialsInk } : undefined}
+    >
+      {showImg ? (
+        <img
+          src={photoUrl}
+          alt=""
+          onError={() => setImgBroken(true)}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        initials
+      )}
+    </span>
+  );
+}
+
+/** Bandeau planning : photo profil pour l’e-mail du compte, sinon avatar générique (Dicebear). */
+function InviteeEmailAvatar({ email, session }) {
+  const mail = String(email || "").trim();
+  const dicebear = buildParticipantAvatarUrl(mail);
+  const isMe =
+    Boolean(session?.user?.email) &&
+    mail.toLowerCase() === String(session.user.email).trim().toLowerCase();
+  const custom = isMe ? currentUserProfileAvatarUrl(session) : "";
+  const [useFallback, setUseFallback] = useState(false);
+  useEffect(() => {
+    setUseFallback(false);
+  }, [custom, mail]);
+  const src = custom && !useFallback ? custom : dicebear;
+  return (
+    <img
+      src={src}
+      alt={mail}
+      onError={() => {
+        if (custom && !useFallback) setUseFallback(true);
+      }}
+      className="h-full w-full object-cover"
+    />
+  );
+}
+
 function participantDisplayFromRaw(value, currentUserDisplayName) {
   const raw = String(value || "").trim();
   if (!raw) return "Membre";
@@ -1205,7 +1344,7 @@ const TRIPS_SELECT_ATTEMPTS = [
 ];
 
 const GLASS_BUTTON_CLASS =
-  "border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
+  "font-display font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
 const GLASS_ACCENT_STYLE = {
   background:
     "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.92) 55%, rgba(15,23,42,0.96) 100%)",
@@ -1654,14 +1793,26 @@ async function resolveWikipediaPlaceHeaderImage(wikiLang, pageTitle, summaryThum
 }
 
 function getCityHeroImageCandidates(cityInput) {
-  const raw = String(heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || cityInput || "").trim();
-  if (!raw) return [];
+  const full = String(cityInput || "").trim();
+  const raw = String(heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || full).trim();
+  if (!raw && !full) return [];
   const keys = [];
+  const pushKey = (k, minLen = 2) => {
+    const n = normalizeTextForSearch(String(k || "").trim());
+    if (!n || n.length < minLen || keys.includes(n)) return;
+    keys.push(n);
+  };
   const canonical = resolveCanonicalCity(raw);
-  if (canonical) keys.push(normalizeTextForSearch(canonical));
-  keys.push(normalizeTextForSearch(raw));
-  const firstTok = normalizeTextForSearch(raw.split(/\s+/)[0] || "");
-  if (firstTok && !keys.includes(firstTok)) keys.push(firstTok);
+  if (canonical) pushKey(canonical, 2);
+  pushKey(raw, 2);
+  pushKey(raw.split(/\s+/)[0] || "", 2);
+  // Titres du type « Voyage à Mykonos » : le premier mot n’est pas la ville — on teste chaque segment.
+  for (const piece of full.split(/[\s,\-–—]+/)) {
+    pushKey(piece, 3);
+  }
+  for (const piece of raw.split(/[\s,\-–—]+/)) {
+    pushKey(piece, 3);
+  }
   const urls = [];
   const seen = new Set();
   for (const k of keys) {
@@ -1715,7 +1866,7 @@ function buildCityImageUrl(prompt) {
 
 function getCityImageCacheKey(cityInput) {
   const stem = heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || String(cityInput || "").trim();
-  return `v58:${String(stem)
+  return `v65:${String(stem)
     .trim()
     .toLowerCase()}`;
 }
@@ -1831,6 +1982,26 @@ const DESTINATION_GUIDE_HERO_IMAGE =
   "https://upload.wikimedia.org/wikipedia/commons/f/fe/Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg";
 const DESTINATION_GUIDE_HERO_IMAGE_1280 =
   "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg/1280px-Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg";
+
+/**
+ * Recherche — bandeau « Envie de partir ? ».
+ * Variable : MP4/WebM (`/fichier.mp4` dans public ou URL HTTPS). Vide / absente = vidéo par défaut (Commons, ci-dessous).
+ * Désactiver la vidéo : `false`, `off`, `none`, `image` ou `static`.
+ */
+/** Vue aérienne drone — sable blanc, eau turquoise (Manila Bay). Commons 720p VP9 (~66 Mo) ; boucle côté UI (`loop`). */
+const DESTINATION_GUIDE_HERO_VIDEO_DEFAULT =
+  "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/37/Aerial_view_of_White_Sand_in_MANILA_BAY_(Drone_video).webm/Aerial_view_of_White_Sand_in_MANILA_BAY_(Drone_video).webm.720p.vp9.webm";
+
+const DESTINATION_GUIDE_HERO_VIDEO_RAW = String(
+  import.meta.env.VITE_DESTINATION_GUIDE_HERO_VIDEO ?? ""
+).trim();
+
+const DESTINATION_GUIDE_HERO_VIDEO_DISABLED =
+  /^(0|false|off|none|image|static)$/i.test(DESTINATION_GUIDE_HERO_VIDEO_RAW);
+
+const DESTINATION_GUIDE_HERO_VIDEO_URL = DESTINATION_GUIDE_HERO_VIDEO_DISABLED
+  ? ""
+  : DESTINATION_GUIDE_HERO_VIDEO_RAW || DESTINATION_GUIDE_HERO_VIDEO_DEFAULT;
 
 function buildActivityImageQuery(activity) {
   const text = String(`${activity?.title || activity?.name || ""} ${activity?.location || ""}`).toLowerCase();
@@ -2886,6 +3057,29 @@ function writeMustSeePlaceModalCache(rawName, city, lang, extract, imageUrl) {
 }
 
 /**
+ * Les extraits Wikipédia listent souvent des lieux (ex. villages) un par ligne.
+ * On les regroupe en flux continu avec des virgules ; les vrais paragraphes (\n\n) sont conservés.
+ */
+function formatWikiExtractCommaStyleParagraphs(raw) {
+  const s = String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+  if (!s) return s;
+  return s
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block
+        .split(/\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.length <= 1) return lines[0] || "";
+      return lines.join(", ");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
  * Résumé Wikipédia pour un lieu (nom brut du guide) + vignette ; plusieurs titres / langues.
  * Utilisé par le modal « lieu incontournable » (desktop & tactile).
  * @param {{ resolveImage?: boolean }} options — si false, pas de media-list (pour enchaîner en parallèle).
@@ -3202,9 +3396,15 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const cachedCityImage = await getCachedCityImage(imageCtx);
   const cachedUsableEarly = !!(cachedCityImage && !isLikelyWikiFlagOrSealThumb(cachedCityImage));
 
+  const earlyCommonsList = getCityHeroImageCandidates(imageCtx);
+  const earlyCommonsFirst =
+    earlyCommonsList.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || earlyCommonsList[0] || "";
+  const hasCuratedCommonsHero = !!String(earlyCommonsFirst || "").trim();
+
   const wikiHeroUrlsP = fetchWikipediaHeroImageUrls(safeCity);
+  /** Pas d’appel Unsplash si le catalogue Commons a déjà une vue lieu (évite de polluer le cache avant le guide). */
   const unsplashHeroP =
-    cachedUsableEarly || !UNSPLASH_ACCESS_KEY
+    cachedUsableEarly || !UNSPLASH_ACCESS_KEY || hasCuratedCommonsHero
       ? Promise.resolve("")
       : (async () => {
     const u = await getCityHeroImage(imageCtx);
@@ -3254,16 +3454,21 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
 
   const unsplashUrl = String(unsplashHero || "").trim();
 
-  /** 1) Cache local / Supabase (même URL à vie pour cette ville) 2) sinon Unsplash puis sources stables. */
+  /**
+   * 1) Commons curés (cityWikimediaHeroes…) : prime sur le cache Unsplash / API pour éviter photos hors lieu.
+   * 2) Sinon cache voyageur. 3) Sinon Unsplash puis autres sources.
+   */
   let imageUrl = "";
   let landscapeImageUrl = "";
-  if (cachedUsable) {
+  if (commonsFirst) {
+    imageUrl = upgradeLandscapeImageUrl(commonsFirst);
+    landscapeImageUrl = imageUrl;
+  } else if (cachedUsable) {
     imageUrl = upgradeLandscapeImageUrl(cachedCityImage);
     landscapeImageUrl = imageUrl;
   } else {
     imageUrl =
       unsplashUrl ||
-      commonsFirst ||
       bundledUrl ||
       storageMirrorUrl ||
       wikiApiPrimary ||
@@ -3275,23 +3480,27 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     }
   }
 
-  if (imageUrl && !cachedUsableEarly) {
-    try {
-      await persistCityImage(imageCtx, imageUrl);
-    } catch (_e) {
-      // ignore persistence errors
+  if (imageUrl) {
+    const prevCached = cachedUsableEarly ? upgradeLandscapeImageUrl(cachedCityImage) : "";
+    const shouldPersist = !cachedUsableEarly || (commonsFirst && prevCached !== imageUrl);
+    if (shouldPersist) {
+      try {
+        await persistCityImage(imageCtx, imageUrl);
+      } catch (_e) {
+        // ignore persistence errors
+      }
     }
   }
 
   const heroImageCandidates = dedupeImageUrlChain([
-    ...(cachedUsable ? [imageUrl] : []),
-    ...(unsplashUrl ? [unsplashUrl] : []),
+    ...(imageUrl ? [imageUrl] : []),
     ...commonsCandidates,
+    ...(unsplashUrl ? [unsplashUrl] : []),
     bundledUrl,
     storageMirrorUrl,
     ...wikiHeroUrls,
     ...(wikiThumbUsable ? [wikiThumbRaw] : []),
-    ...(cachedUsable ? [cachedCityImage] : []),
+    ...(cachedUsable && !commonsFirst ? [cachedCityImage] : []),
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
   const tips = buildTravelTips(safeCity);
@@ -3832,14 +4041,27 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
 }
 
 /**
- * Première image du guide destination : cache voyageur → Unsplash (si clé) → jamais Wikimedia avant Unsplash quand l’API est dispo.
- * Persiste l’URL Unsplash pour que `fetchDestinationGuide` réutilise le cache sans second appel.
+ * Première image du guide : Commons curé (catalogue) → cache → Unsplash → Wikimedia / bundle.
+ * Aligné sur `fetchDestinationGuide` pour ne pas enregistrer un Unsplash hors lieu avant le guide.
  */
 async function resolveDestinationHeroFirstPaint(cityRaw) {
   const cityStem = heroImageStemFromDestination(cityRaw) || extractCityPrompt(cityRaw) || String(cityRaw || "").trim();
   if (cityStem.length < 2) return "";
   const safeCity = resolveCanonicalCity(cityStem);
   if (!safeCity || String(safeCity).trim().length < 2) return "";
+
+  const curatedLists = getCityHeroImageCandidates(cityRaw);
+  const curatedFirst =
+    curatedLists.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || curatedLists[0] || "";
+  if (curatedFirst) {
+    const up = upgradeLandscapeImageUrl(String(curatedFirst));
+    try {
+      await persistCityImage(cityRaw, up);
+    } catch (_e) {
+      /* ignore */
+    }
+    return up;
+  }
 
   const cacheKey = getCityImageCacheKey(cityRaw);
   const mem = cacheKey && cityImageMemoryCache[cacheKey] ? String(cityImageMemoryCache[cacheKey]) : "";
@@ -4301,11 +4523,28 @@ async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
   const stem = heroImageStemFromDestination(c) || c;
+  const curatedList = getCityHeroImageCandidates(c);
+  const curatedFirst =
+    curatedList.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || curatedList[0] || "";
+  /** Même règle que le guide : Commons curé prime sur le cache (cartes voyage sinon figées sur une vieille Unsplash). */
+  if (curatedFirst) {
+    const up = upgradeLandscapeImageUrl(String(curatedFirst));
+    const persistedHero = await getCachedCityImage(c);
+    const prev = persistedHero ? upgradeLandscapeImageUrl(persistedHero) : "";
+    if (!prev || prev !== up) {
+      try {
+        await persistCityImage(c, up);
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    return up;
+  }
+
   const persistedHero = await getCachedCityImage(c);
   if (persistedHero && !isLikelyWikiFlagOrSealThumb(persistedHero)) {
     return upgradeLandscapeImageUrl(persistedHero);
   }
-  /** Pas de cache : Unsplash d’abord (clé présente), puis Wikimedia / Wikipedia. */
   if (UNSPLASH_ACCESS_KEY) {
     const u = await getCityHeroImage(c);
     if (u) return upgradeLandscapeImageUrl(u);
@@ -4324,6 +4563,32 @@ async function resolveStableCityImageForCard(canonicalCity) {
   return "";
 }
 
+/**
+ * Si le catalogue a une image lieu pour ce libellé de voyage, elle remplace RAM / localStorage / Supabase
+ * (sinon les cartes restent bloquées sur une ancienne URL Unsplash).
+ */
+async function syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tripTitle, cachedUrl) {
+  const list = getCityHeroImageCandidates(tripTitle);
+  const first =
+    list.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || list[0] || "";
+  if (!first) return cachedUrl ? upgradeLandscapeImageUrl(String(cachedUrl)) : "";
+  const want = upgradeLandscapeImageUrl(String(first));
+  const have = cachedUrl ? upgradeLandscapeImageUrl(String(cachedUrl).trim()) : "";
+  if (have && have === want) return want;
+  cityImageMemoryCache[cacheKey] = want;
+  try {
+    window.localStorage.setItem(localStorageKey, want);
+  } catch (_e) {
+    /* ignore */
+  }
+  try {
+    await supabase.from("image_cache").upsert({ id: cacheKey, url: want }, { onConflict: "id" });
+  } catch (_e) {
+    /* ignore */
+  }
+  return want;
+}
+
 // Atomes UI
 /** @param {{ title: string, frameClassName?: string }} props — `frameClassName` pour aligner le masque avec le parent (ex. shell chat `rounded-none`). */
 function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
@@ -4334,6 +4599,11 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   const [resolvedUrl, setResolvedUrl] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+  const cityImageElRef = useRef(null);
+
+  const primarySrc = upgradeLandscapeImageUrl(
+    String(resolvedUrl || buildCityImageUrl(title) || "").trim()
+  );
 
   useEffect(() => {
     setLoadFailed(false);
@@ -4352,15 +4622,21 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
       }
 
       if (cityImageMemoryCache[cacheKey]) {
-        if (!cancelled) setResolvedUrl(String(cityImageMemoryCache[cacheKey]));
+        const synced = await syncTripCardHeroWithCuratedCatalog(
+          cacheKey,
+          localStorageKey,
+          title,
+          cityImageMemoryCache[cacheKey]
+        );
+        if (!cancelled) setResolvedUrl(synced);
         return;
       }
 
       try {
         const persisted = window.localStorage.getItem(localStorageKey);
         if (persisted) {
-          cityImageMemoryCache[cacheKey] = persisted;
-          if (!cancelled) setResolvedUrl(String(persisted));
+          const synced = await syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, title, persisted);
+          if (!cancelled) setResolvedUrl(synced);
           return;
         }
       } catch (_e) {
@@ -4377,13 +4653,8 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
         if (cancelled) return;
         if (!error && data && data.length > 0 && data[0]?.url) {
           const cachedUrl = String(data[0].url);
-          cityImageMemoryCache[cacheKey] = cachedUrl;
-          try {
-            window.localStorage.setItem(localStorageKey, cachedUrl);
-          } catch (_e) {
-            // ignore localStorage errors
-          }
-          setResolvedUrl(cachedUrl);
+          const synced = await syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, title, cachedUrl);
+          if (!cancelled) setResolvedUrl(synced);
           return;
         }
 
@@ -4418,11 +4689,28 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeTitle, prompt]);
 
-  const primarySrc = upgradeLandscapeImageUrl(
-    String(resolvedUrl || buildCityImageUrl(title) || "").trim()
-  );
   const displaySrc = loadFailed ? "" : primarySrc;
   const dronePromptFr = buildCityDronePromptFR(prompt || safeTitle);
+
+  const markCityImageLoaded = useCallback(() => {
+    setImgLoaded(true);
+  }, []);
+
+  const cityImageRef = useCallback(
+    (node) => {
+      cityImageElRef.current = node;
+      if (!node) return;
+      // Déjà en cache / décodée avant l’abonnement à onLoad : sinon le texte « Chargement… » reste affiché.
+      if (node.complete && node.naturalWidth > 0) markCityImageLoaded();
+    },
+    [markCityImageLoaded]
+  );
+
+  useLayoutEffect(() => {
+    const el = cityImageElRef.current;
+    if (!el || loadFailed) return;
+    if (el.complete && el.naturalWidth > 0) markCityImageLoaded();
+  }, [displaySrc, loadFailed, markCityImageLoaded]);
 
   return (
     <div
@@ -4430,6 +4718,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
     >
       {displaySrc ? (
         <img
+          ref={cityImageRef}
           src={displaySrc}
           alt={`${safeTitle} — vue aérienne drone, photo de voyage`}
           title={dronePromptFr}
@@ -4437,14 +4726,14 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
           referrerPolicy="no-referrer"
           loading="lazy"
           decoding="async"
-          onLoad={() => setImgLoaded(true)}
+          onLoad={markCityImageLoaded}
           onError={() => {
             if (!loadFailed) setLoadFailed(true);
           }}
         />
       ) : null}
       {!imgLoaded && !loadFailed && (
-        <div className="absolute inset-0 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
         </div>
       )}
@@ -4453,37 +4742,54 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
 }
 
 /** Fond photo ville + flou très léger / verre (budget, chat, bandeau calendrier). */
-function TripLiquidGlassShell({ imageTitle, active = false, className = "", children }) {
+function TripLiquidGlassShell({
+  imageTitle,
+  active = false,
+  /** `high` : texte blanc lisible sur photos très claires (ex. cartes onglet Budget). */
+  contrast = "standard",
+  className = "",
+  children,
+}) {
+  const high = contrast === "high";
   return (
     <div className={`relative isolate overflow-hidden ${className}`.trim()}>
       {/* Photo : coins carrés, le parent arrondi + overflow-hidden évite le halo gris (CityImage ne doit pas forcer rounded-[3rem] ici). */}
       <div
         className="pointer-events-none absolute inset-0 overflow-hidden"
         style={{
-          filter: active
-            ? "blur(0.7px) saturate(1.28) brightness(0.93)"
-            : "blur(0.5px) saturate(1.22) brightness(0.95)",
+          filter: high
+            ? active
+              ? "blur(0.7px) saturate(1.12) brightness(0.78)"
+              : "blur(0.5px) saturate(1.1) brightness(0.82)"
+            : active
+              ? "blur(0.7px) saturate(1.28) brightness(0.93)"
+              : "blur(0.5px) saturate(1.22) brightness(0.95)",
         }}
       >
         <CityImage title={String(imageTitle || "voyage")} frameClassName="rounded-none" />
       </div>
 
-      {/* Voile plus transparent — photo plus lisible */}
+      {/* Voile : côté texte (gauche) plus dense en mode high pour le contraste */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          background: active
-            ? "linear-gradient(160deg, rgba(2,6,23,0.24) 0%, rgba(2,6,23,0.38) 100%)"
-            : "linear-gradient(160deg, rgba(2,6,23,0.18) 0%, rgba(2,6,23,0.32) 100%)",
+          background: high
+            ? active
+              ? "linear-gradient(118deg, rgba(2,6,23,0.78) 0%, rgba(2,6,23,0.52) 46%, rgba(2,6,23,0.28) 100%)"
+              : "linear-gradient(118deg, rgba(2,6,23,0.72) 0%, rgba(2,6,23,0.48) 48%, rgba(2,6,23,0.22) 100%)"
+            : active
+              ? "linear-gradient(160deg, rgba(2,6,23,0.24) 0%, rgba(2,6,23,0.38) 100%)"
+              : "linear-gradient(160deg, rgba(2,6,23,0.18) 0%, rgba(2,6,23,0.32) 100%)",
         }}
       />
 
-      {/* Reflet discret en haut */}
+      {/* Reflet haut : atténué en high pour ne pas éclaircir le texte */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.03) 28%, rgba(255,255,255,0) 62%)",
+          background: high
+            ? "linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 36%)"
+            : "linear-gradient(180deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.03) 28%, rgba(255,255,255,0) 62%)",
         }}
       />
 
@@ -4522,7 +4828,7 @@ function TopNav({ onMenu, onAdd, title }) {
           <Menu size={20} />
         </button>
         <div className="min-w-0 flex-1 px-1 text-center">
-          <h1 className="truncate text-sm font-semibold tracking-[0.06em] text-slate-900 sm:text-base sm:tracking-[0.08em]">
+          <h1 className="truncate font-display text-sm font-normal tracking-[0.05em] text-slate-900 sm:text-base sm:tracking-[0.06em]">
             {String(title || "Mes Voyages")}
           </h1>
         </div>
@@ -4604,15 +4910,15 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
         }`}
       >
         <div className="mb-6 flex items-center justify-between">
-          <p className="text-xs uppercase tracking-[0.4em] text-slate-500">{t("menu.title")}</p>
+          <p className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("menu.title")}</p>
           <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-slate-100" aria-label={t("menu.closeMenu")}>
             <X size={18} />
           </button>
         </div>
         <div className="space-y-3 text-sm text-slate-700">
-          <div className="space-y-2">
+          <div className="flex items-center gap-3.5">
             <MenuProfileAvatar user={user} />
-            <p className="text-sm font-medium text-slate-700">
+            <p className="min-w-0 flex-1 font-display text-base font-normal leading-snug tracking-[0.03em] text-slate-800 sm:text-[1.125rem]">
               {greetingName
                 ? t("menu.greeting", { name: greetingName })
                 : t("menu.greetingNoName")}
@@ -4620,7 +4926,9 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           </div>
           <LanguageSelector className="pt-1" />
           <div className="pt-2">
-            <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.navigation")}</p>
+            <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
+              {t("menu.navigation")}
+            </p>
             <div className="space-y-2">
               {navItems.map((item) => {
                 const active = activeTab === item.id;
@@ -4629,7 +4937,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
                     key={item.id}
                     type="button"
                     onClick={() => onSwitchTab(item.id)}
-                    className={`w-full rounded-2xl px-3 py-2 text-left text-xs transition ${
+                    className={`w-full rounded-2xl px-3 py-2 text-left text-sm font-display font-normal tracking-[0.04em] transition ${
                       active ? "text-white" : "border border-slate-200 bg-white hover:bg-slate-100"
                     }`}
                     style={active ? { backgroundColor: ACCENT } : undefined}
@@ -4643,27 +4951,29 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           <button
             type="button"
             onClick={onOpenAccount}
-            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
+            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
           >
             {t("menu.account")}
           </button>
           <button
             type="button"
             onClick={onSignOut}
-            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-100"
+            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
           >
             {t("menu.signOut")}
           </button>
           {/* ── Aide ── */}
           <div className="mt-4 pt-4 border-t border-slate-200/70">
-            <p className="mb-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">{t("menu.help")}</p>
+            <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
+              {t("menu.help")}
+            </p>
             <button
               type="button"
               onClick={() => {
                 onClose();
                 onShowTour?.();
               }}
-              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
+              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] text-indigo-700 hover:bg-indigo-100 transition-colors"
             >
               <span className="text-base leading-none">🧭</span>
               {t("menu.howItWorks")}
@@ -4846,6 +5156,7 @@ function AuthView() {
               last_name: safeLastName,
               full_name: `${safeFirstName} ${safeLastName}`.trim(),
               avatar_url: avatarUrl || "",
+              initials_avatar_bg: randomInitialsBgFromPalette(),
             },
           },
         });
@@ -4923,6 +5234,7 @@ function AuthView() {
             full_name: `${safeFirst} ${safeLast}`.trim(),
             invited_email: safeInviteEmail,
             invited_trip: String(inviteTripName || "").trim(),
+            initials_avatar_bg: randomInitialsBgFromPalette(),
           },
         },
       });
@@ -4995,7 +5307,7 @@ function AuthView() {
                   setMode("signin");
                   setMsg("");
                 }}
-                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-semibold text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
+                className="w-full rounded-full bg-white px-6 py-3 text-center font-display text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
               >
                 {t("auth.landingSignIn")}
               </button>
@@ -5006,7 +5318,7 @@ function AuthView() {
                   setMode("signup");
                   setMsg("");
                 }}
-                className={`w-full rounded-full px-6 py-3 text-center text-base font-semibold text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
+                className={`w-full rounded-full px-6 py-3 text-center font-display text-base font-normal tracking-[0.03em] text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 {t("auth.landingSignUp")}
@@ -5034,7 +5346,7 @@ function AuthView() {
           </button>
         ) : null}
         <h1 className="mb-2 text-center"><AvoloBrand size="sm" /></h1>
-        <p className="mb-6 text-center text-lg font-semibold">
+        <p className="mb-6 text-center font-display text-lg font-normal tracking-[0.04em]">
           {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
         </p>
         <div className="space-y-3">
@@ -5180,10 +5492,10 @@ function AuthView() {
                     ✈️
                   </span>
                   <div className="min-w-0">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                       {t("auth.inviteTitle")}
                     </p>
-                    <h3 className="text-[17px] font-bold leading-tight text-slate-900">
+                    <h3 className="font-display text-[17px] font-normal leading-tight tracking-[0.02em] text-slate-900">
                       {inviteFromName
                         ? t("auth.inviteFrom", { name: inviteFromName })
                         : t("auth.inviteFromGeneric")}
@@ -5197,10 +5509,12 @@ function AuthView() {
                     <div className="flex items-center gap-2.5">
                       <MapPin size={14} className="shrink-0 text-indigo-500" />
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
                           {t("auth.inviteDestination")}
                         </p>
-                        <p className="text-[14px] font-bold text-slate-900">{inviteTripName}</p>
+                        <p className="font-display text-[14px] font-normal tracking-[0.02em] text-slate-900">
+                          {inviteTripName}
+                        </p>
                       </div>
                     </div>
                   )}
@@ -5208,8 +5522,10 @@ function AuthView() {
                     <div className="flex items-center gap-2.5">
                       <Calendar size={14} className="shrink-0 text-indigo-500" />
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Dates</p>
-                        <p className="text-[13px] font-semibold text-slate-800">
+                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
+                          Dates
+                        </p>
+                        <p className="font-display text-[13px] font-normal tracking-[0.02em] text-slate-800">
                           {t("auth.inviteDates", {
                             start: formatDate(inviteStartDate),
                             end: formatDate(inviteEndDate),
@@ -5241,7 +5557,7 @@ function AuthView() {
                   <button
                     type="button"
                     onClick={() => setInviteAccepted(true)}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 font-display text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
                   >
                     <span>🎉</span>
                     {t("auth.inviteAccept")}
@@ -5262,7 +5578,7 @@ function AuthView() {
                 >
                   <span>←</span> Retour
                 </button>
-                <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <h3 className="mb-1 font-display text-[10px] font-normal uppercase tracking-[0.22em] text-slate-400">
                   {t("auth.inviteTitle")}
                 </h3>
                 <p className="mb-4 text-[15px] font-bold text-slate-900">{t("auth.inviteSignupStep")}</p>
@@ -5292,7 +5608,7 @@ function AuthView() {
                     type="button"
                     onClick={completeInviteSignup}
                     disabled={loading}
-                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 font-display text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
                   >
                     {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
                   </button>
@@ -5433,7 +5749,7 @@ function TripFormModal({ open, onClose, onCreate }) {
     <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("tripForm.title")}</h2>
+          <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("tripForm.title")}</h2>
           <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
@@ -5557,7 +5873,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
     <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200/70 sm:rounded-[3rem] sm:p-6" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
-          <h3 className="min-w-0 text-xs uppercase tracking-[0.32em] text-slate-500">
+          <h3 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
             {String(title || t("modals.inviteParticipantsTitle"))}
           </h3>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
@@ -5637,7 +5953,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
     <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="min-w-0 w-full max-w-[min(36rem,calc(100vw-1.5rem))] overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:max-w-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("modals.editTripTitle")}</h2>
+          <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("modals.editTripTitle")}</h2>
           <button onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
@@ -5943,8 +6259,10 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
           </div>
           <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-4 pb-3 sm:px-6 sm:pt-5">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">{t("modals.shareTitle")}</p>
-              <h2 className="text-[17px] font-bold leading-tight text-slate-900">{tripTitle}</h2>
+              <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                {t("modals.shareTitle")}
+              </p>
+              <h2 className="font-display text-[17px] font-normal leading-tight text-slate-900">{tripTitle}</h2>
               <p className="mt-0.5 text-[12px] text-slate-500">{dateRange}</p>
             </div>
             <button onClick={onClose} className="shrink-0 rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200">
@@ -5954,7 +6272,9 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
           <div className="h-px shrink-0 bg-slate-100 mx-5" />
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="px-5 pt-4 pb-2 sm:px-6">
-              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t("modals.shareProgramSection")}</p>
+              <p className="mb-3 font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                {t("modals.shareProgramSection")}
+              </p>
               {dayEntries.length === 0 ? (
                 <p className="text-[12px] italic text-slate-400">{t("modals.shareNoActivities")}</p>
               ) : (
@@ -5993,7 +6313,9 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
             {invitedEmails.length > 0 && (
               <div className="px-5 pt-4 pb-2 sm:px-6">
                 <div className="h-px bg-slate-100 mb-4" />
-                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t("modals.shareGuestsSection")}</p>
+                <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                  {t("modals.shareGuestsSection")}
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {invitedEmails.map((mail) => (
                     <span key={mail} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[12px] text-slate-700">
@@ -6035,6 +6357,92 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
   );
 }
 
+/** Liste lecture seule des participants (planning) — ouverte depuis la pile d’avatars sur la carte « Voyage actif ». */
+function PlannerParticipantsListModal({ open, onClose, trip, session }) {
+  useScrollLock(open);
+  const { t } = useI18n();
+  if (!open || !trip) return null;
+  const rawList = participantsForAvatarRow(trip);
+  const display = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+  return (
+    <div
+      className="fixed -inset-1 z-[55] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tp-planner-participants-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="max-h-[min(88dvh,32rem)] w-full min-w-0 max-w-md overflow-y-auto overscroll-contain rounded-t-[2rem] bg-white p-5 shadow-2xl sm:max-h-[min(80vh,36rem)] sm:rounded-[2rem] sm:p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 pr-1">
+            <h2
+              id="tp-planner-participants-title"
+              className="font-display text-xs font-normal uppercase tracking-[0.28em] text-slate-500"
+            >
+              {t("planner.participantsListTitle")}
+            </h2>
+            <p className="mt-2 font-display text-sm font-normal tracking-[0.02em] text-slate-600">
+              {t("planner.participantsListHint")}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-100"
+            aria-label={t("common.close")}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <ul className="space-y-2">
+          {rawList.map((raw, i) => {
+            const rawStr = String(raw || "").trim();
+            const label = display(raw);
+            const emailLine = isValidEmail(rawStr)
+              ? rawStr
+              : rawStr.toLowerCase() === "moi"
+                ? String(session?.user?.email || "").trim()
+                : "";
+            return (
+              <li
+                key={`planner-p-${rawStr}-${i}`}
+                className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/90 px-3 py-2.5 ring-1 ring-slate-100/80 sm:px-4 sm:py-3"
+              >
+                <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-full bg-white shadow-md ring-2 ring-white">
+                  <ParticipantCircleAvatar
+                    raw={raw}
+                    session={session}
+                    displayLabel={label}
+                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-200/90 text-xs font-normal text-slate-800"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-display text-sm font-normal tracking-[0.02em] text-slate-900">
+                    {label}
+                  </p>
+                  {emailLine ? <p className="truncate text-xs text-slate-500">{emailLine}</p> : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-5 w-full rounded-2xl border border-slate-200 py-3 font-display text-sm font-normal tracking-[0.03em] text-slate-800 transition hover:bg-slate-50"
+        >
+          {t("common.close")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TripParticipantsModal({ open, onClose, trip, onSave }) {
   useScrollLock(open);
   const { t } = useI18n();
@@ -6054,7 +6462,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/85 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-xs uppercase tracking-[0.4em] text-slate-500">Participants</h2>
+            <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">Participants</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
               Ils servent au <span className="font-medium text-slate-800">partage des dépenses</span> et aux{' '}
               <span className="font-medium text-slate-800">soldes</span> affichés dans le budget de ce voyage.
@@ -6119,7 +6527,7 @@ function ConfirmDeleteModal({ open, trip, onCancel, onConfirm, deleting }) {
   return (
     <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting) onCancel(); }}>
       <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("common.confirmation")}</h2>
+        <h2 className="mb-2 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("common.confirmation")}</h2>
         <p className="mb-6 break-words text-sm text-slate-700">
           {t("modals.deleteTripQuestion", { title: delTitle })}
         </p>
@@ -6226,7 +6634,7 @@ function AccountModal({
     <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !deleting && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-xl overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-2">
-          <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("menu.account")}</h2>
+          <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("menu.account")}</h2>
           <button type="button" onClick={onClose} className="shrink-0 rounded-full p-2 hover:bg-slate-100">
             <X size={18} />
           </button>
@@ -6332,7 +6740,7 @@ function AccountModal({
           type="button"
           onClick={onDeleteAccount}
           disabled={deleting}
-          className="mt-5 w-full rounded-2xl px-4 py-3 text-sm text-white disabled:opacity-60"
+          className="mt-5 w-full rounded-2xl px-4 py-3 font-display text-sm font-normal tracking-[0.03em] text-white disabled:opacity-60"
           style={{ backgroundColor: "#e11d48" }}
         >
           {deleting ? t("accountModal.deleting") : t("accountModal.deleteAccount")}
@@ -6357,12 +6765,10 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
           <div className="pointer-events-none absolute inset-0 rounded-[3rem] bg-gradient-to-t from-black/40 via-black/08 to-transparent" />
           <div className="pointer-events-none absolute bottom-4 left-4 right-4 text-white">
             <div className="flex w-full flex-col items-start">
-              <div className="inline-flex max-w-full items-center rounded-2xl border border-white/28 bg-black/18 px-2.5 py-1 backdrop-blur-sm">
-                <h3 className="truncate text-[clamp(0.95rem,1.45vw,1.35rem)] font-semibold uppercase leading-[1.02] tracking-[0.01em] text-white">
-                  {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
-                </h3>
-              </div>
-              <p className="mt-1 w-full truncate pl-2.5 text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
+              <h3 className="max-w-full truncate font-display text-[clamp(0.95rem,1.45vw,1.35rem)] font-normal uppercase leading-[1.08] tracking-[0.08em] text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.8),0_2px_14px_rgba(0,0,0,0.5)]">
+                {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
+              </h3>
+              <p className="mt-1 w-full truncate text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
                 {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
               </p>
             </div>
@@ -6517,7 +6923,7 @@ function CitySearchBox({
         else onChange(city);
         setFocused(false);
       }}
-      className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
+      className="block w-full rounded-xl px-3 py-2 text-left font-display text-sm font-normal tracking-[0.02em] text-slate-700 transition hover:bg-slate-100"
     >
       {formatCitySuggestionDisplay(city, uiLanguage)}
     </button>
@@ -6694,7 +7100,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   return (
     <section className="space-y-8">
       <div className="rounded-[2.2rem] bg-white/92 px-6 py-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
-        <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
+        <p className="font-display text-xs font-normal uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
         <h2 className="text-3xl font-semibold text-slate-900">
           {t("home.greeting", { name: String(greetingName || t("common.traveler")) })}{" "}
           <span className="inline-block">👋</span>
@@ -6712,7 +7118,9 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
       </div>
 
       <div>
-        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">{t("home.now")}</h2>
+        <h2 className="mb-4 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          {t("home.now")}
+        </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {now && now.length > 0
             ? now.map((trip) => (
@@ -6730,7 +7138,9 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
       </div>
 
       <div>
-        <h2 className="mb-4 text-xs uppercase tracking-[0.4em] text-slate-500">{t("home.upcoming")}</h2>
+        <h2 className="mb-4 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          {t("home.upcoming")}
+        </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {upcoming && upcoming.length > 0
             ? upcoming.map((trip) => (
@@ -6922,7 +7332,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
         {/* Header */}
         <div className="flex items-start justify-between gap-2 border-b border-slate-100 px-6 py-5">
           <div>
-            <h2 className="text-base font-bold text-slate-900">{t("destination.prefsTitle")}</h2>
+            <h2 className="font-display text-lg font-normal text-slate-900">{t("destination.prefsTitle")}</h2>
             {cityLabel && (
               <p className="mt-0.5 text-[11px] text-slate-400 font-medium">{cityLabel}</p>
             )}
@@ -6938,7 +7348,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Rythme */}
           <section className="space-y-2">
-            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsPace")}</p>
+            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsPace")}</p>
             <div className="space-y-2">
               {radioCard("pace", "relaxed",   pace, setPace, t("destination.prefsPaceRelaxed"))}
               {radioCard("pace", "moderate",  pace, setPace, t("destination.prefsPaceModerate"))}
@@ -6948,7 +7358,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Style */}
           <section className="space-y-2">
-            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsStyle")}</p>
+            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsStyle")}</p>
             <div className="flex flex-wrap gap-2">
               {checkCard("cultural",    t("destination.prefsStyleCultural"))}
               {checkCard("gastronomy",  t("destination.prefsStyleGastronomy"))}
@@ -6962,7 +7372,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Voyageurs */}
           <section className="space-y-2">
-            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsTravelers")}</p>
+            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsTravelers")}</p>
             <div className="grid grid-cols-2 gap-2">
               {radioCard("travelers", "solo",    travelers, setTravelers, t("destination.prefsTravelersSolo"))}
               {radioCard("travelers", "couple",  travelers, setTravelers, t("destination.prefsTravelerCouple"))}
@@ -6973,7 +7383,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Budget */}
           <section className="space-y-2">
-            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsBudget")}</p>
+            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsBudget")}</p>
             <div className="space-y-2">
               {radioCard("budget", "low",    budget, setBudget, t("destination.prefsBudgetLow"))}
               {radioCard("budget", "medium", budget, setBudget, t("destination.prefsBudgetMedium"))}
@@ -6984,7 +7394,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Souhaits libres */}
           <section className="space-y-2">
-            <p className="text-[12px] font-bold uppercase tracking-wider text-slate-500">{t("destination.prefsWishes")}</p>
+            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsWishes")}</p>
             <textarea
               rows={3}
               value={wishes}
@@ -7083,7 +7493,7 @@ function ItineraryResultModal({
                   {t("destination.itineraryResultSubtitle")}
                 </span>
               </div>
-              <h2 className="mt-2 text-[1.35rem] font-bold leading-tight tracking-tight text-slate-900">
+              <h2 className="mt-2 font-display text-[1.35rem] font-normal leading-tight tracking-[0.02em] text-slate-900">
                 {cityLabel || t("destination.itineraryResultTitle")}
               </h2>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -7483,14 +7893,16 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
           </button>
         </div>
         <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain p-5 sm:p-6">
-          <h2 id={titleId} className="pr-10 text-lg font-bold leading-snug text-slate-900 sm:text-xl">
+          <h2 id={titleId} className="pr-10 font-display text-lg font-normal leading-snug text-slate-900 sm:text-xl">
             {displayName}
           </h2>
           <div className="mt-4">
             {textLoading ? (
               <p className="animate-pulse text-sm leading-relaxed text-slate-500">{t("destination.mustSeePlaceLoading")}</p>
             ) : extract ? (
-              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{extract}</p>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
+                {formatWikiExtractCommaStyleParagraphs(extract)}
+              </p>
             ) : (
               <p className="text-sm leading-relaxed text-slate-500">
                 {t("destination.mustSeePlaceNoDescCtx", { place: displayName, city }) || t("destination.mustSeePlaceNoDesc")}
@@ -7600,6 +8012,24 @@ function DestinationGuideView({
     const c = _readGuideCache(confirmedDestination, language);
     return c?.geminiTips ?? null;
   });
+
+  const [heroVideoFailed, setHeroVideoFailed] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setPrefersReducedMotion(!!mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    setHeroVideoFailed(false);
+  }, [DESTINATION_GUIDE_HERO_VIDEO_URL]);
+
+  const showDestinationHeroVideo =
+    Boolean(DESTINATION_GUIDE_HERO_VIDEO_URL) && !prefersReducedMotion && !heroVideoFailed;
 
   const displayGuide = useMemo(() => {
     if (!guide) return null;
@@ -7770,12 +8200,8 @@ function DestinationGuideView({
           ),
         });
       } else {
-        setGuide({
-          ...instant,
-          imageUrl: "",
-          landscapeImageUrl: "",
-          heroImageCandidates: [],
-        });
+        // Pas de cache : afficher tout de suite le héros Commons du catalogue (ex. Mykonos) au lieu d’un bandeau vide.
+        setGuide(instant);
       }
     } else {
       setGuide(instant);
@@ -7978,29 +8404,43 @@ function DestinationGuideView({
       setItineraryError(error);
       return;
     }
-    // Valider les dates puis ouvrir le modal de préférences
+    const calConflicts = findTripsOverlappingDateRange(trips, programStartDate, programEndDate, null);
+    if (calConflicts.length > 0) {
+      setItineraryCalendarConflict({
+        conflictingTrips: calConflicts,
+        draftStart: programStartDate,
+        draftEnd: programEndDate,
+        phase: "beforeGenerate",
+        afterResolve: "openPrefs",
+      });
+      setItineraryCalendarConflictErr("");
+      return;
+    }
     setPendingTripRequest({ dest, startDate: programStartDate, endDate: programEndDate });
     setItineraryModalOpen(false);
     setTripPrefsOpen(true);
   }
 
-  async function handleGenerateWithPrefs(prefs) {
-    if (!pendingTripRequest) return;
-    const { dest, startDate, endDate } = pendingTripRequest;
-    setTripPrefsOpen(false);
-    setLastItineraryPrefs(prefs);
-    setItineraryLoading(true);
+  async function runItineraryGenerationWithDates(dest, startDate, endDate, prefs, kind) {
+    const regen = kind === "regenerate";
+    if (regen) setItineraryRegenerating(true);
+    else setItineraryLoading(true);
     setItineraryError("");
     try {
       const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
       const ideas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
-      const ideasHaveContent = ideas.length > 0 && ideas.some((d) =>
-        String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
-      );
+      const ideasHaveContent =
+        ideas.length > 0 &&
+        ideas.some(
+          (d) =>
+            String(d?.title || "").trim() ||
+            (Array.isArray(d?.bullets) && d.bullets.length > 0) ||
+            (Array.isArray(d?.activities) && d.activities.length > 0)
+        );
       if (ideasHaveContent) {
         setGeneratedDayIdeas(ideas);
         setLastItineraryRequest({ dest, startDate, endDate });
-        setItineraryResultOpen(true);
+        if (!regen) setItineraryResultOpen(true);
         saveItineraryToSession(dest, ideas, prefs, startDate, endDate, true);
       } else {
         setItineraryError(ITIN_ERROR_EMPTY_RESULT);
@@ -8015,8 +8455,31 @@ function DestinationGuideView({
         setItineraryModalOpen(false);
       }
     } finally {
-      setItineraryLoading(false);
+      if (regen) setItineraryRegenerating(false);
+      else setItineraryLoading(false);
     }
+  }
+
+  async function handleGenerateWithPrefs(prefs) {
+    if (!pendingTripRequest) return;
+    const { dest, startDate, endDate } = pendingTripRequest;
+    setTripPrefsOpen(false);
+    setLastItineraryPrefs(prefs);
+    const calConflicts = findTripsOverlappingDateRange(trips, startDate, endDate, null);
+    if (calConflicts.length > 0) {
+      setItineraryCalendarConflict({
+        conflictingTrips: calConflicts,
+        draftStart: startDate,
+        draftEnd: endDate,
+        phase: "beforeGenerate",
+        afterResolve: "runGeneration",
+        generationKind: "initial",
+        prefsForGeneration: prefs,
+      });
+      setItineraryCalendarConflictErr("");
+      return;
+    }
+    await runItineraryGenerationWithDates(dest, startDate, endDate, prefs, "initial");
   }
 
   async function handleRegenerateItinerary() {
@@ -8034,32 +8497,20 @@ function DestinationGuideView({
       setItineraryError(error);
       return;
     }
-    setItineraryRegenerating(true);
-    setItineraryError("");
-    try {
-      const res = await fetchItineraryProgram(dest, startDate, endDate, lastItineraryPrefs);
-      const regenIdeas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
-      const regenHasContent = regenIdeas.length > 0 && regenIdeas.some((d) =>
-        String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
-      );
-      if (regenHasContent) {
-        setGeneratedDayIdeas(regenIdeas);
-        setLastItineraryRequest({ dest, startDate, endDate });
-        saveItineraryToSession(dest, regenIdeas, lastItineraryPrefs, startDate, endDate, true);
-      } else {
-        setItineraryError(ITIN_ERROR_EMPTY_RESULT);
-      }
-    } catch (e) {
-      const msg = String(e?.message || e);
-      setItineraryError(msg);
-      if (isGeminiQuotaError(msg)) {
-        setItineraryQuotaModalOpen(true);
-      } else if (/403|premium|réservée/i.test(msg)) {
-        setItineraryPremiumGateOpen(true);
-      }
-    } finally {
-      setItineraryRegenerating(false);
+    const calConflicts = findTripsOverlappingDateRange(trips, startDate, endDate, null);
+    if (calConflicts.length > 0) {
+      setItineraryCalendarConflict({
+        conflictingTrips: calConflicts,
+        draftStart: startDate,
+        draftEnd: endDate,
+        phase: "beforeGenerate",
+        afterResolve: "runGeneration",
+        generationKind: "regenerate",
+      });
+      setItineraryCalendarConflictErr("");
+      return;
     }
+    await runItineraryGenerationWithDates(dest, startDate, endDate, lastItineraryPrefs, "regenerate");
   }
 
   const saveProgramToCalendar = useCallback(
@@ -8118,6 +8569,8 @@ function DestinationGuideView({
         end_date: rangeEnd,
         selectedActivitiesWithSchedule: schedule,
         selectedActivities: schedule.map((r) => r.title),
+        /** Après génération IA : ramener la vue sur le résumé voyage + calendrier, pas sur la liste d’activités. */
+        plannerFocusTripAndCalendar: true,
       });
     },
     [trips, generatedDayIdeas, displayGuide, confirmedDestination, onCreateTrip]
@@ -8126,7 +8579,9 @@ function DestinationGuideView({
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs uppercase tracking-[0.4em] text-sky-900/45">{t("destination.guideHeading")}</h2>
+        <h2 className="font-display text-xs font-normal uppercase tracking-[0.35em] text-sky-900/45">
+          {t("destination.guideHeading")}
+        </h2>
       </div>
 
       <div className="rounded-[2.2rem] bg-white/93 p-4 shadow-[0_14px_40px_rgba(30,58,95,0.08)] ring-1 ring-sky-100/55">
@@ -8213,10 +8668,10 @@ function DestinationGuideView({
                   className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/25 blur-3xl"
                   aria-hidden
                 />
-                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-700/90">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.3em] text-sky-700/90">
                   {t("destination.badgeDestination")}
                 </p>
-                <h3 className="mt-2 font-sans text-[1.65rem] font-semibold leading-tight tracking-tight text-slate-900 sm:text-3xl">
+                <h3 className="mt-2 font-display text-[1.65rem] font-normal leading-tight tracking-[0.04em] text-slate-900 sm:text-3xl">
                   {displayCityForLocale(String(displayGuide.city), language)}
                 </h3>
                 <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">{String(displayGuide.description)}</p>
@@ -8287,7 +8742,7 @@ function DestinationGuideView({
                     setEndDate(getTodayStr());
                     setAddModalOpen(true);
                   }}
-                  className={`mt-5 rounded-2xl px-5 py-2.5 text-sm font-medium text-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] ${GLASS_BUTTON_CLASS}`}
+                  className={`mt-5 rounded-2xl px-5 py-2.5 text-sm text-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] ${GLASS_BUTTON_CLASS}`}
                   style={GLASS_ACCENT_STYLE}
                 >
                   {t("destination.addToTrips")}
@@ -8300,7 +8755,7 @@ function DestinationGuideView({
                     <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                    <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                       {t("destination.mustSeeTitle")}
                     </h4>
                     <p className="text-[11px] text-slate-500">{t("destination.mustSeeSubtitle")}</p>
@@ -8314,7 +8769,7 @@ function DestinationGuideView({
                         key={`place-${i}-${raw.slice(0, 24)}`}
                         type="button"
                         onClick={() => setMustSeePlaceModalRaw(raw)}
-                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-medium leading-snug text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
+                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left font-display text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
                       >
                         {displayActivityTitleForLocale(raw, language)}
                       </button>
@@ -8352,7 +8807,7 @@ function DestinationGuideView({
                       />
                       <h4
                         id="destination-expert-tips-heading"
-                        className="text-[11px] font-bold uppercase tracking-[0.32em] text-slate-300"
+                        className="font-display text-[11px] font-normal uppercase tracking-[0.26em] text-slate-300"
                       >
                         {t("destination.tipsTitle")}
                       </h4>
@@ -8380,7 +8835,7 @@ function DestinationGuideView({
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                    <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                       {t("destination.activitiesTitle")}
                     </h4>
                     <p className="text-[11px] text-slate-500">{t("destination.activitiesSubtitle")}</p>
@@ -8400,7 +8855,7 @@ function DestinationGuideView({
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
-                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-medium leading-snug text-indigo-950 shadow-sm ring-1 ring-white/80"
+                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 font-display text-xs font-normal leading-snug tracking-[0.02em] text-indigo-950 shadow-sm ring-1 ring-white/80"
                       >
                         <span>{displayActivityTitleForLocale(cell.title, language)}</span>
                         {costBadge != null && (
@@ -8427,7 +8882,7 @@ function DestinationGuideView({
                       <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                     </span>
                     <div>
-                      <h4 className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-800">
+                      <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                         {t("destination.itineraryTitle")}
                         {VITE_ITINERARY_PREMIUM_ONLY ? (
                           <span className="ml-2 font-sans text-[10px] font-semibold normal-case tracking-normal text-amber-800/90">
@@ -8451,7 +8906,7 @@ function DestinationGuideView({
                       setItineraryModalOpen(true);
                     }}
                     disabled={itineraryLoading}
-                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 font-display text-xs font-normal tracking-[0.04em] text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
                   >
                     {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
                   </button>
@@ -8465,7 +8920,7 @@ function DestinationGuideView({
                     <div className="overflow-hidden rounded-2xl border border-indigo-200/60 bg-gradient-to-br from-slate-900 via-indigo-950 to-sky-950 p-5 shadow-[0_8px_32px_rgba(99,102,241,0.25)]">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-3">
                         <Sparkles className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2.5} aria-hidden />
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.22em] text-slate-300">
                           {t("destination.itineraryResultTitle")}
                         </p>
                       </div>
@@ -8475,7 +8930,9 @@ function DestinationGuideView({
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white ring-1 ring-white/20">
                               {Number(d?.day) || "·"}
                             </span>
-                            <span className="font-medium text-white/90">{String(d?.title || "")}</span>
+                            <span className="font-display font-normal tracking-[0.02em] text-white/90">
+                              {String(d?.title || "")}
+                            </span>
                           </li>
                         ))}
                         {generatedDayIdeas.length > 3 && (
@@ -8487,7 +8944,7 @@ function DestinationGuideView({
                       <button
                         type="button"
                         onClick={() => setItineraryResultOpenPersist(true)}
-                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white ring-1 ring-white/20 transition hover:bg-white/20"
+                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white ring-1 ring-white/20 transition hover:bg-white/20"
                       >
                         <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
                         {t("destination.itineraryResultView")}
@@ -8504,28 +8961,47 @@ function DestinationGuideView({
           </>
         ) : (
           <div className="relative mx-auto w-full max-w-full min-h-[15rem] h-[min(52svh,22rem)] overflow-hidden rounded-2xl shadow-[0_22px_50px_rgba(8,47,73,0.22)] ring-1 ring-cyan-100/30 sm:h-[22rem] sm:min-h-0 sm:max-h-none sm:rounded-[2.2rem]">
-            <img
-              src={DESTINATION_GUIDE_HERO_IMAGE_1280}
-              srcSet={`${DESTINATION_GUIDE_HERO_IMAGE_1280} 1280w, ${DESTINATION_GUIDE_HERO_IMAGE} 3992w`}
-              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
-              alt={t("destination.heroImageAlt")}
-              className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
-              width={3992}
-              height={2242}
-              loading="eager"
-              decoding="async"
-              fetchPriority="high"
-            />
+            {showDestinationHeroVideo ? (
+              <video
+                key={DESTINATION_GUIDE_HERO_VIDEO_URL}
+                className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="auto"
+                poster={DESTINATION_GUIDE_HERO_IMAGE_1280}
+                aria-label={t("destination.heroImageAlt")}
+                onError={() => setHeroVideoFailed(true)}
+                src={DESTINATION_GUIDE_HERO_VIDEO_URL}
+              />
+            ) : (
+              <img
+                src={DESTINATION_GUIDE_HERO_IMAGE_1280}
+                srcSet={`${DESTINATION_GUIDE_HERO_IMAGE_1280} 1280w, ${DESTINATION_GUIDE_HERO_IMAGE} 3992w`}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
+                alt={t("destination.heroImageAlt")}
+                className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
+                width={3992}
+                height={2242}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+              />
+            )}
             <div
               className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_95%_75%_at_50%_48%,rgba(15,118,110,0.12)_0%,rgba(15,23,42,0.38)_100%)]"
               aria-hidden
             />
-            <div className="absolute inset-0 z-[1] flex items-center justify-center px-3 py-4 sm:px-10 sm:py-6">
-              <div className="w-full max-w-xl rounded-xl border border-white/25 bg-white/[0.14] px-5 py-6 shadow-[0_20px_48px_rgba(0,0,0,0.22)] backdrop-blur-md sm:rounded-[2rem] sm:px-12 sm:py-10">
-                <p className="text-center font-sans text-[clamp(1.5rem,7.5vw,3.15rem)] font-medium leading-snug tracking-tight text-white [text-shadow:0_2px_24px_rgba(0,0,0,0.4)] sm:leading-[1.15]">
+            <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center px-3 py-4 sm:px-10 sm:py-6">
+              <div className="flex max-w-xl flex-col items-center">
+                <p className="text-center font-display text-[clamp(1.75rem,8.5vw,3.5rem)] font-normal leading-[1.18] tracking-[0.02em] text-white antialiased sm:leading-[1.14] sm:tracking-[0.025em] [text-shadow:0_1px_0_rgba(255,255,255,0.12),0_2px_4px_rgba(0,0,0,0.55),0_8px_32px_rgba(0,0,0,0.45),0_0_1px_rgba(0,0,0,0.9)]">
                   {t("destination.heroTagline")}
                 </p>
-                <div className="mx-auto mt-4 h-px w-12 bg-gradient-to-r from-transparent via-white/55 to-transparent sm:mt-6 sm:w-16" aria-hidden />
+                <div
+                  className="mt-4 h-px w-12 bg-gradient-to-r from-transparent via-white/55 to-transparent sm:mt-6 sm:w-16"
+                  aria-hidden
+                />
               </div>
             </div>
           </div>
@@ -8549,195 +9025,44 @@ function DestinationGuideView({
         >
           <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
             <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-sky-600 border-t-transparent" aria-hidden />
-            <p className="text-sm font-semibold text-slate-700">{t("destination.itineraryGenerating")}</p>
+            <p className="font-display text-sm font-normal tracking-[0.03em] text-slate-700">
+              {t("destination.itineraryGenerating")}
+            </p>
           </div>
         </div>
       ) : null}
 
       {itineraryResultOpen && Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
-        <>
-          <ItineraryResultModal
-            dayIdeas={generatedDayIdeas}
-            cityLabel={displayGuide ? displayCityForLocale(String(displayGuide.city || ""), language) : ""}
-            startDate={String(
-              lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate
-            )}
-            endDate={String(
-              lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate
-            )}
-            prefs={lastItineraryPrefs}
-            regenerating={itineraryRegenerating}
-            fetchError={itineraryError}
-            onClose={() => {
-              setItineraryError("");
-              setItineraryCalendarConflict(null);
-              setItineraryCalendarConflictErr("");
-              setItineraryResultOpenPersist(false);
-            }}
-            onRegenerate={handleRegenerateItinerary}
-            onSaveToCalendar={async () => {
-              const rangeStart = String(
-                lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || ""
-              );
-              const rangeEnd = String(
-                lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate || ""
-              );
-              const ok = await saveProgramToCalendar(rangeStart, rangeEnd);
-              if (ok) setItineraryResultOpenPersist(false);
-            }}
-          />
-          {itineraryCalendarConflict ? (
-            <div
-              className="fixed -inset-1 z-[90] flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="tp-itin-cal-conflict-title"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget && !itineraryCalendarConflictSaving) {
-                  setItineraryCalendarConflict(null);
-                  setItineraryCalendarConflictErr("");
-                }
-              }}
-            >
-              <div
-                className="flex w-full max-w-md flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[85vh] sm:rounded-[1.75rem]"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain px-5 pb-4 pt-5 sm:px-6">
-                  <h3 id="tp-itin-cal-conflict-title" className="text-lg font-semibold text-slate-900">
-                    {t("modals.tripDateTitle")}
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-600">{t("modals.tripDateIntro")}</p>
-                  <p className="mt-3 text-sm leading-relaxed text-slate-600">
-                    {t("destination.itineraryCalendarConflictHint")}
-                  </p>
-                  <ul className="mt-3 max-h-32 list-disc space-y-1.5 overflow-y-auto pl-5 text-sm text-slate-800">
-                    {itineraryCalendarConflict.conflictingTrips.map((tripRow) => (
-                      <li key={String(tripRow.id)}>
-                        <span className="font-medium">
-                          {displayCityForLocale(
-                            tripDestinationDisplayName(tripRow) || t("modals.tripDefault"),
-                            language
-                          )}
-                        </span>
-                        <span className="text-slate-600">
-                          {" "}
-                          — {formatDate(tripRow.start_date)} – {formatDate(tripRow.end_date)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="mt-4 w-full min-w-0">
-                    <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                      {t("tripForm.dateRangeTitle")}
-                    </p>
-                    <TripDateRangeField
-                      startDate={itineraryCalendarConflict.draftStart}
-                      endDate={itineraryCalendarConflict.draftEnd}
-                      onRangeChange={(s, e) => {
-                        setItineraryCalendarConflict((prev) =>
-                          prev ? { ...prev, draftStart: s, draftEnd: e } : prev
-                        );
-                        setItineraryCalendarConflictErr("");
-                      }}
-                    />
-                  </div>
-                  {(() => {
-                    const span = countInclusiveTripDaysClient(
-                      itineraryCalendarConflict.draftStart,
-                      itineraryCalendarConflict.draftEnd
-                    );
-                    return (
-                      <p className="mt-2 text-xs text-slate-600">
-                        {span.ok
-                          ? t("destination.itineraryDuration", { n: span.days })
-                          : span.error || t("destination.itineraryDatesError")}
-                      </p>
-                    );
-                  })()}
-                  {itineraryCalendarConflictErr ? (
-                    <p className="mt-3 text-sm text-rose-600">{itineraryCalendarConflictErr}</p>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    disabled={itineraryCalendarConflictSaving}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:w-auto"
-                    onClick={() => {
-                      setItineraryCalendarConflict(null);
-                      setItineraryCalendarConflictErr("");
-                    }}
-                  >
-                    {t("destination.itineraryCancel")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={itineraryCalendarConflictSaving}
-                    className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 sm:w-auto"
-                    onClick={async () => {
-                      const c = itineraryCalendarConflict;
-                      if (!c) return;
-                      const ds = c.draftStart;
-                      const de = c.draftEnd;
-                      setItineraryCalendarConflictSaving(true);
-                      setItineraryCalendarConflictErr("");
-                      try {
-                        const span = countInclusiveTripDaysClient(ds, de);
-                        if (!span.ok) {
-                          setItineraryCalendarConflictErr(span.error);
-                          return;
-                        }
-                        if (span.days < generatedDayIdeas.length) {
-                          setItineraryCalendarConflictErr(
-                            t("destination.itineraryCalendarNeedDays", { n: generatedDayIdeas.length })
-                          );
-                          return;
-                        }
-                        const still = findTripsOverlappingDateRange(trips, ds, de, null);
-                        if (still.length > 0) {
-                          setItineraryCalendarConflictErr(t("destination.itineraryCalendarStillConflict"));
-                          setItineraryCalendarConflict((prev) =>
-                            prev ? { ...prev, conflictingTrips: still } : prev
-                          );
-                          return;
-                        }
-                        const dest = String(displayGuide?.city || confirmedDestination || "");
-                        setProgramStartDate(ds);
-                        setProgramEndDate(de);
-                        setLastItineraryRequest((prev) => ({
-                          dest: String(prev?.dest || dest),
-                          startDate: ds,
-                          endDate: de,
-                        }));
-                        setPendingTripRequest((prev) =>
-                          prev ? { ...prev, startDate: ds, endDate: de } : prev
-                        );
-                        saveItineraryToSession(
-                          dest,
-                          generatedDayIdeas,
-                          lastItineraryPrefs,
-                          ds,
-                          de,
-                          true
-                        );
-                        setItineraryCalendarConflict(null);
-                        const ok = await saveProgramToCalendar(ds, de);
-                        if (ok) setItineraryResultOpenPersist(false);
-                      } finally {
-                        setItineraryCalendarConflictSaving(false);
-                      }
-                    }}
-                  >
-                    {itineraryCalendarConflictSaving
-                      ? t("destination.itineraryAdding")
-                      : t("destination.itineraryCalendarApplyAdd")}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </>
+        <ItineraryResultModal
+          dayIdeas={generatedDayIdeas}
+          cityLabel={displayGuide ? displayCityForLocale(String(displayGuide.city || ""), language) : ""}
+          startDate={String(
+            lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate
+          )}
+          endDate={String(
+            lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate
+          )}
+          prefs={lastItineraryPrefs}
+          regenerating={itineraryRegenerating}
+          fetchError={itineraryError}
+          onClose={() => {
+            setItineraryError("");
+            setItineraryCalendarConflict(null);
+            setItineraryCalendarConflictErr("");
+            setItineraryResultOpenPersist(false);
+          }}
+          onRegenerate={handleRegenerateItinerary}
+          onSaveToCalendar={async () => {
+            const rangeStart = String(
+              lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || ""
+            );
+            const rangeEnd = String(
+              lastItineraryRequest?.endDate || pendingTripRequest?.endDate || programEndDate || ""
+            );
+            const ok = await saveProgramToCalendar(rangeStart, rangeEnd);
+            if (ok) setItineraryResultOpenPersist(false);
+          }}
+        />
       ) : null}
 
       {itineraryModalOpen && displayGuide ? (
@@ -8750,7 +9075,10 @@ function DestinationGuideView({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 id="itinerary-modal-title" className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-900">
+              <h2
+                id="itinerary-modal-title"
+                className="min-w-0 flex-1 font-display text-sm font-normal leading-snug tracking-[0.03em] text-slate-900"
+              >
                 {t("destination.itineraryModalTitle", {
                   city: displayCityForLocale(String(displayGuide.city), language),
                 })}
@@ -8768,7 +9096,7 @@ function DestinationGuideView({
               {t("destination.itineraryModalDesc")}
             </p>
             <div className="w-full min-w-0">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+              <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
                 {t("tripForm.dateRangeTitle")}
               </p>
               <TripDateRangeField
@@ -8795,7 +9123,7 @@ function DestinationGuideView({
               <button
                 type="button"
                 onClick={() => setItineraryModalOpen(false)}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
                 {t("destination.itineraryCancel")}
               </button>
@@ -8803,7 +9131,7 @@ function DestinationGuideView({
                 type="button"
                 onClick={handleGenerateItinerary}
                 disabled={itineraryLoading}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
+                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
                 {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryNext")}
               </button>
@@ -8852,7 +9180,7 @@ function DestinationGuideView({
                   setItineraryPremiumGateOpen(false);
                   setItineraryError("");
                 }}
-                className={`mt-8 w-full rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 J’ai compris
@@ -8902,7 +9230,7 @@ function DestinationGuideView({
                   setItineraryQuotaModalOpen(false);
                   setItineraryError("");
                 }}
-                className={`mt-8 w-full rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 J’ai compris
@@ -8927,7 +9255,7 @@ function DestinationGuideView({
         <div className="fixed -inset-1 z-50 flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddModalOpen(false); }}>
           <div className="max-h-[min(90vh,40rem)] min-w-0 w-full max-w-[min(32rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">
+              <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                 {t("destination.addCityHeading", {
                   city: displayCityForLocale(String(displayGuide.city), language),
                 })}
@@ -8949,7 +9277,7 @@ function DestinationGuideView({
               }}
             />
             <div className="mt-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
+              <p className="font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
                 {t("destination.addActivitiesTitle")}
               </p>
               <p className="mt-1 text-xs text-slate-500">
@@ -9004,7 +9332,9 @@ function DestinationGuideView({
                           }}
                           className="h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
-                        <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-slate-900">{displayLabel}</span>
+                        <span className="min-w-0 flex-1 font-display text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
+                          {displayLabel}
+                        </span>
                         {costBadge != null ? (
                           <span
                             className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
@@ -9026,7 +9356,7 @@ function DestinationGuideView({
               {sortedPickedIndices.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90">
+                    <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-sky-800/90">
                       {t("destination.scheduleTitle")}
                     </p>
                     {(() => {
@@ -9071,7 +9401,7 @@ function DestinationGuideView({
                             className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                              <span className="min-w-0 flex-1 text-xs font-medium leading-snug text-slate-800">
+                              <span className="min-w-0 flex-1 font-display text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
                                 {label}
                               </span>
                               {cell.cost > 0 ? (
@@ -9191,6 +9521,206 @@ function DestinationGuideView({
           </div>
         </div>
       ) : null}
+
+      {itineraryCalendarConflict ? (
+        <div
+          className="fixed -inset-1 z-[90] flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tp-itin-cal-conflict-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !itineraryCalendarConflictSaving) {
+              setItineraryCalendarConflict(null);
+              setItineraryCalendarConflictErr("");
+            }
+          }}
+        >
+          <div
+            className="flex w-full max-w-md flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:max-h-[85vh] sm:rounded-[1.75rem]"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain px-5 pb-4 pt-5 sm:px-6">
+              <h3 id="tp-itin-cal-conflict-title" className="text-lg font-semibold text-slate-900">
+                {t("modals.tripDateTitle")}
+              </h3>
+              {(() => {
+                const rows = (itineraryCalendarConflict.conflictingTrips || []).map((tripRow) => {
+                  const city = displayCityForLocale(
+                    tripDestinationDisplayName(tripRow) || t("modals.tripDefault"),
+                    language
+                  );
+                  const range = `${formatDate(tripRow.start_date)} – ${formatDate(tripRow.end_date)}`;
+                  return { key: String(tripRow.id), city, range };
+                });
+                if (rows.length === 0) {
+                  return (
+                    <p className="mt-2 text-sm leading-relaxed text-slate-600">{t("modals.tripDateIntro")}</p>
+                  );
+                }
+                if (rows.length === 1) {
+                  return (
+                    <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                      {t("destination.itineraryCalendarOverlapOneBeforeCity")}
+                      <span className="font-semibold text-slate-900">{rows[0].city}</span>
+                      {t("destination.itineraryCalendarOverlapOneAfterCity")}
+                      <span className="font-semibold text-slate-900">{rows[0].range}</span>
+                      {t("destination.itineraryCalendarOverlapOneAfterRange")}
+                    </p>
+                  );
+                }
+                return (
+                  <>
+                    <p className="mt-2 text-sm font-medium leading-relaxed text-slate-800">
+                      {t("destination.itineraryCalendarOverlapManyIntro")}
+                    </p>
+                    <ul className="mt-2 max-h-32 list-none space-y-1.5 overflow-y-auto text-sm leading-relaxed text-slate-700">
+                      {rows.map((r) => (
+                        <li key={r.key}>
+                          <span className="font-semibold text-slate-900">{r.city}</span>
+                          {" ("}
+                          <span className="font-semibold text-slate-900">{r.range}</span>
+                          {")"}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                );
+              })()}
+              <p className="mt-3 text-sm leading-relaxed text-slate-600">
+                {t("destination.itineraryCalendarConflictHint")}
+              </p>
+              <div className="mt-4 w-full min-w-0">
+                <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
+                  {t("tripForm.dateRangeTitle")}
+                </p>
+                <TripDateRangeField
+                  startDate={itineraryCalendarConflict.draftStart}
+                  endDate={itineraryCalendarConflict.draftEnd}
+                  onRangeChange={(s, e) => {
+                    setItineraryCalendarConflict((prev) =>
+                      prev ? { ...prev, draftStart: s, draftEnd: e } : prev
+                    );
+                    setItineraryCalendarConflictErr("");
+                  }}
+                />
+              </div>
+              {(() => {
+                const span = countInclusiveTripDaysClient(
+                  itineraryCalendarConflict.draftStart,
+                  itineraryCalendarConflict.draftEnd
+                );
+                return (
+                  <p className="mt-2 text-xs text-slate-600">
+                    {span.ok
+                      ? t("destination.itineraryDuration", { n: span.days })
+                      : span.error || t("destination.itineraryDatesError")}
+                  </p>
+                );
+              })()}
+              {itineraryCalendarConflictErr ? (
+                <p className="mt-3 text-sm text-rose-600">{itineraryCalendarConflictErr}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={itineraryCalendarConflictSaving}
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:w-auto"
+                onClick={() => {
+                  setItineraryCalendarConflict(null);
+                  setItineraryCalendarConflictErr("");
+                }}
+              >
+                {t("destination.itineraryCancel")}
+              </button>
+              <button
+                type="button"
+                disabled={itineraryCalendarConflictSaving}
+                className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 sm:w-auto"
+                onClick={async () => {
+                  const c = itineraryCalendarConflict;
+                  if (!c) return;
+                  const ds = c.draftStart;
+                  const de = c.draftEnd;
+                  const beforeGen = c.phase === "beforeGenerate";
+                  setItineraryCalendarConflictSaving(true);
+                  setItineraryCalendarConflictErr("");
+                  try {
+                    const span = countInclusiveTripDaysClient(ds, de);
+                    if (!span.ok) {
+                      setItineraryCalendarConflictErr(span.error);
+                      return;
+                    }
+                    if (
+                      !beforeGen &&
+                      Array.isArray(generatedDayIdeas) &&
+                      generatedDayIdeas.length > 0 &&
+                      span.days < generatedDayIdeas.length
+                    ) {
+                      setItineraryCalendarConflictErr(
+                        t("destination.itineraryCalendarNeedDays", { n: generatedDayIdeas.length })
+                      );
+                      return;
+                    }
+                    const still = findTripsOverlappingDateRange(trips, ds, de, null);
+                    if (still.length > 0) {
+                      setItineraryCalendarConflictErr(t("destination.itineraryCalendarStillConflict"));
+                      setItineraryCalendarConflict((prev) =>
+                        prev ? { ...prev, conflictingTrips: still } : prev
+                      );
+                      return;
+                    }
+                    const dest = String(displayGuide?.city || confirmedDestination || "");
+                    setProgramStartDate(ds);
+                    setProgramEndDate(de);
+                    setLastItineraryRequest((prev) => ({
+                      dest: String(prev?.dest || dest),
+                      startDate: ds,
+                      endDate: de,
+                    }));
+                    setPendingTripRequest((prev) =>
+                      prev ? { ...prev, startDate: ds, endDate: de } : { dest, startDate: ds, endDate: de }
+                    );
+                    setItineraryCalendarConflict(null);
+                    setItineraryCalendarConflictErr("");
+
+                    if (beforeGen) {
+                      if (c.afterResolve === "openPrefs") {
+                        setItineraryModalOpen(false);
+                        setTripPrefsOpen(true);
+                        return;
+                      }
+                      if (c.afterResolve === "runGeneration") {
+                        const prefs =
+                          c.prefsForGeneration !== undefined && c.prefsForGeneration !== null
+                            ? c.prefsForGeneration
+                            : lastItineraryPrefs;
+                        const kind = c.generationKind === "regenerate" ? "regenerate" : "initial";
+                        await runItineraryGenerationWithDates(dest, ds, de, prefs, kind);
+                      }
+                      return;
+                    }
+
+                    saveItineraryToSession(dest, generatedDayIdeas, lastItineraryPrefs, ds, de, true);
+                    const ok = await saveProgramToCalendar(ds, de);
+                    if (ok) setItineraryResultOpenPersist(false);
+                  } finally {
+                    setItineraryCalendarConflictSaving(false);
+                  }
+                }}
+              >
+                {itineraryCalendarConflictSaving
+                  ? itineraryCalendarConflict.phase === "beforeGenerate"
+                    ? t("destination.itineraryGenerating")
+                    : t("destination.itineraryAdding")
+                  : itineraryCalendarConflict.phase === "beforeGenerate"
+                    ? t("destination.itineraryCalendarApplyContinue")
+                    : t("destination.itineraryCalendarApplyAdd")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -9202,8 +9732,10 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
     <section className="space-y-8">
       <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-emerald-700">{t("home.now")}</h2>
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
+          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-emerald-700">
+            {t("home.now")}
+          </h2>
+          <span className="rounded-full bg-emerald-100 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-emerald-700">
             {t("trips.badgeInProgress")}
           </span>
         </div>
@@ -9227,8 +9759,10 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
 
       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-sky-700">{t("home.upcoming")}</h2>
-          <span className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-700">
+          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-sky-700">
+            {t("home.upcoming")}
+          </h2>
+          <span className="rounded-full bg-sky-100 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-sky-700">
             {t("trips.badgeUpcoming")}
           </span>
         </div>
@@ -9252,8 +9786,10 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
 
       <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="text-xs uppercase tracking-[0.4em] text-slate-600">{t("trips.memories")}</h2>
-          <span className="rounded-full bg-slate-200 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">
+          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-600">
+            {t("trips.memories")}
+          </h2>
+          <span className="rounded-full bg-slate-200 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-slate-600">
             {t("trips.badgePast")}
           </span>
         </div>
@@ -9375,7 +9911,7 @@ function PlannerView({
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
               {"<"}
             </button>
-            <h2 className="min-w-0 truncate px-1 text-center text-[10px] uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.4em]">
+            <h2 className="min-w-0 truncate px-1 text-center font-display text-[10px] font-normal uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.32em]">
               {monthCursor.toLocaleDateString(getAppDateLocale(), { month: "long", year: "numeric" })}
             </h2>
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
@@ -9438,7 +9974,7 @@ function PlannerView({
         </div>
 
         <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
-          <h3 className="mb-3 break-all text-xs uppercase tracking-[0.4em] text-slate-500">
+          <h3 className="mb-3 break-all font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
             {formatDate(selectedDate)}
           </h3>
           <button
@@ -9526,7 +10062,7 @@ function PlannerView({
         <div className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>
           <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.newActivityTitle")}</h2>
+              <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("planner.newActivityTitle")}</h2>
               <button
                 onClick={() => {
                   setActivityModalOpen(false);
@@ -9634,7 +10170,9 @@ function PlannerView({
         <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityDetailsOpen(false); setViewingActivity(null); } }}>
           <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white/95 p-4 shadow-[0_24px_60px_rgba(2,6,23,0.2)] backdrop-blur-xl sm:rounded-[2.5rem] sm:p-7" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-[11px] uppercase tracking-[0.38em] text-slate-500">{t("planner.detailsTitle")}</h2>
+              <h2 className="min-w-0 font-display text-[11px] font-normal uppercase tracking-[0.32em] text-slate-500">
+                {t("planner.detailsTitle")}
+              </h2>
               <button
                 onClick={() => {
                   setActivityDetailsOpen(false);
@@ -9646,8 +10184,10 @@ function PlannerView({
               </button>
             </div>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("planner.activityFieldLabel")}</p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">
+              <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                {t("planner.activityFieldLabel")}
+              </p>
+              <p className="mt-1 font-display text-lg font-normal leading-snug tracking-[0.02em] text-slate-900">
                 {String(viewingActivity?.title || viewingActivity?.name || "").trim()
                   ? displayActivityTitleForLocale(
                       String(viewingActivity?.title || viewingActivity?.name || ""),
@@ -9658,32 +10198,42 @@ function PlannerView({
             </div>
             <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.dateField")}</p>
-                <p className="mt-1 break-all text-sm font-medium text-slate-900">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                  {t("planner.dateField")}
+                </p>
+                <p className="mt-1 break-all font-display text-sm font-normal tracking-[0.02em] text-slate-900">
                   {viewingActivity?.date ? formatDate(viewingActivity.date) : "-"}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.timeField")}</p>
-                <p className="mt-1 text-sm font-medium text-slate-900">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                  {t("planner.timeField")}
+                </p>
+                <p className="mt-1 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
                   {String(viewingActivity?.time || "--:--")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.budgetField")}</p>
-                <p className="mt-1 text-sm font-medium text-slate-900">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                  {t("planner.budgetField")}
+                </p>
+                <p className="mt-1 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
                   {Number(viewingActivity?.cost || 0).toFixed(2)} {t("planner.currencyEur")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4 sm:col-span-2">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.locationField")}</p>
-                <p className="mt-1 break-words text-sm font-medium text-slate-900">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                  {t("planner.locationField")}
+                </p>
+                <p className="mt-1 break-words font-display text-sm font-normal tracking-[0.02em] text-slate-900">
                   {String(viewingActivity?.location || "-")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:col-span-2 sm:px-4">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{t("planner.descriptionField")}</p>
-                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                  {t("planner.descriptionField")}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap break-words font-display text-sm font-normal tracking-[0.02em] text-slate-700">
                   {String(viewingActivity?.description || "").trim() || t("planner.noDescriptionYet")}
                 </p>
               </div>
@@ -9696,7 +10246,7 @@ function PlannerView({
         <div className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setEditActivityModalOpen(false); setEditingActivity(null); setActivityTime(""); } }}>
           <div className="min-w-0 w-full max-w-lg max-h-[min(92dvh,100svh)] overflow-y-auto overflow-x-hidden rounded-t-[2rem] bg-white/90 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8 sm:pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between gap-2">
-              <h2 className="min-w-0 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.editActivityTitle")}</h2>
+              <h2 className="min-w-0 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("planner.editActivityTitle")}</h2>
               <button
                 onClick={() => {
                   setEditActivityModalOpen(false);
@@ -9786,8 +10336,8 @@ function PlannerView({
       {activityToDelete ? (
         <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setActivityToDelete(null); }}>
           <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
-            <h2 className="mb-2 text-xs uppercase tracking-[0.4em] text-slate-500">{t("planner.confirmTitle")}</h2>
-            <p className="mb-6 break-words text-sm text-slate-700">
+            <h2 className="mb-2 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("planner.confirmTitle")}</h2>
+            <p className="mb-6 break-words font-display text-sm font-normal tracking-[0.02em] text-slate-700">
               {t("planner.deleteActivityQuestion", {
                 name: String(activityToDelete?.title || activityToDelete?.name || "").trim()
                   ? displayActivityTitleForLocale(
@@ -9800,7 +10350,7 @@ function PlannerView({
             <div className={MODAL_GRID_2}>
               <button
                 onClick={() => setActivityToDelete(null)}
-                className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm hover:bg-slate-100 sm:px-4"
+                className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100 sm:px-4"
               >
                 {t("common.cancel")}
               </button>
@@ -9809,7 +10359,7 @@ function PlannerView({
                   onDeleteActivity(activityToDelete);
                   setActivityToDelete(null);
                 }}
-                className="min-w-0 rounded-2xl px-2 py-3 text-sm text-white sm:px-4"
+                className="min-w-0 rounded-2xl px-2 py-3 font-display text-sm font-normal tracking-[0.03em] text-white sm:px-4"
                 style={{ backgroundColor: "#e11d48" }}
               >
                 {t("tripCard.delete")}
@@ -9894,7 +10444,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
     <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
-          <h3 className="min-w-0 flex-1 text-xs uppercase tracking-[0.35em] text-slate-500">
+          <h3 className="min-w-0 flex-1 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
             {initial?.id ? t("budget.editExpense") : t("budget.newExpenseModal")}
           </h3>
           <button
@@ -9936,7 +10486,9 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             />
           </div>
           <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("budget.paidBySection")}</p>
+            <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
+              {t("budget.paidBySection")}
+            </p>
             <select
               value={paidBy}
               onChange={(e) => setPaidBy(e.target.value)}
@@ -9950,8 +10502,12 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             </select>
           </div>
           <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("budget.splitBetween")}</p>
-            <p className="mb-2 text-[11px] text-slate-500">{t("budget.splitBetweenHint")}</p>
+            <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
+              {t("budget.splitBetween")}
+            </p>
+            <p className="mb-2 font-display text-[11px] font-normal tracking-[0.02em] text-slate-500">
+              {t("budget.splitBetweenHint")}
+            </p>
             <div className="flex flex-wrap gap-2">
               {parts.map((p) => (
                 <label
@@ -9991,7 +10547,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 expense_date: expenseDate.trim() || null,
               });
             }}
-            className={`w-full rounded-2xl px-4 py-3 text-sm font-medium text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
+            className={`w-full rounded-2xl px-4 py-3 text-sm text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
             {saving ? t("planner.saving") : t("common.save")}
@@ -10025,37 +10581,57 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
       <TripLiquidGlassShell
         imageTitle={imageTitle}
         active={false}
+        contrast="high"
         className="rounded-[2rem] border border-white/42 text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] transition group-hover:border-white/55"
       >
         <div className="flex items-start justify-between gap-2 px-3 py-3.5 sm:gap-3 sm:px-4 sm:py-4">
-          <div className="min-w-0 flex-1">
-            <h3 className="break-words font-semibold tracking-tight text-white drop-shadow-sm">{label}</h3>
-            {dr ? <p className="mt-0.5 break-all text-xs text-white/85">{dr}</p> : null}
+          <div
+            className="min-w-0 flex-1"
+            style={{
+              textShadow:
+                "0 1px 2px rgba(0,0,0,0.85), 0 2px 16px rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.9)",
+            }}
+          >
+            <h3 className="break-words font-display text-lg font-normal tracking-[0.06em] text-white sm:text-xl">
+              {label}
+            </h3>
+            {dr ? (
+              <p className="mt-0.5 break-all font-display text-xs font-normal tracking-[0.02em] text-white/92">
+                {dr}
+              </p>
+            ) : null}
             {groupExpensesEnabled ? (
-              <div className="mt-2.5 flex flex-col gap-1 text-xs text-white/88 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
+              <div className="mt-2.5 flex flex-col gap-1 font-display text-xs font-normal tracking-[0.02em] text-white/92 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
                 <span className="min-w-0">
-                  <span className="text-white/75">{t("budget.sharedExpensesLabel")}</span>{" "}
-                  <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
+                  <span className="text-white/82">{t("budget.sharedExpensesLabel")}</span>{" "}
+                  <span className="tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
                 </span>
-                <span className="hidden text-white/40 sm:inline" aria-hidden>
+                <span className="hidden text-white/50 sm:inline" aria-hidden>
                   ·
                 </span>
                 <span className="min-w-0">
-                  <span className="text-white/75">{t("budget.plannerRefLabel")}</span>{" "}
-                  <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
+                  <span className="text-white/82">{t("budget.plannerRefLabel")}</span>{" "}
+                  <span className="tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
                 </span>
               </div>
             ) : (
-              <p className="mt-2.5 text-xs text-white/88">
-                <span className="text-white/75">{t("budget.plannerRefLabel")}</span>{" "}
-                <span className="font-semibold tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
+              <p className="mt-2.5 font-display text-xs font-normal tracking-[0.02em] text-white/92">
+                <span className="text-white/82">{t("budget.plannerRefLabel")}</span>{" "}
+                <span className="tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
               </p>
             )}
-            <p className="mt-2 text-[11px] font-medium text-white/95 underline decoration-white/35 underline-offset-2">
+            <p className="mt-2 font-display text-[11px] font-normal tracking-[0.04em] text-white underline decoration-white/50 underline-offset-2">
               {t("budget.openTripBudget")}
             </p>
           </div>
-          <ChevronRight className="mt-0.5 h-5 w-5 shrink-0 text-white/75" strokeWidth={2} aria-hidden />
+          <ChevronRight
+            className="mt-0.5 h-5 w-5 shrink-0 text-white/90"
+            strokeWidth={2}
+            aria-hidden
+            style={{
+              filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.85)) drop-shadow(0 2px 8px rgba(0,0,0,0.5))",
+            }}
+          />
         </div>
       </TripLiquidGlassShell>
     </button>
@@ -10150,14 +10726,20 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
           </div>
           <div className="flex items-start justify-between gap-2 px-4 pb-3 pt-1 sm:gap-3 sm:px-6 sm:pt-4">
             <div className="min-w-0 flex-1 pr-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{t("budget.tripDetailTitle")}</p>
+              <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                {t("budget.tripDetailTitle")}
+              </p>
               <h2
                 id="budget-trip-detail-title"
-                className="mt-1 line-clamp-2 break-words text-lg font-semibold leading-snug text-slate-900"
+                className="mt-1 line-clamp-2 break-words font-display text-lg font-normal leading-snug tracking-[0.03em] text-slate-900"
               >
                 {label}
               </h2>
-              {dr ? <p className="mt-0.5 break-all text-xs text-slate-500">{dr}</p> : null}
+              {dr ? (
+                <p className="mt-0.5 break-all font-display text-xs font-normal tracking-[0.02em] text-slate-500">
+                  {dr}
+                </p>
+              ) : null}
             </div>
             <button
               type="button"
@@ -10245,16 +10827,18 @@ function TripExpenseDetail({
       <div className="max-w-full overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="break-words text-lg font-semibold tracking-tight text-slate-900">{tripLabel}</h3>
+            <h3 className="break-words font-display text-lg font-normal tracking-[0.03em] text-slate-900">{tripLabel}</h3>
             {dateRange ? (
-              <p className="mt-0.5 text-xs font-medium uppercase tracking-wider text-slate-400">{dateRange}</p>
+              <p className="mt-0.5 font-display text-xs font-normal uppercase tracking-[0.18em] text-slate-400">
+                {dateRange}
+              </p>
             ) : null}
           </div>
           {!isTripPastByEndDate(trip) ? (
             <button
               type="button"
               onClick={() => onOpenParticipants(trip)}
-              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
+              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
             >
               <Users size={18} className="text-slate-600" strokeWidth={2} />
               {t("budget.participants")}
@@ -10264,8 +10848,8 @@ function TripExpenseDetail({
 
         {!groupExpensesEnabled ? (
           <div className="mb-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-            <p className="font-medium">{t("budget.groupDisabledTitle")}</p>
-            <p className="mt-1 text-xs leading-relaxed text-amber-900/85">
+            <p className="font-display font-normal tracking-[0.02em]">{t("budget.groupDisabledTitle")}</p>
+            <p className="mt-1 font-display text-xs font-normal leading-relaxed tracking-[0.02em] text-amber-900/85">
               {t("budget.groupDisabledBody")}
             </p>
           </div>
@@ -10275,20 +10859,36 @@ function TripExpenseDetail({
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50/80 px-4 py-3.5 ring-1 ring-indigo-200/50">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-800/80">{t("budget.totalShared")}</p>
-                <p className="mt-1.5 text-2xl font-semibold tabular-nums text-indigo-950">{formatEuroFR(totalGroup)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-indigo-900/70">{t("budget.totalSharedHint")}</p>
+                <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-indigo-800/80">
+                  {t("budget.totalShared")}
+                </p>
+                <p className="mt-1.5 font-display text-2xl font-normal tabular-nums tracking-[0.02em] text-indigo-950">
+                  {formatEuroFR(totalGroup)}
+                </p>
+                <p className="mt-1 font-display text-[11px] font-normal leading-snug tracking-[0.02em] text-indigo-900/70">
+                  {t("budget.totalSharedHint")}
+                </p>
               </div>
               <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-3.5 ring-1 ring-slate-200/60">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{t("budget.plannerRefLabel")}</p>
-                <p className="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{formatEuroFR(totalPlanner)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-slate-500">{t("budget.plannerRefHint")}</p>
+                <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-slate-500">
+                  {t("budget.plannerRefLabel")}
+                </p>
+                <p className="mt-1.5 font-display text-2xl font-normal tabular-nums tracking-[0.02em] text-slate-900">
+                  {formatEuroFR(totalPlanner)}
+                </p>
+                <p className="mt-1 font-display text-[11px] font-normal leading-snug tracking-[0.02em] text-slate-500">
+                  {t("budget.plannerRefHint")}
+                </p>
               </div>
             </div>
 
             <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.balances")}</p>
-              <p className="mt-1 text-[11px] text-slate-500">{t("budget.balancesHint")}</p>
+              <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                {t("budget.balances")}
+              </p>
+              <p className="mt-1 font-display text-[11px] font-normal tracking-[0.02em] text-slate-500">
+                {t("budget.balancesHint")}
+              </p>
               <ul className="mt-3 space-y-2">
                 {balanceEntries.map(([person, bal]) => {
                   const b = Number(bal) || 0;
@@ -10299,9 +10899,11 @@ function TripExpenseDetail({
                       key={person}
                       className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-100"
                     >
-                      <span className="min-w-0 truncate font-medium text-slate-800">{displayName(person)}</span>
+                      <span className="min-w-0 truncate font-display font-normal tracking-[0.02em] text-slate-800">
+                        {displayName(person)}
+                      </span>
                       <span
-                        className={`shrink-0 tabular-nums font-semibold ${
+                        className={`shrink-0 font-display tabular-nums font-normal tracking-[0.02em] ${
                           pos ? "text-emerald-700" : neg ? "text-rose-700" : "text-slate-500"
                         }`}
                       >
@@ -10316,8 +10918,12 @@ function TripExpenseDetail({
 
             {settlements.length > 0 ? (
               <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/50 px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800">{t("budget.settlementsTitle")}</p>
-                <p className="mt-1 text-[11px] text-emerald-900/70">{t("budget.settlementsHint")}</p>
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-emerald-800">
+                  {t("budget.settlementsTitle")}
+                </p>
+                <p className="mt-1 font-display text-[11px] font-normal tracking-[0.02em] text-emerald-900/70">
+                  {t("budget.settlementsHint")}
+                </p>
                 <ul className="mt-3 space-y-2">
                   {settlements.map((s, i) => (
                     <li
@@ -10325,11 +10931,17 @@ function TripExpenseDetail({
                       className="flex flex-col gap-2 rounded-xl bg-white px-3 py-2.5 text-sm text-slate-800 ring-1 ring-emerald-100/80 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
                     >
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="break-words font-medium">{displayName(s.from)}</span>
+                        <span className="break-words font-display font-normal tracking-[0.02em]">
+                          {displayName(s.from)}
+                        </span>
                         <ArrowRight size={14} className="shrink-0 text-emerald-600" aria-hidden />
-                        <span className="break-words font-medium">{displayName(s.to)}</span>
+                        <span className="break-words font-display font-normal tracking-[0.02em]">
+                          {displayName(s.to)}
+                        </span>
                       </div>
-                      <span className="shrink-0 font-semibold tabular-nums text-emerald-800">{formatEuroFR(s.amount)}</span>
+                      <span className="shrink-0 font-display font-normal tabular-nums tracking-[0.02em] text-emerald-800">
+                        {formatEuroFR(s.amount)}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -10340,7 +10952,7 @@ function TripExpenseDetail({
               <button
                 type="button"
                 onClick={() => setGroupModal({ mode: "add" })}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium text-white ${GLASS_BUTTON_CLASS}`}
+                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm text-white ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 <Plus size={18} />
@@ -10372,7 +10984,7 @@ function TripExpenseDetail({
                     setImportingPlanner(false);
                   }
                 }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {importingPlanner
                   ? t("budget.importingPlanner")
@@ -10383,7 +10995,9 @@ function TripExpenseDetail({
             <div className="mb-6 border-t border-slate-100 pt-4">
               <div className="mb-3 flex items-center gap-2">
                 <Receipt size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.expenseList")}</p>
+                <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                  {t("budget.expenseList")}
+                </p>
               </div>
               {sortedGroup.length > 0 ? (
                 <ul className="space-y-2">
@@ -10398,19 +11012,25 @@ function TripExpenseDetail({
                         className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="break-words font-medium text-slate-900">{e.title}</p>
-                          <p className="mt-0.5 break-words text-xs text-slate-500">
+                          <p className="break-words font-display font-normal tracking-[0.02em] text-slate-900">
+                            {e.title}
+                          </p>
+                          <p className="mt-0.5 break-words font-display text-xs font-normal tracking-[0.02em] text-slate-500">
                             {t("budget.paidBy")}{" "}
-                            <span className="font-medium text-slate-700">{displayName(e.paid_by)}</span>
+                            <span className="text-slate-700">{displayName(e.paid_by)}</span>
                             {" · "}
                             {t("budget.splitLabel")} {splitLabel}
                           </p>
                           {e.expense_date ? (
-                            <p className="mt-1 text-[10px] text-slate-400">{e.expense_date}</p>
+                            <p className="mt-1 font-display text-[10px] font-normal tracking-[0.02em] text-slate-400">
+                              {e.expense_date}
+                            </p>
                           ) : null}
                         </div>
                         <div className="flex shrink-0 items-start gap-2">
-                          <p className="pt-0.5 text-sm font-semibold tabular-nums text-slate-800">{formatEuroFR(e.amount)}</p>
+                          <p className="pt-0.5 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
+                            {formatEuroFR(e.amount)}
+                          </p>
                           <div className="flex items-center gap-0.5">
                             <button
                               type="button"
@@ -10435,7 +11055,7 @@ function TripExpenseDetail({
                   })}
                 </ul>
               ) : (
-                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center font-display text-sm font-normal tracking-[0.02em] text-slate-500">
                   {t("budget.noGroupExpenses")}
                 </p>
               )}
@@ -10446,7 +11066,9 @@ function TripExpenseDetail({
         <div className={groupExpensesEnabled ? "border-t border-slate-100 pt-4" : ""}>
           <div className="mb-3 flex items-center gap-2">
             <Calendar size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{t("budget.plannerActivities")}</p>
+            <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+              {t("budget.plannerActivities")}
+            </p>
           </div>
           {sortedActivities && sortedActivities.length > 0 ? (
             <ul className="space-y-2">
@@ -10456,17 +11078,17 @@ function TripExpenseDetail({
                   className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-900">
+                    <p className="font-display font-normal tracking-[0.02em] text-slate-900">
                       {String(a?.title || a?.name || "").trim()
                         ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
                         : t("planner.activityNamePlaceholder")}
                     </p>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">
+                    <p className="mt-0.5 truncate font-display text-xs font-normal tracking-[0.02em] text-slate-500">
                       {String(a?.location || t("budget.locationUnknown"))}
                     </p>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 font-display text-[10px] font-normal tracking-[0.02em] text-slate-400">
                       {a?.date ? (
-                        <span className="rounded-md bg-white px-2 py-0.5 font-medium ring-1 ring-slate-200/80">
+                        <span className="rounded-md bg-white px-2 py-0.5 ring-1 ring-slate-200/80">
                           {String(a.date)}
                         </span>
                       ) : null}
@@ -10474,7 +11096,9 @@ function TripExpenseDetail({
                     </div>
                   </div>
                   <div className="flex shrink-0 items-start gap-2">
-                    <p className="pt-0.5 text-sm font-semibold tabular-nums text-slate-800">{formatEuroFR(a?.cost)}</p>
+                    <p className="pt-0.5 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
+                      {formatEuroFR(a?.cost)}
+                    </p>
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
@@ -10509,7 +11133,7 @@ function TripExpenseDetail({
               ))}
             </ul>
           ) : (
-            <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500">
+            <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center font-display text-sm font-normal tracking-[0.02em] text-slate-500">
               {t("budget.noActivitiesPlanner", { plannerTab: t("nav.planner") })}
             </p>
           )}
@@ -10546,7 +11170,7 @@ function TripExpenseDetail({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-start justify-between gap-3">
-              <h3 className="min-w-0 flex-1 break-words text-xs uppercase tracking-[0.35em] text-slate-500">
+              <h3 className="min-w-0 flex-1 break-words font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                 {t("planner.editActivityTitle")}
               </h3>
               <button
@@ -10690,7 +11314,9 @@ function ChatHubView({
   return (
     <section className="space-y-5">
       <div className="rounded-[2rem] bg-white/72 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/60 backdrop-blur-lg sm:p-5">
-        <h2 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("chat.groupsTitle")}</h2>
+        <h2 className="font-display text-xs font-normal uppercase tracking-[0.3em] text-slate-500">
+          {t("chat.groupsTitle")}
+        </h2>
         <div className="mt-3 grid min-w-0 gap-2 md:grid-cols-2">
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
@@ -10713,29 +11339,41 @@ function ChatHubView({
                   <TripLiquidGlassShell
                     imageTitle={String(trip?.destination || trip?.title || "voyage")}
                     active={active}
+                    contrast="high"
                     className={`rounded-2xl border px-4 py-3 shadow-none ring-0 ${
                       active ? "border-white/55" : "border-white/40"
                     }`}
                   >
-                    <p className="font-medium">
-                      {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
-                    </p>
-                    <p className="text-xs text-white/85">
-                      {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
-                    </p>
-                    <div className="mt-2 flex items-center gap-1.5">
-                      {participantLabels.slice(0, 4).map((label) => (
-                        <span
-                          key={`${String(trip.id)}-${String(label)}`}
-                          title={String(label)}
-                          className="inline-grid h-6 w-6 place-items-center rounded-full bg-white/25 text-[10px] font-semibold text-white ring-1 ring-white/30"
-                        >
-                          {initialsFromLabel(label)}
-                        </span>
-                      ))}
-                      {participantLabels.length > 4 ? (
-                        <span className="text-[10px] text-white/85">+{participantLabels.length - 4}</span>
-                      ) : null}
+                    <div
+                      style={{
+                        textShadow:
+                          "0 1px 2px rgba(0,0,0,0.85), 0 2px 16px rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.9)",
+                      }}
+                    >
+                      <p className="font-display text-base font-normal tracking-[0.05em]">
+                        {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
+                      </p>
+                      <p className="text-xs text-white/92">
+                        {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
+                      </p>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {participantsRaw.slice(0, 4).map((rawParticipant, idx) => {
+                          const label = participantLabels[idx];
+                          return (
+                            <ParticipantCircleAvatar
+                              key={`${String(trip.id)}-${String(rawParticipant)}`}
+                              raw={rawParticipant}
+                              session={session}
+                              displayLabel={label}
+                              initialsFill="none"
+                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/30 text-[10px] font-semibold text-white ring-1 ring-white/40"
+                            />
+                          );
+                        })}
+                        {participantLabels.length > 4 ? (
+                          <span className="text-[10px] text-white/90">+{participantLabels.length - 4}</span>
+                        ) : null}
+                      </div>
                     </div>
                   </TripLiquidGlassShell>
                 </button>
@@ -10760,7 +11398,7 @@ function ChatHubView({
               <div className="min-w-0 flex-1 pr-1">
                 <h2
                   id="tp-chat-hub-title"
-                  className="break-words text-base font-semibold leading-snug tracking-tight text-slate-900 sm:text-lg"
+                  className="break-words font-display text-base font-normal leading-snug tracking-[0.04em] text-slate-900 sm:text-lg"
                 >
                   {displayCityForLocale(String(activeTrip.title || ""), language) || t("modals.tripDefault")}
                 </h2>
@@ -10790,7 +11428,7 @@ function ChatHubView({
                   role="tab"
                   aria-selected={hubSubView === "chat"}
                   onClick={() => setHubSubView("chat")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-medium transition sm:px-4 sm:py-2.5 ${
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 font-display text-sm font-normal transition sm:px-4 sm:py-2.5 ${
                     hubSubView === "chat"
                       ? "bg-slate-900 text-white shadow-sm"
                       : "bg-transparent text-slate-600 hover:bg-slate-100/80"
@@ -10804,7 +11442,7 @@ function ChatHubView({
                   role="tab"
                   aria-selected={hubSubView === "votes"}
                   onClick={() => setHubSubView("votes")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-medium transition sm:px-4 sm:py-2.5 ${
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 font-display text-sm font-normal transition sm:px-4 sm:py-2.5 ${
                     hubSubView === "votes"
                       ? "bg-slate-900 text-white shadow-sm"
                       : "bg-transparent text-slate-600 hover:bg-slate-100/80"
@@ -10829,22 +11467,23 @@ function ChatHubView({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-0 sm:px-4 sm:pb-4">
               {hubSubView === "chat" ? (
                 <>
-                  <h3 className="break-words text-xs uppercase tracking-[0.35em] text-slate-500">
+                  <h3 className="break-words font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                     {t("chat.messagesHeading")}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                      {participantsForAvatarRow(activeTrip)
-                        .map((p) => participantDisplayFromRaw(p, currentUserDisplayName))
-                        .map((label) => (
-                          <span
-                            key={`active-${String(label)}`}
-                            title={String(label)}
-                            className="inline-grid h-7 w-7 place-items-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
-                          >
-                            {initialsFromLabel(label)}
-                          </span>
-                        ))}
-                    </div>
+                    {participantsForAvatarRow(activeTrip).map((p) => {
+                      const label = participantDisplayFromRaw(p, currentUserDisplayName);
+                      return (
+                        <ParticipantCircleAvatar
+                          key={`active-${String(p)}`}
+                          raw={p}
+                          session={session}
+                          displayLabel={label}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
+                        />
+                      );
+                    })}
+                  </div>
                     <div
                       ref={messagesContainerRef}
                       className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1"
@@ -10914,7 +11553,9 @@ function ChatHubView({
                   </>
                 ) : (
                   <>
-                    <h3 className="text-xs uppercase tracking-[0.35em] text-slate-500">{t("chat.votesHeading")}</h3>
+                    <h3 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+                      {t("chat.votesHeading")}
+                    </h3>
                     <p className="mt-1 text-xs leading-relaxed text-slate-500">{t("chat.votesHint")}</p>
                     <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
                       {tripActivities.length > 0 ? (
@@ -11120,7 +11761,21 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNoticeState] = useState("");
+  const setNotice = useCallback(
+    (msg) => {
+      if (typeof msg === "function") {
+        setNoticeState((prev) => formatNoticeForEndUser(session, msg(prev), t));
+        return;
+      }
+      if (msg === "" || msg == null) {
+        setNoticeState("");
+        return;
+      }
+      setNoticeState(formatNoticeForEndUser(session, String(msg), t));
+    },
+    [session, t]
+  );
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
   /** true dès que l'onglet Recherche est visité une 1ère fois — garde le composant monté (display:none) par la suite */
@@ -11148,6 +11803,7 @@ export default function App() {
     return monthCursorFromPlannerDate(readStoredPlannerDate() || getTodayStr());
   });
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
+  const [plannerParticipantsListOpen, setPlannerParticipantsListOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
 
   useScrollLock(menuOpen);
@@ -11171,6 +11827,8 @@ export default function App() {
   const loadTripExpensesGenRef = useRef(0);
   /** User id déjà connu côté auth — évite de traiter un SIGNED_IN « fantôme » au retour app mobile comme une nouvelle connexion. */
   const authSessionUidRef = useRef(null);
+  /** Évite les appels en double à updateUser pour initials_avatar_bg (StrictMode / re-renders). */
+  const ensuredInitialsBgUidRef = useRef(null);
 
   const [tripExpenses, setTripExpenses] = useState([]);
   /** False si la table `trip_expenses` n’existe pas encore (script SQL non exécuté). */
@@ -11329,6 +11987,27 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const user = session?.user;
+    if (!user?.id) {
+      ensuredInitialsBgUidRef.current = null;
+      return;
+    }
+    const bg = String(user.user_metadata?.initials_avatar_bg || "").trim();
+    if (/^#[0-9A-Fa-f]{6}$/i.test(bg)) return;
+    if (ensuredInitialsBgUidRef.current === user.id) return;
+    ensuredInitialsBgUidRef.current = user.id;
+    const color = randomInitialsBgFromPalette();
+    void supabase.auth.updateUser({ data: { initials_avatar_bg: color } }).then(({ data: upd, error }) => {
+      if (error) {
+        ensuredInitialsBgUidRef.current = null;
+        return;
+      }
+      if (upd?.user) {
+        setSession((prev) => (prev?.user?.id === upd.user.id ? { ...prev, user: upd.user } : prev));
+      }
+    });
+  }, [session?.user?.id, session?.user?.user_metadata?.initials_avatar_bg]);
 
   useEffect(() => {
     if (!session) {
@@ -11522,6 +12201,10 @@ export default function App() {
         last_name: safeLastName,
         full_name: `${safeFirstName} ${safeLastName}`.trim(),
       };
+      const existingInitialsBg = String(session?.user?.user_metadata?.initials_avatar_bg || "").trim();
+      if (/^#[0-9A-Fa-f]{6}$/i.test(existingInitialsBg)) {
+        dataPayload.initials_avatar_bg = existingInitialsBg;
+      }
       if (avatarUrlPatch !== undefined) {
         dataPayload.avatar_url = avatarUrlPatch;
       } else {
@@ -12828,7 +13511,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen max-w-[100vw] overflow-x-clip pb-[calc(7rem+env(safe-area-inset-bottom,0px))]"
+      className="min-h-screen max-w-[100vw] overflow-x-clip pb-[calc(8.25rem+env(safe-area-inset-bottom,0px))]"
       style={{
         color: TEXT,
         background:
@@ -12858,7 +13541,21 @@ export default function App() {
               trips={trips}
               onCreateTrip={async (payload) => {
                 const ok = await createTrip(payload);
-                if (ok) setActiveTab("planner");
+                if (ok) {
+                  setActiveTab("planner");
+                  if (payload?.plannerFocusTripAndCalendar) {
+                    const run = () => {
+                      const el = document.getElementById("tp-planner-main");
+                      if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+                      else window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+                    };
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        setTimeout(run, 0);
+                      });
+                    });
+                  }
+                }
                 return ok;
               }}
             />
@@ -12878,7 +13575,10 @@ export default function App() {
         ) : null}
 
         {activeTab === "planner" ? (
-          <div className="space-y-4">
+          <div
+            id="tp-planner-main"
+            className="space-y-4 scroll-mt-[max(6rem,env(safe-area-inset-top,0px)+4.5rem)]"
+          >
             <div className="rounded-[2rem] bg-white/70 p-3 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/55 backdrop-blur-lg sm:p-5">
               {selectedTrip ? (
                 <TripLiquidGlassShell
@@ -12890,7 +13590,9 @@ export default function App() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
                     <div className="min-w-0 max-w-full flex-1">
-                      <p className="text-[10px] uppercase tracking-[0.34em] text-white/80">{t("planner.activeTrip")}</p>
+                      <p className="font-display text-[10px] font-normal uppercase tracking-[0.28em] text-white/80">
+                        {t("planner.activeTrip")}
+                      </p>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white"
@@ -12900,7 +13602,7 @@ export default function App() {
                           {t("destination.badgeDestination")}
                         </span>
                       </div>
-                      <h3 className="mt-2 break-words text-xl font-extrabold uppercase leading-tight tracking-[0.02em] text-white drop-shadow-sm sm:text-2xl sm:leading-none">
+                      <h3 className="mt-2 break-words font-display text-xl font-normal uppercase leading-tight tracking-[0.08em] text-white drop-shadow-sm sm:text-2xl sm:leading-none">
                         {selectedTrip.title
                           ? displayCityForLocale(String(selectedTrip.title), language)
                           : t("modals.tripDefault")}
@@ -12909,24 +13611,55 @@ export default function App() {
                         {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center -space-x-2">
-                        {invitedEmailsForAvatarStrip(selectedTrip)
-                          .slice(0, 5)
-                          .map((mail) => (
-                            <div
-                              key={String(mail)}
-                              title={String(mail)}
-                              className="h-9 w-9 overflow-hidden rounded-full bg-white/85 ring-2 ring-white/85 shadow-sm"
-                            >
-                              <img
-                                src={buildParticipantAvatarUrl(mail)}
-                                alt={String(mail)}
-                                className="h-full w-full object-cover"
-                              />
+                    <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
+                      {(() => {
+                        const rawList = participantsForAvatarRow(selectedTrip);
+                        const displayNameFn = (p) =>
+                          participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+                        const maxStack = 5;
+                        const visible = rawList.slice(0, maxStack);
+                        const extra = Math.max(0, rawList.length - visible.length);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setPlannerParticipantsListOpen(true)}
+                            className="group flex shrink-0 items-center rounded-full py-0.5 pl-0.5 pr-1 transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                            aria-label={t("planner.participantsListAria")}
+                          >
+                            <div className="flex items-center">
+                              {visible.map((raw, i) => (
+                                <div
+                                  key={`planner-stack-${String(raw)}-${i}`}
+                                  className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full bg-white shadow-md ring-2 ring-white"
+                                  style={{
+                                    zIndex: i + 1,
+                                    marginLeft: i === 0 ? 0 : -20,
+                                  }}
+                                >
+                                  <ParticipantCircleAvatar
+                                    raw={raw}
+                                    session={session}
+                                    displayLabel={displayNameFn(raw)}
+                                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-slate-800"
+                                  />
+                                </div>
+                              ))}
+                              {extra > 0 ? (
+                                <div
+                                  className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-[10px] font-normal text-white shadow-md ring-2 ring-white"
+                                  style={{
+                                    zIndex: visible.length + 2,
+                                    marginLeft: -20,
+                                  }}
+                                  aria-hidden
+                                >
+                                  +{extra}
+                                </div>
+                              ) : null}
                             </div>
-                          ))}
-                      </div>
+                          </button>
+                        );
+                      })()}
                       {!isTripPastByEndDate(selectedTrip) ? (
                         <button
                           type="button"
@@ -12991,7 +13724,9 @@ export default function App() {
                   <>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
-                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-emerald-700">{t("trips.badgeInProgress")}</h3>
+                        <h3 className="mb-1 font-display text-xs font-normal uppercase tracking-[0.28em] text-emerald-700">
+                          {t("trips.badgeInProgress")}
+                        </h3>
                         <p className="mb-3 text-[11px] text-emerald-900/60">{t("trips.nowSectionHint")}</p>
                         <div className="grid gap-4">
                         {sections.now.length > 0
@@ -13002,7 +13737,9 @@ export default function App() {
                     </div>
                     <div className="space-y-3">
                       <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
-                        <h3 className="mb-1 text-xs uppercase tracking-[0.3em] text-sky-700">{t("trips.badgeUpcoming")}</h3>
+                        <h3 className="mb-1 font-display text-xs font-normal uppercase tracking-[0.28em] text-sky-700">
+                          {t("trips.badgeUpcoming")}
+                        </h3>
                         <p className="mb-3 text-[11px] text-sky-900/60">{t("trips.upcomingSubtitle")}</p>
                         <div className="grid gap-4">
                           {sections.upcoming.length > 0
@@ -13019,7 +13756,9 @@ export default function App() {
                           className="mb-1 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
                         >
                           <div>
-                            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-600">{t("trips.badgePast")}</h3>
+                            <h3 className="font-display text-xs font-normal uppercase tracking-[0.28em] text-slate-600">
+                              {t("trips.badgePast")}
+                            </h3>
                             <p className="mt-0.5 text-[11px] font-normal normal-case tracking-normal text-slate-500">
                               {t("trips.pastSubtitle")}
                             </p>
@@ -13065,32 +13804,35 @@ export default function App() {
 
       <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-2 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70">
         <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-          {tabs.map((t) => {
-            const Icon = t.icon;
-            const active = activeTab === t.id;
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
             return (
               <button
-                key={t.id}
-                data-tour-id={`tab-${t.id}`}
+                key={tab.id}
+                data-tour-id={`tab-${tab.id}`}
                 onClick={() => {
-                  if (t.id === "planner") {
+                  if (tab.id === "planner") {
                     openPlannerToday();
                     return;
                   }
-                  if (t.id === "destination") {
+                  if (tab.id === "destination") {
                     openOrResetDestinationTab();
                     return;
                   }
-                  setActiveTab(t.id);
+                  setActiveTab(tab.id);
                 }}
-                className={`flex items-center justify-center rounded-[2rem] px-2 py-3 text-xs ${
+                className={`flex flex-col items-center justify-center gap-0.5 rounded-[2rem] px-1 py-2 text-xs sm:px-2 sm:py-2.5 ${
                   active ? "text-white" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}
-                title={String(t.label)}
-                aria-label={String(t.label)}
+                title={String(tab.label)}
+                aria-label={String(tab.label)}
               >
-                <Icon size={20} />
+                <Icon size={20} className="shrink-0" aria-hidden />
+                <span className="max-w-full truncate px-0.5 text-center font-display text-[10px] font-normal leading-tight tracking-[0.06em] sm:text-[11px]">
+                  {String(tab.label)}
+                </span>
               </button>
             );
           })}
@@ -13130,6 +13872,12 @@ export default function App() {
         onClose={() => setEditingTrip(null)}
         trip={editingTrip}
         onSave={updateTrip}
+      />
+      <PlannerParticipantsListModal
+        open={plannerParticipantsListOpen && !!selectedTrip}
+        onClose={() => setPlannerParticipantsListOpen(false)}
+        trip={selectedTrip}
+        session={session}
       />
       <InviteEmailsModal
         open={plannerInviteOpen && !!selectedTrip}

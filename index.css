@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Titres (onglets, etc.) : nom à deux mots — sans guillemets, le navigateur ignore la police (repli Arial / sans-serif). */
+.font-display {
+  font-family: "Yeseva One", Georgia, serif;
+}
 
 html,
 body,
