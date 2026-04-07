@@ -375,4 +375,13 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Hagia_Sophia_Mars_2013.jpg/1920px-Hagia_Sophia_Mars_2013.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/eb/Istanbul_skyline_03.jpg/1920px-Istanbul_skyline_03.jpg",
   ],
+  ibiza: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/Ibiza_Cala_d%27Hort_asv2023-04.jpg/1920px-Ibiza_Cala_d%27Hort_asv2023-04.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Clear_water_in_Port_d%27es_Torrent%2C_Ibiza.jpg/1920px-Clear_water_in_Port_d%27es_Torrent%2C_Ibiza.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b5/Es_Vedr%C3%A0_At_Sunset_%28118261255%29.jpeg/1920px-Es_Vedr%C3%A0_At_Sunset_%28118261255%29.jpeg",
+  ],
+  eivissa: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/Ibiza_Cala_d%27Hort_asv2023-04.jpg/1920px-Ibiza_Cala_d%27Hort_asv2023-04.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Clear_water_in_Port_d%27es_Torrent%2C_Ibiza.jpg/1920px-Clear_water_in_Port_d%27es_Torrent%2C_Ibiza.jpg",
+  ],
 });

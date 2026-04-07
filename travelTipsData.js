@@ -329,6 +329,348 @@ const TRAVEL_TIPS_OVERRIDES_ML = {
       },
     ],
   },
+  ibiza: {
+    do: [
+      {
+        fr: "Loue un scooter ou une voiture pour explorer les calas (Cala Comte, Cala Salada, Cala d'Hort) — les plus belles plages sont isolées et mal desservies par les bus.",
+        en: "Rent a scooter or car to explore the calas (Cala Comte, Cala Salada, Cala d'Hort) — the prettiest beaches are remote and poorly served by buses.",
+        es: "Alquila una moto o un coche para explorar las calas (Cala Comte, Cala Salada, Cala d'Hort) — las mejores playas son remotas y mal comunicadas en bus.",
+      },
+      {
+        fr: "Arrive tôt (avant 11 h) aux plages populaires comme Cala Comte ou Cala Bassa — le parking et les transats partent vite en été.",
+        en: "Arrive early (before 11 am) at popular beaches like Cala Comte or Cala Bassa — parking and sun loungers fill up fast in summer.",
+        es: "Llega temprano (antes de las 11 h) a las playas populares como Cala Comte o Cala Bassa — el aparcamiento y las tumbonas se llenan rápido en verano.",
+      },
+      {
+        fr: "Visite Dalt Vila (vieille ville fortifiée, UNESCO) en fin de journée pour le coucher de soleil sur le port — c'est gratuit et magnifique.",
+        en: "Visit Dalt Vila (UNESCO-listed old walled town) in the late afternoon for the sunset over the harbour — it's free and gorgeous.",
+        es: "Visita Dalt Vila (casco antiguo amurallado, UNESCO) al final de la tarde para la puesta de sol sobre el puerto — es gratis y espectacular.",
+      },
+    ],
+  },
+  eivissa: {
+    do: [
+      {
+        fr: "Loue un scooter ou une voiture pour explorer les calas (Cala Comte, Cala Salada, Cala d'Hort) — les plus belles plages sont isolées et mal desservies par les bus.",
+        en: "Rent a scooter or car to explore the calas (Cala Comte, Cala Salada, Cala d'Hort) — the prettiest beaches are remote and poorly served by buses.",
+        es: "Alquila una moto o un coche para explorar las calas (Cala Comte, Cala Salada, Cala d'Hort) — las mejores playas son remotas y mal comunicadas en bus.",
+      },
+      {
+        fr: "Arrive tôt (avant 11 h) aux plages populaires comme Cala Comte ou Cala Bassa — le parking et les transats partent vite en été.",
+        en: "Arrive early (before 11 am) at popular beaches like Cala Comte or Cala Bassa — parking and sun loungers fill up fast in summer.",
+        es: "Llega temprano (antes de las 11 h) a las playas populares como Cala Comte o Cala Bassa — el aparcamiento y las tumbonas se llenan rápido en verano.",
+      },
+      {
+        fr: "Visite Dalt Vila (vieille ville fortifiée, UNESCO) en fin de journée pour le coucher de soleil sur le port — c'est gratuit et magnifique.",
+        en: "Visit Dalt Vila (UNESCO-listed old walled town) in the late afternoon for the sunset over the harbour — it's free and gorgeous.",
+        es: "Visita Dalt Vila (casco antiguo amurallado, UNESCO) al final de la tarde para la puesta de sol sobre el puerto — es gratis y espectacular.",
+      },
+    ],
+  },
+  mykonos: {
+    do: [
+      {
+        fr: "Réserve le bateau pour Délos tôt le matin (départs limités) — le site archéologique ferme l'après-midi et il n'y a pas d'ombre.",
+        en: "Book the boat to Delos early morning (limited departures) — the archaeological site closes in the afternoon and there's no shade.",
+        es: "Reserva el barco a Delos temprano por la mañana (salidas limitadas) — el sitio arqueológico cierra por la tarde y no hay sombra.",
+      },
+      {
+        fr: "Petite Venise et les moulins à vent sont sublimes au coucher du soleil — arrive 30 min avant pour trouver une place en terrasse.",
+        en: "Little Venice and the windmills are stunning at sunset — arrive 30 minutes early to get a terrace seat.",
+        es: "La Pequeña Venecia y los molinos son sublimes al atardecer — llega 30 minutos antes para encontrar sitio en una terraza.",
+      },
+      {
+        fr: "Le vent (meltemi) peut souffler fort en juillet-août : prévois un coupe-vent et choisis tes plages selon l'orientation.",
+        en: "The meltemi wind can be strong in July–August: bring a windbreaker and choose your beaches based on wind direction.",
+        es: "El viento (meltemi) puede soplar fuerte en julio-agosto: lleva un cortavientos y elige tus playas según la orientación.",
+      },
+    ],
+  },
+  santorini: {
+    do: [
+      {
+        fr: "Le coucher de soleil à Oia est mythique mais bondé : arrive 1 h avant ou vise le fort byzantin de Fira pour la même vue sans la foule.",
+        en: "The Oia sunset is iconic but packed: arrive 1 hour early or head to the Byzantine fortress in Fira for the same view without the crowds.",
+        es: "La puesta de sol en Oia es mítica pero abarrotada: llega 1 hora antes o elige la fortaleza bizantina de Fira para la misma vista sin multitudes.",
+      },
+      {
+        fr: "La randonnée Fira–Oia (10 km, 3 h) offre les meilleures vues de la caldeira — pars tôt le matin avec de l'eau et de la crème solaire.",
+        en: "The Fira–Oia hike (10 km, 3 h) offers the best caldera views — start early in the morning with water and sunscreen.",
+        es: "La caminata Fira–Oia (10 km, 3 h) ofrece las mejores vistas de la caldera — sal temprano por la mañana con agua y protector solar.",
+      },
+      {
+        fr: "Les vignobles locaux (Assyrtiko) se visitent souvent sans réservation hors saison, mais réserve en ligne en été — les dégustations sont très demandées.",
+        en: "Local vineyards (Assyrtiko) are often walkable off-season, but book online in summer — tastings are very popular.",
+        es: "Las bodegas locales (Assyrtiko) se visitan a menudo sin reserva fuera de temporada, pero reserva en línea en verano — las catas son muy demandadas.",
+      },
+    ],
+  },
+  santorin: {
+    do: [
+      {
+        fr: "Le coucher de soleil à Oia est mythique mais bondé : arrive 1 h avant ou vise le fort byzantin de Fira pour la même vue sans la foule.",
+        en: "The Oia sunset is iconic but packed: arrive 1 hour early or head to the Byzantine fortress in Fira for the same view without the crowds.",
+        es: "La puesta de sol en Oia es mítica pero abarrotada: llega 1 hora antes o elige la fortaleza bizantina de Fira para la misma vista sin multitudes.",
+      },
+      {
+        fr: "La randonnée Fira–Oia (10 km, 3 h) offre les meilleures vues de la caldeira — pars tôt le matin avec de l'eau et de la crème solaire.",
+        en: "The Fira–Oia hike (10 km, 3 h) offers the best caldera views — start early in the morning with water and sunscreen.",
+        es: "La caminata Fira–Oia (10 km, 3 h) ofrece las mejores vistas de la caldera — sal temprano por la mañana con agua y protector solar.",
+      },
+      {
+        fr: "Les vignobles locaux (Assyrtiko) se visitent souvent sans réservation hors saison, mais réserve en ligne en été — les dégustations sont très demandées.",
+        en: "Local vineyards (Assyrtiko) are often walkable off-season, but book online in summer — tastings are very popular.",
+        es: "Las bodegas locales (Assyrtiko) se visitan a menudo sin reserva fuera de temporada, pero reserva en línea en verano — las catas son muy demandadas.",
+      },
+    ],
+  },
+  cancun: {
+    do: [
+      {
+        fr: "Réserve l'excursion à Chichén Itzá avec départ très tôt (6 h) pour arriver avant la foule et la chaleur — la différence est énorme.",
+        en: "Book the Chichén Itzá excursion with an early departure (6 am) to arrive before the crowds and heat — the difference is huge.",
+        es: "Reserva la excursión a Chichén Itzá con salida muy temprana (6 h) para llegar antes de la multitud y el calor — la diferencia es enorme.",
+      },
+      {
+        fr: "Les cenotes (Ik Kil, Suytun, Dos Ojos) sont des piscines naturelles uniques — apporte un maillot et de l'anti-moustiques biodégradable.",
+        en: "Cenotes (Ik Kil, Suytun, Dos Ojos) are unique natural swimming holes — bring a swimsuit and biodegradable insect repellent.",
+        es: "Los cenotes (Ik Kil, Suytun, Dos Ojos) son piscinas naturales únicas — lleva bañador y repelente de mosquitos biodegradable.",
+      },
+      {
+        fr: "Isla Mujeres (30 min de ferry) offre Playa Norte, l'une des plus belles plages du Mexique — vise la journée entière, c'est plus détente que Cancún.",
+        en: "Isla Mujeres (30 min ferry) has Playa Norte, one of Mexico's most beautiful beaches — plan a full day, it's more laid-back than Cancún.",
+        es: "Isla Mujeres (30 min en ferry) tiene Playa Norte, una de las playas más bonitas de México — planea un día entero, es más relajado que Cancún.",
+      },
+    ],
+  },
+  tulum: {
+    do: [
+      {
+        fr: "Arrive aux ruines de Tulum dès l'ouverture (8 h) — la vue sur la plage turquoise depuis les falaises est époustouflante et la foule arrive vers 10 h.",
+        en: "Get to the Tulum ruins at opening (8 am) — the view of the turquoise beach from the cliffs is breathtaking and crowds arrive around 10 am.",
+        es: "Llega a las ruinas de Tulum a la apertura (8 h) — la vista de la playa turquesa desde los acantilados es impresionante y la multitud llega hacia las 10 h.",
+      },
+      {
+        fr: "Loue un vélo pour te déplacer entre la plage, le pueblo et les cenotes proches (Gran Cenote, Cenote Calavera) — c'est plus pratique que le taxi.",
+        en: "Rent a bike to get between the beach, the pueblo and the nearby cenotes (Gran Cenote, Cenote Calavera) — it's more convenient than taxis.",
+        es: "Alquila una bici para moverte entre la playa, el pueblo y los cenotes cercanos (Gran Cenote, Cenote Calavera) — es más práctico que el taxi.",
+      },
+      {
+        fr: "Applique uniquement de la crème solaire biodégradable dans les cenotes — c'est obligatoire et essentiel pour protéger ces écosystèmes uniques.",
+        en: "Only use biodegradable sunscreen in the cenotes — it's mandatory and essential to protect these unique ecosystems.",
+        es: "Usa solo protector solar biodegradable en los cenotes — es obligatorio y esencial para proteger estos ecosistemas únicos.",
+      },
+    ],
+  },
+  barcelona: {
+    do: [
+      {
+        fr: "Réserve tes billets pour la Sagrada Família en ligne au moins 2 semaines à l'avance — c'est complet presque chaque jour en haute saison.",
+        en: "Book your Sagrada Família tickets online at least 2 weeks ahead — it sells out almost every day in high season.",
+        es: "Reserva tus entradas para la Sagrada Família en línea al menos 2 semanas antes — se agotan casi todos los días en temporada alta.",
+      },
+      {
+        fr: "Le Barri Gòtic et El Born se découvrent à pied — le matin pour les boutiques et musées, le soir pour les tapas et l'ambiance des terrasses.",
+        en: "The Gothic Quarter and El Born are best explored on foot — mornings for shops and museums, evenings for tapas and terrace vibes.",
+        es: "El Barri Gòtic y El Born se descubren a pie — por la mañana para tiendas y museos, por la noche para tapas y el ambiente de las terrazas.",
+      },
+      {
+        fr: "Attention aux pickpockets sur La Rambla et dans le métro — garde ton téléphone dans une poche intérieure, surtout aux heures de pointe.",
+        en: "Watch out for pickpockets on La Rambla and in the metro — keep your phone in an inside pocket, especially at peak hours.",
+        es: "Cuidado con los carteristas en La Rambla y en el metro — lleva el móvil en un bolsillo interior, especialmente en horas punta.",
+      },
+    ],
+  },
+  barcelone: {
+    do: [
+      {
+        fr: "Réserve tes billets pour la Sagrada Família en ligne au moins 2 semaines à l'avance — c'est complet presque chaque jour en haute saison.",
+        en: "Book your Sagrada Família tickets online at least 2 weeks ahead — it sells out almost every day in high season.",
+        es: "Reserva tus entradas para la Sagrada Família en línea al menos 2 semanas antes — se agotan casi todos los días en temporada alta.",
+      },
+      {
+        fr: "Le Barri Gòtic et El Born se découvrent à pied — le matin pour les boutiques et musées, le soir pour les tapas et l'ambiance des terrasses.",
+        en: "The Gothic Quarter and El Born are best explored on foot — mornings for shops and museums, evenings for tapas and terrace vibes.",
+        es: "El Barri Gòtic y El Born se descubren a pie — por la mañana para tiendas y museos, por la noche para tapas y el ambiente de las terrazas.",
+      },
+      {
+        fr: "Attention aux pickpockets sur La Rambla et dans le métro — garde ton téléphone dans une poche intérieure, surtout aux heures de pointe.",
+        en: "Watch out for pickpockets on La Rambla and in the metro — keep your phone in an inside pocket, especially at peak hours.",
+        es: "Cuidado con los carteristas en La Rambla y en el metro — lleva el móvil en un bolsillo interior, especialmente en horas punta.",
+      },
+    ],
+  },
+  rome: {
+    do: [
+      {
+        fr: "Le billet combiné Colisée + Forum + Palatin se réserve en ligne — sur place les files dépassent 1 h et les créneaux sont souvent pleins.",
+        en: "The combined Colosseum + Forum + Palatine ticket should be booked online — on-site queues exceed 1 hour and slots often sell out.",
+        es: "La entrada combinada Coliseo + Foro + Palatino se reserva en línea — en taquilla las colas superan 1 hora y las franjas suelen agotarse.",
+      },
+      {
+        fr: "Explore le Trastevere en soirée pour la meilleure ambiance : traite-toi dans une trattoria à l'écart de la piazza principale pour du vrai romain.",
+        en: "Explore Trastevere in the evening for the best vibes: treat yourself at a trattoria away from the main piazza for authentic Roman food.",
+        es: "Explora el Trastevere por la noche para la mejor atmósfera: date un capricho en una trattoria alejada de la piazza principal para comida romana auténtica.",
+      },
+      {
+        fr: "Les fontaines de Rome distribuent de l'eau potable gratuite (nasoni) — remplis ta gourde partout, surtout en été.",
+        en: "Rome's fountains dispense free drinking water (nasoni) — refill your bottle everywhere, especially in summer.",
+        es: "Las fuentes de Roma distribuyen agua potable gratis (nasoni) — rellena tu botella en cualquier sitio, sobre todo en verano.",
+      },
+    ],
+  },
+  roma: {
+    do: [
+      {
+        fr: "Le billet combiné Colisée + Forum + Palatin se réserve en ligne — sur place les files dépassent 1 h et les créneaux sont souvent pleins.",
+        en: "The combined Colosseum + Forum + Palatine ticket should be booked online — on-site queues exceed 1 hour and slots often sell out.",
+        es: "La entrada combinada Coliseo + Foro + Palatino se reserva en línea — en taquilla las colas superan 1 hora y las franjas suelen agotarse.",
+      },
+      {
+        fr: "Explore le Trastevere en soirée pour la meilleure ambiance : traite-toi dans une trattoria à l'écart de la piazza principale pour du vrai romain.",
+        en: "Explore Trastevere in the evening for the best vibes: treat yourself at a trattoria away from the main piazza for authentic Roman food.",
+        es: "Explora el Trastevere por la noche para la mejor atmósfera: date un capricho en una trattoria alejada de la piazza principal para comida romana auténtica.",
+      },
+      {
+        fr: "Les fontaines de Rome distribuent de l'eau potable gratuite (nasoni) — remplis ta gourde partout, surtout en été.",
+        en: "Rome's fountains dispense free drinking water (nasoni) — refill your bottle everywhere, especially in summer.",
+        es: "Las fuentes de Roma distribuyen agua potable gratis (nasoni) — rellena tu botella en cualquier sitio, sobre todo en verano.",
+      },
+    ],
+  },
+  amsterdam: {
+    do: [
+      {
+        fr: "La Maison d'Anne Frank affiche complet des semaines à l'avance — les billets en ligne s'ouvrent tous les mardis à 10 h, sois ponctuel.",
+        en: "The Anne Frank House sells out weeks ahead — online tickets open every Tuesday at 10 am, be on time.",
+        es: "La Casa de Ana Frank se agota semanas antes — las entradas online se abren cada martes a las 10 h, sé puntual.",
+      },
+      {
+        fr: "Loue un vélo pour te fondre dans la ville — c'est le moyen de transport n°1, mais fais attention aux trams et aux sens de circulation.",
+        en: "Rent a bike to blend into the city — it's the number one transport, but watch out for trams and one-way streets.",
+        es: "Alquila una bici para integrarte en la ciudad — es el transporte n°1, pero cuidado con los tranvías y los sentidos de circulación.",
+      },
+      {
+        fr: "Le Jordaan et De Pijp sont les quartiers les plus charmants pour manger et boire — préfère-les aux terrasses du Leidseplein (plus touristiques).",
+        en: "The Jordaan and De Pijp are the most charming areas for food and drinks — prefer them over the more touristy Leidseplein terraces.",
+        es: "El Jordaan y De Pijp son los barrios más encantadores para comer y beber — mejor que las terrazas más turísticas del Leidseplein.",
+      },
+    ],
+  },
+  dubai: {
+    do: [
+      {
+        fr: "Réserve le créneau « At the Top » du Burj Khalifa au coucher du soleil pour la meilleure lumière — c'est plus cher mais spectaculaire.",
+        en: "Book the Burj Khalifa 'At the Top' slot at sunset for the best light — it's more expensive but spectacular.",
+        es: "Reserva la franja 'At the Top' del Burj Khalifa al atardecer para la mejor luz — es más caro pero espectacular.",
+      },
+      {
+        fr: "Le souk de l'Or et le souk aux Épices à Deira valent le détour pour l'ambiance traditionnelle — négocie avec le sourire.",
+        en: "The Gold Souk and Spice Souk in Deira are worth visiting for the traditional atmosphere — bargain with a smile.",
+        es: "El Zoco del Oro y el Zoco de las Especias en Deira merecen la visita por el ambiente tradicional — negocia con una sonrisa.",
+      },
+      {
+        fr: "Le safari dans le désert inclut souvent dîner, dromadaire et spectacle — réserve via l'hôtel ou un opérateur certifié, pas un rabatteur.",
+        en: "Desert safaris usually include dinner, camel ride and show — book through your hotel or a certified operator, not a street tout.",
+        es: "El safari en el desierto suele incluir cena, camello y espectáculo — reserva a través del hotel o un operador certificado, no un gancho callejero.",
+      },
+    ],
+  },
+  "dubaï": {
+    do: [
+      {
+        fr: "Réserve le créneau « At the Top » du Burj Khalifa au coucher du soleil pour la meilleure lumière — c'est plus cher mais spectaculaire.",
+        en: "Book the Burj Khalifa 'At the Top' slot at sunset for the best light — it's more expensive but spectacular.",
+        es: "Reserva la franja 'At the Top' del Burj Khalifa al atardecer para la mejor luz — es más caro pero espectacular.",
+      },
+      {
+        fr: "Le souk de l'Or et le souk aux Épices à Deira valent le détour pour l'ambiance traditionnelle — négocie avec le sourire.",
+        en: "The Gold Souk and Spice Souk in Deira are worth visiting for the traditional atmosphere — bargain with a smile.",
+        es: "El Zoco del Oro y el Zoco de las Especias en Deira merecen la visita por el ambiente tradicional — negocia con una sonrisa.",
+      },
+      {
+        fr: "Le safari dans le désert inclut souvent dîner, dromadaire et spectacle — réserve via l'hôtel ou un opérateur certifié, pas un rabatteur.",
+        en: "Desert safaris usually include dinner, camel ride and show — book through your hotel or a certified operator, not a street tout.",
+        es: "El safari en el desierto suele incluir cena, camello y espectáculo — reserva a través del hotel o un operador certificado, no un gancho callejero.",
+      },
+    ],
+  },
+  london: {
+    do: [
+      {
+        fr: "Les grands musées (British Museum, Tate Modern, National Gallery) sont gratuits — commence tôt et vise 2-3 salles max par visite.",
+        en: "Major museums (British Museum, Tate Modern, National Gallery) are free — start early and aim for 2-3 rooms max per visit.",
+        es: "Los grandes museos (British Museum, Tate Modern, National Gallery) son gratuitos — empieza temprano y apunta a 2-3 salas como máximo por visita.",
+      },
+      {
+        fr: "Achète une Oyster Card ou utilise le sans-contact pour le métro et les bus — c'est bien moins cher que les billets à l'unité.",
+        en: "Get an Oyster Card or use contactless for the Tube and buses — it's much cheaper than single tickets.",
+        es: "Compra una Oyster Card o usa el pago sin contacto para el metro y los buses — es mucho más barato que los billetes sueltos.",
+      },
+      {
+        fr: "Borough Market le samedi matin est un must pour les foodies — arrive avant 11 h pour éviter la cohue.",
+        en: "Borough Market on Saturday morning is a must for foodies — arrive before 11 am to beat the rush.",
+        es: "Borough Market el sábado por la mañana es imprescindible para los foodies — llega antes de las 11 h para evitar la aglomeración.",
+      },
+    ],
+  },
+  londres: {
+    do: [
+      {
+        fr: "Les grands musées (British Museum, Tate Modern, National Gallery) sont gratuits — commence tôt et vise 2-3 salles max par visite.",
+        en: "Major museums (British Museum, Tate Modern, National Gallery) are free — start early and aim for 2-3 rooms max per visit.",
+        es: "Los grandes museos (British Museum, Tate Modern, National Gallery) son gratuitos — empieza temprano y apunta a 2-3 salas como máximo por visita.",
+      },
+      {
+        fr: "Achète une Oyster Card ou utilise le sans-contact pour le métro et les bus — c'est bien moins cher que les billets à l'unité.",
+        en: "Get an Oyster Card or use contactless for the Tube and buses — it's much cheaper than single tickets.",
+        es: "Compra una Oyster Card o usa el pago sin contacto para el metro y los buses — es mucho más barato que los billetes sueltos.",
+      },
+      {
+        fr: "Borough Market le samedi matin est un must pour les foodies — arrive avant 11 h pour éviter la cohue.",
+        en: "Borough Market on Saturday morning is a must for foodies — arrive before 11 am to beat the rush.",
+        es: "Borough Market el sábado por la mañana es imprescindible para los foodies — llega antes de las 11 h para evitar la aglomeración.",
+      },
+    ],
+  },
+  lisbonne: {
+    do: [
+      {
+        fr: "Le tramway 28 est une attraction en soi, mais bondé aux heures de pointe — pars tôt le matin ou en fin d'après-midi.",
+        en: "Tram 28 is a tourist attraction in itself, but packed at peak hours — go early morning or late afternoon.",
+        es: "El tranvía 28 es una atracción en sí, pero abarrotado en horas punta — ve a primera hora de la mañana o a última hora de la tarde.",
+      },
+      {
+        fr: "Goûte les pastéis de nata à la Pastéis de Belém mais aussi dans les pâtisseries de quartier (Manteigaria, par ex.) — souvent meilleures et moins de queue.",
+        en: "Try the pastéis de nata at Pastéis de Belém but also at neighbourhood bakeries (Manteigaria, for instance) — often better and less queuing.",
+        es: "Prueba los pastéis de nata en Pastéis de Belém, pero también en panaderías de barrio (Manteigaria, por ejemplo) — suelen estar mejores y hay menos cola.",
+      },
+      {
+        fr: "L'Alfama se visite à pied en descendant depuis le Castelo São Jorge — les ruelles sont raides mais les miradouros valent chaque marche.",
+        en: "Explore the Alfama on foot walking down from Castelo São Jorge — the lanes are steep but the miradouros are worth every step.",
+        es: "El Alfama se visita a pie bajando desde el Castelo São Jorge — las callejuelas son empinadas pero los miradores valen cada paso.",
+      },
+    ],
+  },
+  lisbon: {
+    do: [
+      {
+        fr: "Le tramway 28 est une attraction en soi, mais bondé aux heures de pointe — pars tôt le matin ou en fin d'après-midi.",
+        en: "Tram 28 is a tourist attraction in itself, but packed at peak hours — go early morning or late afternoon.",
+        es: "El tranvía 28 es una atracción en sí, pero abarrotado en horas punta — ve a primera hora de la mañana o a última hora de la tarde.",
+      },
+      {
+        fr: "Goûte les pastéis de nata à la Pastéis de Belém mais aussi dans les pâtisseries de quartier (Manteigaria, par ex.) — souvent meilleures et moins de queue.",
+        en: "Try the pastéis de nata at Pastéis de Belém but also at neighbourhood bakeries (Manteigaria, for instance) — often better and less queuing.",
+        es: "Prueba los pastéis de nata en Pastéis de Belém, pero también en panaderías de barrio (Manteigaria, por ejemplo) — suelen estar mejores y hay menos cola.",
+      },
+      {
+        fr: "L'Alfama se visite à pied en descendant depuis le Castelo São Jorge — les ruelles sont raides mais les miradouros valent chaque marche.",
+        en: "Explore the Alfama on foot walking down from Castelo São Jorge — the lanes are steep but the miradouros are worth every step.",
+        es: "El Alfama se visita a pie bajando desde el Castelo São Jorge — las callejuelas son empinadas pero los miradores valen cada paso.",
+      },
+    ],
+  },
   berne: {
     do: [
       {

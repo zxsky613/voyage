@@ -49,6 +49,8 @@ import {
   buildCityDronePromptFR,
   getHeroUnsplashDescBoostTokens,
   normalizeCityDroneKey,
+  inferAestheticCityQueryType,
+  AESTHETIC_CITY_QUERY_TYPE,
 } from "./cityDroneImagePrompt.js";
 import { WIKIMEDIA_CURATED_CITY_HEROES } from "./cityWikimediaHeroes.js";
 import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
@@ -1866,7 +1868,7 @@ function buildCityImageUrl(prompt) {
 
 function getCityImageCacheKey(cityInput) {
   const stem = heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || String(cityInput || "").trim();
-  return `v65:${String(stem)
+  return `v68:${String(stem)
     .trim()
     .toLowerCase()}`;
 }
@@ -2345,6 +2347,56 @@ function buildSuggestedActivitiesForCity(city) {
       act("Royal Botanic Garden", 0, "Gratuit", "Sydney CBD"),
       act("The Rocks (quartier historique)", 0, "Gratuit", "The Rocks, Sydney"),
       act("Taronga Zoo", 38, "Billet adulte", "Mosman, Sydney"),
+    ];
+  }
+  if (c.includes("ibiza") || c.includes("eivissa")) {
+    return [
+      act("Dalt Vila (vieille ville fortifiée)", 0, "Gratuit", "Dalt Vila, Ibiza"),
+      act("Cala Comte — baignade & coucher de soleil", 0, "Gratuit", "Sant Josep, Ibiza"),
+      act("Es Vedrà depuis Cala d'Hort", 0, "Gratuit", "Cala d'Hort, Ibiza"),
+      act("Marché hippie Las Dalias", 0, "Gratuit (achats en sus)", "Sant Carles, Ibiza"),
+      act("Playa d'en Bossa & clubs", 20, "Entrée club type", "Playa d'en Bossa, Ibiza"),
+      act("Port d'Ibiza & quartier de la Marina", 0, "Gratuit", "Port, Ibiza"),
+    ];
+  }
+  if (c.includes("mykonos")) {
+    return [
+      act("Petite Venise & moulins à vent", 0, "Gratuit", "Chóra, Mykonos"),
+      act("Plage Paradise Beach", 0, "Gratuit (transat ~15€)", "Paradise, Mykonos"),
+      act("Île de Délos (excursion)", 20, "Billet + bateau", "Délos, Mykonos"),
+      act("Quartier de Chóra", 0, "Gratuit", "Chóra, Mykonos"),
+      act("Plage Super Paradise", 0, "Gratuit (transat ~20€)", "Super Paradise, Mykonos"),
+      act("Église Panagia Paraportiani", 0, "Gratuit", "Chóra, Mykonos"),
+    ];
+  }
+  if (c.includes("santorini") || c.includes("santorin")) {
+    return [
+      act("Oia — coucher de soleil iconique", 0, "Gratuit", "Oia, Santorini"),
+      act("Randonnée Fira–Oia (caldeira)", 0, "Gratuit", "Fira → Oia, Santorini"),
+      act("Plage Rouge (Red Beach)", 0, "Gratuit", "Akrotiri, Santorini"),
+      act("Site archéologique d'Akrotiri", 12, "Billet adulte", "Akrotiri, Santorini"),
+      act("Dégustation de vins santoriniens", 15, "Dégustation type", "Pyrgos, Santorini"),
+      act("Plage de Kamari", 0, "Gratuit", "Kamari, Santorini"),
+    ];
+  }
+  if (c.includes("cancun") || c.includes("cancún")) {
+    return [
+      act("Ruines de Tulum (excursion)", 10, "Billet adulte", "Tulum, Quintana Roo"),
+      act("Isla Mujeres & Playa Norte", 15, "Ferry aller-retour", "Isla Mujeres"),
+      act("Playa Delfines", 0, "Gratuit", "Zone Hotelera, Cancún"),
+      act("Cenote Ik Kil", 15, "Entrée adulte", "Pisté, Yucatán"),
+      act("Chichén Itzá (excursion)", 30, "Entrée + transport", "Yucatán"),
+      act("Parc Xcaret", 100, "Billet journée", "Playa del Carmen"),
+    ];
+  }
+  if (c.includes("tulum")) {
+    return [
+      act("Ruines mayas de Tulum", 5, "Billet adulte", "Tulum, Quintana Roo"),
+      act("Gran Cenote", 15, "Entrée adulte", "Tulum, Quintana Roo"),
+      act("Cenote Dos Ojos", 20, "Entrée + snorkel", "Tulum, Quintana Roo"),
+      act("Plage sous les ruines", 0, "Gratuit (inclus avec ruines)", "Tulum, Quintana Roo"),
+      act("Réserve de Sian Ka'an", 40, "Excursion guidée", "Sian Ka'an"),
+      act("Laguna de Bacalar (excursion)", 0, "Gratuit (transport en sus)", "Bacalar, Quintana Roo"),
     ];
   }
   if (c.includes("singapour") || c.includes("singapore")) {
@@ -3048,7 +3100,7 @@ const _MUST_SEE_MODAL_CACHE_MAX = 48;
 
 function mustSeePlaceModalCacheKey(rawName, city, lang) {
   const L = String(lang || "fr").toLowerCase().split("-")[0];
-  return `v4\x1e${String(rawName || "").trim()}\x1e${String(city || "").trim().toLowerCase()}\x1e${L}`;
+  return `v5\x1e${String(rawName || "").trim()}\x1e${String(city || "").trim().toLowerCase()}\x1e${L}`;
 }
 
 function readMustSeePlaceModalCache(rawName, city, lang) {
@@ -4124,21 +4176,31 @@ async function getCityHeroImage(cityInput) {
   if (!q) return "";
   const cityTok = normalizeCityDroneKey(stem).split(/\s+/).filter((t) => t.length > 2);
   const landmarkDescBoostTokens = getHeroUnsplashDescBoostTokens(stem).map((t) => normalizeTextForSearch(t));
+  const isCoastal = inferAestheticCityQueryType(raw) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
+  const preferredKeywords = isCoastal
+    ? [
+        "beach", "turquoise", "ocean", "sea", "coast", "tropical",
+        "paradise", "island", "sand", "crystal clear", "lagoon",
+        "travel", "tourism", "destination", "visit",
+        "panorama", "panoramic", "aerial", "drone", "wide angle",
+        "waterfront", "bay", "sunset", "daylight", "golden hour",
+      ]
+    : [
+        "travel", "tourism", "destination", "visit",
+        "architecture", "landmark", "monument", "cathedral",
+        "cityscape", "skyline", "downtown", "waterfront",
+        "panorama", "panoramic", "aerial", "drone", "wide angle",
+        "overview", "bird eye", "viewpoint",
+        "harbor", "harbour", "bay", "river", "canal",
+        "daylight", "golden hour",
+      ];
   return fetchUnsplashImageByQuery(q, {
     pickFirst: true,
     perPage: 30,
     contentFilter: "high",
     heroPenalizeSkyOnly: true,
     landmarkDescBoostTokens,
-    preferredKeywords: [
-      "travel", "tourism", "destination", "visit",
-      "architecture", "landmark", "monument", "cathedral",
-      "cityscape", "skyline", "downtown", "waterfront",
-      "panorama", "panoramic", "aerial", "drone", "wide angle",
-      "overview", "bird eye", "viewpoint",
-      "harbor", "harbour", "bay", "river", "canal",
-      "daylight", "golden hour",
-    ],
+    preferredKeywords,
     avoidKeywords: [
       "logo", "icon", "drawing", "illustration", "map", "diagram",
       "macro", "close-up", "closeup", "close up", "detail", "texture",
@@ -6158,14 +6220,14 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
       ...(endDate ? { end: endDate } : {}),
     });
     const inviteUrl = `${window.location.origin}?${inviteParams.toString()}`;
-    const subj = encodeURIComponent(`\u2708\uFE0F ${inviterName ? `${inviterName} vous invite` : "Invitation"} : ${tripTitle}`);
+    const subj = encodeURIComponent(`\u2708\uFE0F ${inviterName ? `${inviterName} t'invite` : "Invitation"} : ${tripTitle}`);
     const bodyLines = [
-      `Bonjour,`, ``,
-      `${inviterName ? `${inviterName} vous` : "Vous"} invite(nt) \u00e0 rejoindre le voyage "${tripTitle}" !`, ``,
+      `Salut,`, ``,
+      `${inviterName ? `${inviterName} t'` : "On t'"}invite \u00e0 rejoindre le voyage "${tripTitle}" !`, ``,
       `\uD83D\uDCC5 Dates : ${dateRange}`,
       programme ? `\n\uD83D\uDCCB Programme :\n${programme}` : "",
       ``,
-      `\uD83D\uDD17 Acc\u00e9dez aux d\u00e9tails et rejoignez le voyage directement :`,
+      `\uD83D\uDD17 Acc\u00e8de aux d\u00e9tails et rejoins le voyage directement :`,
       inviteUrl,
       ``,
       `\u00c0 bient\u00f4t ! \uD83C\uDF0D`,
@@ -7194,7 +7256,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   );
 }
 
-/** Quota / limite de requêtes API Gemini (message utilisateur : « Veuillez réessayer plus tard »). */
+/** Quota / limite de requêtes API Gemini (message utilisateur : « Réessaie plus tard »). */
 function isGeminiQuotaError(raw) {
   const full = String(raw || "").trim();
   return /429|Too Many Requests|quota exceeded|Quota exceeded|exceeded your current quota|generate_content_free_tier/i.test(
@@ -7251,7 +7313,7 @@ function userFacingItineraryErrorMessage(raw, tFn) {
     return fb("destination.premiumBody", "Cette fonctionnalité est réservée au service Premium.");
   }
   if (isGeminiQuotaError(s)) {
-    return fb("destination.quotaRetryLater", "Veuillez réessayer plus tard.");
+    return fb("destination.quotaRetryLater", "Réessaie plus tard.");
   }
   if (/404|not found|cannot get|cannot post/i.test(s)) {
     return fb(
@@ -7723,7 +7785,7 @@ function pickNextDestinationGuideImgSrc(el, guide) {
 }
 
 /* ─── Cache localStorage pour DestinationGuideView ───────────────────────── */
-const _GUIDE_LS_KEY = "tp_guide_cache_v9";
+const _GUIDE_LS_KEY = "tp_guide_cache_v11";
 const _GUIDE_LS_TTL = 24 * 60 * 60 * 1000; // 24h — texte + image moins de rechargements intempestifs
 
 function _readGuideCache(city, lang) {
@@ -9293,7 +9355,7 @@ function DestinationGuideView({
                   {t("destination.quotaTitle")}
                 </h2>
                 <p className="mt-3 max-w-xs text-sm leading-relaxed text-slate-600">
-                  Veuillez réessayer plus tard.
+                  Réessaie plus tard.
                 </p>
               </div>
               <button
@@ -12172,7 +12234,7 @@ export default function App() {
 
   const deleteMyAccount = async () => {
     const ok = window.confirm(
-      "Supprimer votre compte ? Cette action supprimera vos voyages et peut etre irreversible."
+      "Supprimer ton compte ? Cette action supprimera tes voyages et peut être irréversible."
     );
     if (!ok) return;
     setDeletingAccount(true);
