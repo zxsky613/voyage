@@ -305,7 +305,8 @@ function SpotlightOverlay({ rect, tourId }) {
   const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
   const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
-  const isTab = String(tourId || "").startsWith("tab-");
+  const useNativeChromeOnly =
+    String(tourId || "").startsWith("tab-") || tourId === "plus-button";
 
   return (
     <svg
@@ -328,8 +329,8 @@ function SpotlightOverlay({ rect, tourId }) {
         </mask>
       </defs>
       <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
-      {/* Onglets : la pastille active fournit déjà l’encadré — pas de 2e cadre (fond + stroke SVG). */}
-      {isTab ? null : (
+      {/* Onglets + bouton + : un seul cadre visuel (celui du bouton réel). Pas de contour SVG par-dessus. */}
+      {useNativeChromeOnly ? null : (
         <rect
           x={cx}
           y={cy}

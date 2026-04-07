@@ -4857,8 +4857,8 @@ function TopNav({ onMenu, onAdd, title }) {
           type="button"
           onClick={onAdd}
           data-tour-id="plus-button"
-          className={`inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white transition hover:opacity-90 sm:px-4 sm:py-3 ${GLASS_BUTTON_CLASS}`}
-          style={GLASS_ACCENT_STYLE}
+          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(15,23,42,0.14)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
+          style={{ backgroundColor: ACCENT }}
         >
           <Plus size={20} className="shrink-0" aria-hidden />
         </button>
@@ -13853,8 +13853,11 @@ export default function App() {
         ) : null}
       </main>
 
-      <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 px-2 py-1.5 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70 sm:p-2">
-        <div className="grid items-center gap-1.5 sm:gap-2" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+      <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-1.5 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl sm:p-2">
+        <div
+          className="grid items-center gap-1 sm:gap-1"
+          style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+        >
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -13873,8 +13876,8 @@ export default function App() {
                   }
                   setActiveTab(tab.id);
                 }}
-                className={`flex min-h-[2.75rem] items-center justify-center rounded-[2rem] px-1 py-1.5 text-xs sm:min-h-0 sm:px-2 sm:py-2.5 ${
-                  active ? "text-white" : "text-slate-700 hover:bg-slate-100"
+                className={`flex min-h-[2.75rem] items-center justify-center rounded-[2rem] px-1 py-1.5 text-xs ring-0 outline-none sm:min-h-0 sm:px-2 sm:py-2.5 ${
+                  active ? "text-white shadow-[0_2px_8px_rgba(15,23,42,0.18)]" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}
                 title={String(tab.label)}
