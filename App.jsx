@@ -2409,6 +2409,356 @@ function buildSuggestedActivitiesForCity(city) {
       act("Hawker centres (Maxwell ou Lau Pa Sat)", 5, "Repas type", "Centre, Singapour"),
     ];
   }
+  if (c.includes("nice")) {
+    return [
+      act("Promenade des Anglais", 0, "Gratuit", "Baie des Anges, Nice"),
+      act("Vieux-Nice & Cours Saleya", 0, "Gratuit", "Vieux-Nice"),
+      act("Colline du Château", 0, "Gratuit", "Colline du Château, Nice"),
+      act("Musée Matisse", 10, "Billet adulte", "Cimiez, Nice"),
+      act("Place Masséna", 0, "Gratuit", "Centre-ville, Nice"),
+      act("Marché aux fleurs du Cours Saleya", 0, "Gratuit (achats en sus)", "Vieux-Nice"),
+    ];
+  }
+  if (c.includes("monaco") || c.includes("monte carlo") || c.includes("monte-carlo")) {
+    return [
+      act("Palais Princier & Relève de la garde", 10, "Billet adulte", "Monaco-Ville"),
+      act("Musée Océanographique", 18, "Billet adulte", "Monaco-Ville"),
+      act("Casino de Monte-Carlo", 0, "Gratuit (salle de jeux 17€)", "Monte-Carlo"),
+      act("Jardin Exotique", 7, "Billet adulte", "Les Révoires, Monaco"),
+      act("Cathédrale Notre-Dame-Immaculée", 0, "Gratuit", "Monaco-Ville"),
+      act("Port Hercule & Quartier de la Condamine", 0, "Gratuit", "La Condamine, Monaco"),
+    ];
+  }
+  if (c.includes("bordeaux")) {
+    return [
+      act("Cité du Vin", 22, "Billet adulte", "Quartier Bacalan, Bordeaux"),
+      act("Place de la Bourse & Miroir d'Eau", 0, "Gratuit", "Centre, Bordeaux"),
+      act("Rue Sainte-Catherine", 0, "Gratuit", "Centre, Bordeaux"),
+      act("Quartier Saint-Pierre", 0, "Gratuit", "Saint-Pierre, Bordeaux"),
+      act("Cathédrale Saint-André", 0, "Gratuit (tour Pey-Berland 6€)", "Centre, Bordeaux"),
+      act("Excursion vignobles de Saint-Émilion", 35, "Dégustation + transport", "Saint-Émilion"),
+    ];
+  }
+  if (c.includes("toulouse")) {
+    return [
+      act("Place du Capitole", 0, "Gratuit", "Centre, Toulouse"),
+      act("Cité de l'Espace", 25, "Billet adulte", "Avenue Jean Gonord, Toulouse"),
+      act("Basilique Saint-Sernin", 0, "Gratuit", "Centre, Toulouse"),
+      act("Canal du Midi (promenade)", 0, "Gratuit", "Centre, Toulouse"),
+      act("Couvent des Jacobins", 5, "Billet adulte", "Centre, Toulouse"),
+      act("Marché Victor Hugo", 0, "Gratuit (repas en sus)", "Centre, Toulouse"),
+    ];
+  }
+  if (c.includes("lille")) {
+    return [
+      act("Palais des Beaux-Arts", 7, "Billet adulte", "Place de la République, Lille"),
+      act("Vieux-Lille & Grand'Place", 0, "Gratuit", "Vieux-Lille"),
+      act("Citadelle de Lille", 0, "Gratuit (extérieur)", "Bois de Boulogne, Lille"),
+      act("Marché de Wazemmes", 0, "Gratuit (achats en sus)", "Wazemmes, Lille"),
+      act("Rue de Béthune (shopping)", 0, "Gratuit", "Centre, Lille"),
+      act("Hospice Comtesse", 6, "Billet adulte", "Vieux-Lille"),
+    ];
+  }
+  if (c.includes("nantes")) {
+    return [
+      act("Les Machines de l'Île & Éléphant", 9, "Billet adulte", "Île de Nantes"),
+      act("Château des Ducs de Bretagne", 0, "Gratuit (musée 8€)", "Centre, Nantes"),
+      act("Passage Pommeraye", 0, "Gratuit", "Centre, Nantes"),
+      act("Jardin des Plantes", 0, "Gratuit", "Gare Sud, Nantes"),
+      act("Quartier Bouffay", 0, "Gratuit", "Centre, Nantes"),
+      act("Parcours Voyage à Nantes (art urbain)", 0, "Gratuit", "Centre-ville, Nantes"),
+    ];
+  }
+  if (c.includes("kyoto")) {
+    return [
+      act("Fushimi Inari-taisha (torii)", 0, "Gratuit", "Fushimi, Kyoto"),
+      act("Temple Kinkaku-ji (Pavillon d'or)", 5, "Billet adulte", "Kita, Kyoto"),
+      act("Forêt de bambous d'Arashiyama", 0, "Gratuit", "Arashiyama, Kyoto"),
+      act("Temple Kiyomizu-dera", 4, "Billet adulte", "Higashiyama, Kyoto"),
+      act("Quartier de Gion (geishas)", 0, "Gratuit", "Gion, Kyoto"),
+      act("Château de Nijō", 8, "Billet adulte", "Nakagyō, Kyoto"),
+    ];
+  }
+  if (c.includes("osaka")) {
+    return [
+      act("Château d'Osaka", 6, "Billet adulte", "Chūō, Osaka"),
+      act("Dōtonbori (street food & néons)", 0, "Gratuit (repas en sus)", "Namba, Osaka"),
+      act("Shinsekai & Tour Tsūtenkaku", 5, "Billet tour", "Naniwa, Osaka"),
+      act("Aquarium Kaiyūkan", 24, "Billet adulte", "Port d'Osaka"),
+      act("Sanctuaire Sumiyoshi Taisha", 0, "Gratuit", "Sumiyoshi, Osaka"),
+      act("Universal Studios Japan", 75, "Billet journée", "Konohana, Osaka"),
+    ];
+  }
+  if (c.includes("seoul") || c.includes("séoul")) {
+    return [
+      act("Palais Gyeongbokgung", 3, "Billet adulte", "Jongno-gu, Séoul"),
+      act("Quartier Bukchon Hanok", 0, "Gratuit", "Jongno-gu, Séoul"),
+      act("N Seoul Tower (Namsan)", 12, "Billet observatoire", "Yongsan-gu, Séoul"),
+      act("Marché Gwangjang", 0, "Gratuit (street food en sus)", "Jongno-gu, Séoul"),
+      act("Quartier Myeongdong (shopping)", 0, "Gratuit", "Jung-gu, Séoul"),
+      act("Temple Jogyesa", 0, "Gratuit", "Jongno-gu, Séoul"),
+    ];
+  }
+  if (c.includes("jakarta")) {
+    return [
+      act("Monument National (Monas)", 4, "Billet adulte", "Centre, Jakarta"),
+      act("Vieille ville Kota Tua", 0, "Gratuit", "Jakarta Ouest"),
+      act("Mosquée Istiqlal", 0, "Gratuit", "Centre, Jakarta"),
+      act("Musée national d'Indonésie", 3, "Billet adulte", "Centre, Jakarta"),
+      act("Thousand Islands (excursion)", 20, "Bateau + entrée", "Kepulauan Seribu"),
+      act("Marché Tanah Abang", 0, "Gratuit (achats en sus)", "Centre, Jakarta"),
+    ];
+  }
+  if (c.includes("beijing") || c.includes("pekin") || c.includes("pékin")) {
+    return [
+      act("Cité Interdite (Palais impérial)", 8, "Billet adulte", "Dongcheng, Pékin"),
+      act("Grande Muraille (Mutianyu)", 40, "Billet + transport", "Huairou, Pékin"),
+      act("Place Tian'anmen", 0, "Gratuit", "Dongcheng, Pékin"),
+      act("Temple du Ciel", 5, "Billet adulte", "Dongcheng, Pékin"),
+      act("Palais d'Été", 4, "Billet adulte", "Haidian, Pékin"),
+      act("Hutongs & Lac Houhai", 0, "Gratuit (pousse-pousse ~10€)", "Xicheng, Pékin"),
+    ];
+  }
+  if (c.includes("shanghai") || c.includes("shanghaï")) {
+    return [
+      act("Le Bund (promenade)", 0, "Gratuit", "Huangpu, Shanghai"),
+      act("Tour de Shanghai (observatoire)", 25, "Billet adulte", "Pudong, Shanghai"),
+      act("Jardin Yuyuan", 5, "Billet adulte", "Huangpu, Shanghai"),
+      act("Temple du Bouddha de Jade", 3, "Billet adulte", "Jing'an, Shanghai"),
+      act("Quartier Tianzifang", 0, "Gratuit", "Xuhui, Shanghai"),
+      act("Nanjing Road (shopping)", 0, "Gratuit", "Huangpu, Shanghai"),
+    ];
+  }
+  if (c.includes("guangzhou") || c.includes("canton")) {
+    return [
+      act("Canton Tower", 15, "Billet observatoire", "Haizhu, Guangzhou"),
+      act("Temple des Six Banians", 1, "Billet adulte", "Yuexiu, Guangzhou"),
+      act("Île Shamian", 0, "Gratuit", "Liwan, Guangzhou"),
+      act("Parc Yuexiu & Statue des 5 chèvres", 0, "Gratuit", "Yuexiu, Guangzhou"),
+      act("Dim sum dans un restaurant traditionnel", 10, "Repas type", "Liwan, Guangzhou"),
+      act("Musée du Roi Nanyue", 3, "Billet adulte", "Yuexiu, Guangzhou"),
+    ];
+  }
+  if (c.includes("los angeles")) {
+    return [
+      act("Hollywood Walk of Fame", 0, "Gratuit", "Hollywood, Los Angeles"),
+      act("Santa Monica Pier & Plage", 0, "Gratuit", "Santa Monica, LA"),
+      act("Griffith Observatory", 0, "Gratuit", "Griffith Park, LA"),
+      act("The Getty Center", 0, "Gratuit (parking 20$)", "Brentwood, LA"),
+      act("Venice Beach & Boardwalk", 0, "Gratuit", "Venice, LA"),
+      act("Universal Studios Hollywood", 110, "Billet journée", "Universal City, LA"),
+    ];
+  }
+  if (c.includes("san francisco")) {
+    return [
+      act("Golden Gate Bridge", 0, "Gratuit", "Presidio, San Francisco"),
+      act("Alcatraz Island", 40, "Billet + ferry", "San Francisco Bay"),
+      act("Fisherman's Wharf & Pier 39", 0, "Gratuit", "Fisherman's Wharf, SF"),
+      act("Cable Car", 8, "Ticket trajet", "Powell Street, SF"),
+      act("Chinatown de San Francisco", 0, "Gratuit", "Chinatown, SF"),
+      act("Painted Ladies & Alamo Square", 0, "Gratuit", "Western Addition, SF"),
+    ];
+  }
+  if (c.includes("miami")) {
+    return [
+      act("South Beach & Ocean Drive", 0, "Gratuit", "Miami Beach"),
+      act("Art Deco Historic District", 0, "Gratuit", "South Beach, Miami"),
+      act("Wynwood Walls (street art)", 0, "Gratuit", "Wynwood, Miami"),
+      act("Little Havana & Calle Ocho", 0, "Gratuit", "Little Havana, Miami"),
+      act("Everglades (excursion airboat)", 35, "Excursion type", "Everglades, Floride"),
+      act("Vizcaya Museum & Gardens", 22, "Billet adulte", "Coconut Grove, Miami"),
+    ];
+  }
+  if (c.includes("chicago")) {
+    return [
+      act("Millennium Park & Cloud Gate (The Bean)", 0, "Gratuit", "The Loop, Chicago"),
+      act("Art Institute of Chicago", 25, "Billet adulte", "Grant Park, Chicago"),
+      act("Croisière architecturale sur la rivière", 45, "Billet adulte", "Chicago River"),
+      act("Willis Tower Skydeck", 28, "Billet adulte", "The Loop, Chicago"),
+      act("Navy Pier", 0, "Gratuit (attractions en sus)", "Streeterville, Chicago"),
+      act("Deep-dish pizza chez Giordano's ou Lou Malnati's", 20, "Repas type", "Centre, Chicago"),
+    ];
+  }
+  if (c.includes("toronto")) {
+    return [
+      act("CN Tower", 38, "Billet adulte", "Downtown, Toronto"),
+      act("Royal Ontario Museum", 20, "Billet adulte", "Bloor-Yorkville, Toronto"),
+      act("Distillery District", 0, "Gratuit", "Old Town, Toronto"),
+      act("Kensington Market", 0, "Gratuit (achats en sus)", "Kensington, Toronto"),
+      act("Îles de Toronto (ferry)", 8, "Billet ferry", "Toronto Islands"),
+      act("St. Lawrence Market", 0, "Gratuit (repas en sus)", "Old Town, Toronto"),
+    ];
+  }
+  if (c.includes("vancouver")) {
+    return [
+      act("Stanley Park & Seawall", 0, "Gratuit", "Stanley Park, Vancouver"),
+      act("Pont suspendu de Capilano", 54, "Billet adulte", "North Vancouver"),
+      act("Granville Island", 0, "Gratuit", "Granville Island, Vancouver"),
+      act("Gastown & Steam Clock", 0, "Gratuit", "Gastown, Vancouver"),
+      act("English Bay Beach", 0, "Gratuit", "West End, Vancouver"),
+      act("Grouse Mountain", 55, "Billet téléphérique", "North Vancouver"),
+    ];
+  }
+  if (c.includes("madrid")) {
+    return [
+      act("Musée du Prado", 15, "Billet adulte", "Paseo del Prado, Madrid"),
+      act("Palais Royal de Madrid", 12, "Billet adulte", "Centre, Madrid"),
+      act("Parc du Retiro", 0, "Gratuit", "Retiro, Madrid"),
+      act("Puerta del Sol & Gran Vía", 0, "Gratuit", "Centro, Madrid"),
+      act("Musée Reina Sofía (Guernica)", 10, "Billet adulte", "Atocha, Madrid"),
+      act("Mercado de San Miguel", 0, "Gratuit (tapas en sus)", "Centre, Madrid"),
+    ];
+  }
+  if (c.includes("venise") || c.includes("venice") || c.includes("venezia")) {
+    return [
+      act("Place Saint-Marc & Basilique", 0, "Gratuit (musée 5€)", "San Marco, Venise"),
+      act("Palais des Doges", 25, "Billet adulte", "San Marco, Venise"),
+      act("Pont du Rialto & Marché", 0, "Gratuit", "San Polo, Venise"),
+      act("Balade en gondole", 80, "Tarif 30 min standard", "Centre, Venise"),
+      act("Île de Murano (verrerie)", 0, "Gratuit (ferry ~7€)", "Murano, Venise"),
+      act("Île de Burano (maisons colorées)", 0, "Gratuit (ferry ~7€)", "Burano, Venise"),
+    ];
+  }
+  if (c.includes("bruxelles") || c.includes("brussels")) {
+    return [
+      act("Grand-Place de Bruxelles", 0, "Gratuit", "Centre, Bruxelles"),
+      act("Manneken-Pis", 0, "Gratuit", "Centre, Bruxelles"),
+      act("Atomium", 16, "Billet adulte", "Laeken, Bruxelles"),
+      act("Musées royaux des Beaux-Arts", 10, "Billet adulte", "Centre, Bruxelles"),
+      act("Dégustation de chocolat belge", 10, "Atelier type", "Centre, Bruxelles"),
+      act("Quartier Sainte-Catherine", 0, "Gratuit", "Centre, Bruxelles"),
+    ];
+  }
+  if (c.includes("berne") || c.includes("bern")) {
+    return [
+      act("Vieille ville de Berne (UNESCO)", 0, "Gratuit", "Altstadt, Berne"),
+      act("Fosse aux Ours (BärenPark)", 0, "Gratuit", "Aare, Berne"),
+      act("Tour de l'Horloge (Zytglogge)", 15, "Visite guidée", "Altstadt, Berne"),
+      act("Musée d'Histoire de Berne & Einstein", 10, "Billet adulte", "Helvetiaplatz, Berne"),
+      act("Rosengarten (Roseraie)", 0, "Gratuit", "Muristalden, Berne"),
+      act("Baignade dans l'Aar", 0, "Gratuit", "Rivière Aar, Berne"),
+    ];
+  }
+  if (c.includes("porto")) {
+    return [
+      act("Ribeira & Pont Dom-Luís", 0, "Gratuit", "Ribeira, Porto"),
+      act("Caves de vin de Porto (Vila Nova de Gaia)", 15, "Dégustation", "Vila Nova de Gaia"),
+      act("Librairie Lello", 5, "Billet entrée", "Centre, Porto"),
+      act("Tour des Clercs (Torre dos Clérigos)", 6, "Billet adulte", "Centre, Porto"),
+      act("Gare de São Bento (azulejos)", 0, "Gratuit", "Centre, Porto"),
+      act("Croisière sur le Douro", 15, "Croisière 6 ponts", "Ribeira, Porto"),
+    ];
+  }
+  if (c.includes("budapest")) {
+    return [
+      act("Parlement de Budapest", 12, "Visite guidée", "Kossuth tér, Budapest"),
+      act("Thermes Széchenyi", 22, "Billet journée", "Városliget, Budapest"),
+      act("Bastion des Pêcheurs", 0, "Gratuit (terrasse haute 4€)", "Buda, Budapest"),
+      act("Château de Buda", 0, "Gratuit (musées payants)", "Várhegy, Budapest"),
+      act("Ruin bars (Szimpla Kert)", 0, "Gratuit (consommations en sus)", "VII. arr., Budapest"),
+      act("Croisière sur le Danube", 15, "Billet type", "Danube, Budapest"),
+    ];
+  }
+  if (c.includes("doha")) {
+    return [
+      act("Musée d'Art Islamique", 0, "Gratuit", "Corniche, Doha"),
+      act("Souq Waqif", 0, "Gratuit (achats en sus)", "Centre, Doha"),
+      act("The Pearl-Qatar", 0, "Gratuit", "The Pearl Island, Doha"),
+      act("Corniche de Doha (promenade)", 0, "Gratuit", "West Bay, Doha"),
+      act("Musée National du Qatar", 13, "Billet adulte", "Centre, Doha"),
+      act("Excursion dans le désert & mer intérieure", 60, "Excursion 4x4", "Khor Al Adaid"),
+    ];
+  }
+  if (c.includes("abu dhabi")) {
+    return [
+      act("Grande Mosquée Sheikh Zayed", 0, "Gratuit", "Centre, Abu Dhabi"),
+      act("Louvre Abu Dhabi", 16, "Billet adulte", "Île Saadiyat, Abu Dhabi"),
+      act("Emirates Palace (visite extérieure)", 0, "Gratuit", "Corniche, Abu Dhabi"),
+      act("Yas Island (Ferrari World)", 75, "Billet journée", "Yas Island, Abu Dhabi"),
+      act("Corniche Beach", 0, "Gratuit", "Corniche, Abu Dhabi"),
+      act("Heritage Village", 0, "Gratuit", "Breakwater, Abu Dhabi"),
+    ];
+  }
+  if (c.includes("tunis")) {
+    return [
+      act("Médina de Tunis (UNESCO)", 0, "Gratuit", "Médina, Tunis"),
+      act("Musée du Bardo", 11, "Billet adulte", "Le Bardo, Tunis"),
+      act("Ruines de Carthage", 8, "Billet adulte", "Carthage, Tunis"),
+      act("Sidi Bou Saïd", 0, "Gratuit", "Sidi Bou Saïd"),
+      act("Mosquée Zitouna", 0, "Gratuit", "Médina, Tunis"),
+      act("Souk El Attarine", 0, "Gratuit (achats en sus)", "Médina, Tunis"),
+    ];
+  }
+  if (c.includes("alger")) {
+    return [
+      act("Casbah d'Alger (UNESCO)", 0, "Gratuit", "Casbah, Alger"),
+      act("Basilique Notre-Dame d'Afrique", 0, "Gratuit", "Bologhine, Alger"),
+      act("Monument des Martyrs (Maqam Echahid)", 0, "Gratuit", "Riadh El Feth, Alger"),
+      act("Jardin d'Essai du Hamma", 1, "Billet adulte", "Hamma, Alger"),
+      act("Grande Poste d'Alger", 0, "Gratuit (extérieur)", "Centre, Alger"),
+      act("Front de mer (promenade des Sablettes)", 0, "Gratuit", "Bab El Oued, Alger"),
+    ];
+  }
+  if (c.includes("melbourne")) {
+    return [
+      act("Federation Square", 0, "Gratuit", "CBD, Melbourne"),
+      act("Street art de Hosier Lane", 0, "Gratuit", "CBD, Melbourne"),
+      act("Royal Botanic Gardens", 0, "Gratuit", "South Yarra, Melbourne"),
+      act("Great Ocean Road (excursion)", 80, "Excursion journée", "Victoria"),
+      act("Queen Victoria Market", 0, "Gratuit (repas en sus)", "CBD, Melbourne"),
+      act("Brighton Beach Boxes", 0, "Gratuit", "Brighton, Melbourne"),
+    ];
+  }
+  if (c.includes("auckland")) {
+    return [
+      act("Sky Tower", 28, "Billet observatoire", "CBD, Auckland"),
+      act("Volcans Auckland Domain & Rangitoto", 0, "Gratuit (ferry ~15€)", "Hauraki Gulf"),
+      act("Harbour Bridge (vue ou bungy)", 0, "Gratuit (bungy 165 NZD)", "Westhaven, Auckland"),
+      act("Mission Bay Beach", 0, "Gratuit", "Mission Bay, Auckland"),
+      act("Marché de Otara", 0, "Gratuit (achats en sus)", "Otara, Auckland"),
+      act("Devonport (ferry & village)", 7, "Billet ferry", "Devonport, Auckland"),
+    ];
+  }
+  if (c.includes("cape town") || c.includes("le cap")) {
+    return [
+      act("Montagne de la Table (téléphérique)", 18, "Billet adulte", "Table Mountain, Le Cap"),
+      act("Cap de Bonne-Espérance", 10, "Billet adulte", "Cape Point, Le Cap"),
+      act("Robben Island", 25, "Billet + ferry", "Robben Island, Le Cap"),
+      act("V&A Waterfront", 0, "Gratuit", "Waterfront, Le Cap"),
+      act("Quartier coloré de Bo-Kaap", 0, "Gratuit", "Bo-Kaap, Le Cap"),
+      act("Plage de Boulders (manchots)", 8, "Billet adulte", "Simon's Town, Le Cap"),
+    ];
+  }
+  if (c.includes("rio de janeiro") || c.includes("rio")) {
+    return [
+      act("Christ Rédempteur (Corcovado)", 15, "Billet + train", "Corcovado, Rio"),
+      act("Pain de Sucre (téléphérique)", 20, "Billet adulte", "Urca, Rio"),
+      act("Plage de Copacabana", 0, "Gratuit", "Copacabana, Rio"),
+      act("Escalier Selarón", 0, "Gratuit", "Lapa, Rio"),
+      act("Quartier Santa Teresa", 0, "Gratuit", "Santa Teresa, Rio"),
+      act("Jardin botanique de Rio", 5, "Billet adulte", "Jardim Botânico, Rio"),
+    ];
+  }
+  if (c.includes("sao paulo") || c.includes("são paulo")) {
+    return [
+      act("Avenida Paulista & MASP", 12, "Billet adulte", "Bela Vista, São Paulo"),
+      act("Quartier Liberdade (japonais)", 0, "Gratuit", "Liberdade, São Paulo"),
+      act("Parc Ibirapuera", 0, "Gratuit", "Ibirapuera, São Paulo"),
+      act("Pinacothèque de l'État", 10, "Billet adulte", "Luz, São Paulo"),
+      act("Marché Municipal (Mercadão)", 0, "Gratuit (repas en sus)", "Centro, São Paulo"),
+      act("Beco do Batman (street art)", 0, "Gratuit", "Vila Madalena, São Paulo"),
+    ];
+  }
+  if (c.includes("phuket")) {
+    return [
+      act("Plage de Patong", 0, "Gratuit", "Patong, Phuket"),
+      act("Grand Bouddha de Phuket", 0, "Gratuit (donation)", "Nakkerd Hills, Phuket"),
+      act("Vieille ville de Phuket", 0, "Gratuit", "Phuket Town"),
+      act("Excursion Îles Phi Phi", 40, "Bateau + entrée", "Phi Phi Islands"),
+      act("Cap Promthep (coucher de soleil)", 0, "Gratuit", "Rawai, Phuket"),
+      act("Temple Wat Chalong", 0, "Gratuit", "Chalong, Phuket"),
+    ];
+  }
   return [
     act("Centre historique de " + label, 0, "Gratuit", label),
     act("Principal musée de " + label, 15, "Entrée type", label),
@@ -7785,7 +8135,7 @@ function pickNextDestinationGuideImgSrc(el, guide) {
 }
 
 /* ─── Cache localStorage pour DestinationGuideView ───────────────────────── */
-const _GUIDE_LS_KEY = "tp_guide_cache_v11";
+const _GUIDE_LS_KEY = "tp_guide_cache_v12";
 const _GUIDE_LS_TTL = 24 * 60 * 60 * 1000; // 24h — texte + image moins de rechargements intempestifs
 
 function _readGuideCache(city, lang) {

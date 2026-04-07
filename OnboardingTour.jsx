@@ -561,7 +561,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
           </div>
 
           <div>
-            <h2 className="text-xl font-bold text-slate-900">{t("onboarding.welcome.title")}</h2>
+            <h2 className="font-display text-xl font-normal tracking-[0.02em] text-slate-900">{t("onboarding.welcome.title")}</h2>
             <p className="mt-2 max-w-xs text-sm leading-relaxed text-slate-500">
               {t("onboarding.welcome.subtitle")}
             </p>
@@ -606,7 +606,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
           <div className="rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200/80" style={{ padding: "1.1rem 1.2rem 1rem" }}>
             <div className="mb-1.5 flex items-center gap-2.5">
               <span className="text-2xl leading-none">{currentStep.emoji}</span>
-              <h3 className="text-base font-bold leading-tight text-slate-900">{t(currentStep.labelKey)}</h3>
+              <h3 className="font-display text-base font-normal leading-tight tracking-[0.02em] text-slate-900">{t(currentStep.labelKey)}</h3>
             </div>
             <p className="mb-3 text-sm leading-relaxed text-slate-500">{t(currentStep.hintKey)}</p>
 
