@@ -197,22 +197,26 @@ function spotlightPadAndGlow(metrics) {
  * Marge autour de l’élément ciblé. Padding symétrique horizontal / vertical : sinon près des bords
  * du viewport (ex. 1er onglet bas) le trou n’est plus centré sur le logo.
  */
-function spotlightFrameFromRect(rect, metrics, pad, glowBleed) {
+function spotlightFrameFromRect(rect, metrics, pad, glowBleed, uniformPad) {
   if (typeof window === "undefined" || !metrics) return null;
+  if (uniformPad) {
+    return {
+      cx: rect.left - pad,
+      cy: rect.top - pad,
+      cw: rect.width + 2 * pad,
+      ch: rect.height + 2 * pad,
+    };
+  }
   const { vw, vh } = metrics;
-  const left = rect.left;
-  const top = rect.top;
-  const right = rect.right;
-  const bottom = rect.bottom;
-  const spaceL = Math.max(0, left - glowBleed);
-  const spaceR = Math.max(0, vw - glowBleed - right);
-  const spaceT = Math.max(0, top - glowBleed);
-  const spaceB = Math.max(0, vh - glowBleed - bottom);
+  const spaceL = Math.max(0, rect.left - glowBleed);
+  const spaceR = Math.max(0, vw - glowBleed - rect.right);
+  const spaceT = Math.max(0, rect.top - glowBleed);
+  const spaceB = Math.max(0, vh - glowBleed - rect.bottom);
   const padX = Math.min(pad, spaceL, spaceR);
   const padY = Math.min(pad, spaceT, spaceB);
   return {
-    cx: left - padX,
-    cy: top - padY,
+    cx: rect.left - padX,
+    cy: rect.top - padY,
     cw: rect.width + 2 * padX,
     ch: rect.height + 2 * padY,
   };
@@ -299,14 +303,14 @@ function SpotlightOverlay({ rect, tourId }) {
   if (!rect) return null;
   const metrics = getSpotlightLayoutMetrics();
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
+  const isTab = String(tourId || "").startsWith("tab-");
   const minAspect = spotlightMinPillAspectForTour(tourId, metrics);
-  const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW);
+  const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW, isTab);
   if (!baseFrame) return null;
   const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
   const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
-  const useNativeChromeOnly =
-    String(tourId || "").startsWith("tab-") || tourId === "plus-button";
+  const useNativeChromeOnly = isTab || tourId === "plus-button";
 
   return (
     <svg
