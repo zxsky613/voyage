@@ -747,7 +747,7 @@ function currentUserProfileAvatarUrl(session) {
 
 /**
  * Pastille ronde (chat, listes) : photo profil si c’est l’utilisateur et qu’une URL est enregistrée, sinon initiales.
- * @param {"palette"|"none"} [initialsFill="palette"] — `none` : le parent impose le fond (ex. verre dépoli sur les cartes chat).
+ * @param {"palette"|"none"} [initialsFill="palette"] — `none` désactive la palette (rare ; éviter les fonds gris en parallèle).
  */
 function ParticipantCircleAvatar({ raw, session, displayLabel, className, initialsFill = "palette" }) {
   const isMe = isParticipantRawCurrentUser(raw, session);
@@ -6441,7 +6441,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session }) {
                     raw={raw}
                     session={session}
                     displayLabel={label}
-                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-200/90 text-xs font-normal text-slate-800"
+                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-xs font-normal"
                   />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -11419,8 +11419,7 @@ function ChatHubView({
                               raw={rawParticipant}
                               session={session}
                               displayLabel={label}
-                              initialsFill="none"
-                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/30 text-[10px] font-semibold text-white ring-1 ring-white/40"
+                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-white/45"
                             />
                           );
                         })}
@@ -11533,7 +11532,7 @@ function ChatHubView({
                           raw={p}
                           session={session}
                           displayLabel={label}
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-300"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-slate-200/70"
                         />
                       );
                     })}
@@ -13694,7 +13693,7 @@ export default function App() {
                                     raw={raw}
                                     session={session}
                                     displayLabel={displayNameFn(raw)}
-                                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-slate-800"
+                                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
                                   />
                                 </div>
                               ))}

@@ -165,7 +165,10 @@ function getSpotlightTargetByTourId(tourId) {
   return focused || root;
 }
 
-/** Marge pour stroke + drop-shadow (WebKit rogne si le trou dépasse du viewport / overflow-x-clip). */
+/**
+ * Marge autour de l’élément ciblé. Padding symétrique horizontal / vertical : sinon près des bords
+ * du viewport (ex. 1er onglet bas) padL ≠ padR et le trou du masque n’est plus centré sur le logo.
+ */
 function spotlightFrameFromRect(rect, pad = 20, glowBleed = 22) {
   if (typeof window === "undefined") return null;
   const vw = window.innerWidth;
@@ -174,15 +177,17 @@ function spotlightFrameFromRect(rect, pad = 20, glowBleed = 22) {
   const top = rect.top;
   const right = rect.right;
   const bottom = rect.bottom;
-  const padL = Math.min(pad, Math.max(0, left - glowBleed));
-  const padT = Math.min(pad, Math.max(0, top - glowBleed));
-  const padR = Math.min(pad, Math.max(0, vw - right - glowBleed));
-  const padB = Math.min(pad, Math.max(0, vh - bottom - glowBleed));
+  const spaceL = Math.max(0, left - glowBleed);
+  const spaceR = Math.max(0, vw - glowBleed - right);
+  const spaceT = Math.max(0, top - glowBleed);
+  const spaceB = Math.max(0, vh - glowBleed - bottom);
+  const padX = Math.min(pad, spaceL, spaceR);
+  const padY = Math.min(pad, spaceT, spaceB);
   return {
-    cx: left - padL,
-    cy: top - padT,
-    cw: rect.width + padL + padR,
-    ch: rect.height + padT + padB,
+    cx: left - padX,
+    cy: top - padY,
+    cw: rect.width + 2 * padX,
+    ch: rect.height + 2 * padY,
   };
 }
 
