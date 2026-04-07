@@ -154,18 +154,19 @@ function snapshotDomRect(el) {
 }
 
 /**
- * Cible prioritaire du spotlight : si l'élément possède un enfant `[data-tour-focus]`,
- * on cadre ce sous-élément (icône centrée) plutôt que tout le bouton.
+ * Cible du spotlight : pour les onglets bas (`tab-*`), on cadre tout le bouton (fond actif + icône).
+ * Sinon, si `[data-tour-focus]` existe (ex. bouton +), on cadre ce sous-élément pour un meilleur centrage.
  */
 function getSpotlightTargetByTourId(tourId) {
   const root = document.querySelector(`[data-tour-id="${tourId}"]`);
   if (!root) return null;
+  if (String(tourId || "").startsWith("tab-")) return root;
   const focused = root.querySelector("[data-tour-focus]");
   return focused || root;
 }
 
 /** Marge pour stroke + drop-shadow (WebKit rogne si le trou dépasse du viewport / overflow-x-clip). */
-function spotlightFrameFromRect(rect, pad = 14, glowBleed = 22) {
+function spotlightFrameFromRect(rect, pad = 20, glowBleed = 22) {
   if (typeof window === "undefined") return null;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -188,7 +189,7 @@ function spotlightFrameFromRect(rect, pad = 14, glowBleed = 22) {
 function SpotlightOverlay({ rect }) {
   const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
   if (!rect) return null;
-  const PAD = 14;
+  const PAD = 20;
   const frame = spotlightFrameFromRect(rect, PAD, 22);
   if (!frame) return null;
   const { cx, cy, cw, ch } = frame;

@@ -1985,12 +1985,31 @@ const DESTINATION_GUIDE_HERO_IMAGE_1280 =
 
 /**
  * Recherche — bandeau « Envie de partir ? ».
- * Variable : MP4/WebM (`/fichier.mp4` dans public ou URL HTTPS). Vide / absente = vidéo par défaut (Commons, ci-dessous).
+ * Variable : MP4/WebM (`/fichier.mp4` dans public ou URL HTTPS). Vide / absente = MP4 local (compatible iOS Safari ; WebM seul ne joue pas sur iPhone).
  * Désactiver la vidéo : `false`, `off`, `none`, `image` ou `static`.
  */
-/** Vue aérienne drone — sable blanc, eau turquoise (Manila Bay). Commons 720p VP9 (~66 Mo) ; boucle côté UI (`loop`). */
-const DESTINATION_GUIDE_HERO_VIDEO_DEFAULT =
-  "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/37/Aerial_view_of_White_Sand_in_MANILA_BAY_(Drone_video).webm/Aerial_view_of_White_Sand_in_MANILA_BAY_(Drone_video).webm.720p.vp9.webm";
+/** MP4 H.264 local — même visuel plage / drone ; iOS ne lit pas le WebM par défaut (VP9). */
+const DESTINATION_GUIDE_HERO_VIDEO_MP4_FALLBACK = "/videos/plage-hero.mp4";
+const DESTINATION_GUIDE_HERO_VIDEO_DEFAULT = DESTINATION_GUIDE_HERO_VIDEO_MP4_FALLBACK;
+
+function inferDestinationHeroVideoMimeType(url) {
+  const path = String(url || "").split("?")[0].toLowerCase();
+  if (path.endsWith(".webm")) return "video/webm";
+  if (path.endsWith(".mp4") || path.endsWith(".m4v")) return "video/mp4";
+  return "video/mp4";
+}
+
+/** Si l’URL est du WebM, on propose d’abord le MP4 local pour Safari iOS, puis le WebM pour Chrome. */
+function buildDestinationHeroVideoSources(primaryUrl) {
+  const p = String(primaryUrl || "").trim();
+  if (!p) return [];
+  const out = [];
+  if (/\.webm(\?|$)/i.test(p)) {
+    out.push({ src: DESTINATION_GUIDE_HERO_VIDEO_MP4_FALLBACK, type: "video/mp4" });
+  }
+  out.push({ src: p, type: inferDestinationHeroVideoMimeType(p) });
+  return out;
+}
 
 const DESTINATION_GUIDE_HERO_VIDEO_RAW = String(
   import.meta.env.VITE_DESTINATION_GUIDE_HERO_VIDEO ?? ""
@@ -2002,6 +2021,8 @@ const DESTINATION_GUIDE_HERO_VIDEO_DISABLED =
 const DESTINATION_GUIDE_HERO_VIDEO_URL = DESTINATION_GUIDE_HERO_VIDEO_DISABLED
   ? ""
   : DESTINATION_GUIDE_HERO_VIDEO_RAW || DESTINATION_GUIDE_HERO_VIDEO_DEFAULT;
+
+const DESTINATION_GUIDE_HERO_VIDEO_SOURCES = buildDestinationHeroVideoSources(DESTINATION_GUIDE_HERO_VIDEO_URL);
 
 function buildActivityImageQuery(activity) {
   const text = String(`${activity?.title || activity?.name || ""} ${activity?.location || ""}`).toLowerCase();
@@ -8046,6 +8067,20 @@ function DestinationGuideView({
   const showDestinationHeroVideo =
     Boolean(DESTINATION_GUIDE_HERO_VIDEO_URL) && !blockVideoForMotion && !heroVideoFailed;
 
+  const destHeroVideoRef = useRef(null);
+  useEffect(() => {
+    if (!showDestinationHeroVideo) return;
+    const v = destHeroVideoRef.current;
+    if (!v) return;
+    const tryPlay = () => {
+      const p = v.play();
+      if (p && typeof p.then === "function") p.catch(() => {});
+    };
+    tryPlay();
+    v.addEventListener("loadeddata", tryPlay, { once: true });
+    return () => v.removeEventListener("loadeddata", tryPlay);
+  }, [showDestinationHeroVideo, DESTINATION_GUIDE_HERO_VIDEO_URL]);
+
   const displayGuide = useMemo(() => {
     if (!guide) return null;
     let base;
@@ -8978,8 +9013,9 @@ function DestinationGuideView({
           <div className="relative mx-auto w-full max-w-full min-h-[15rem] h-[min(52svh,22rem)] overflow-hidden rounded-2xl shadow-[0_22px_50px_rgba(8,47,73,0.22)] ring-1 ring-cyan-100/30 sm:h-[22rem] sm:min-h-0 sm:max-h-none sm:rounded-[2.2rem]">
             {showDestinationHeroVideo ? (
               <video
+                ref={destHeroVideoRef}
                 key={DESTINATION_GUIDE_HERO_VIDEO_URL}
-                className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
+                className="absolute inset-0 z-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
                 autoPlay
                 muted
                 loop
@@ -8988,8 +9024,11 @@ function DestinationGuideView({
                 poster={DESTINATION_GUIDE_HERO_IMAGE_1280}
                 aria-label={t("destination.heroImageAlt")}
                 onError={() => setHeroVideoFailed(true)}
-                src={DESTINATION_GUIDE_HERO_VIDEO_URL}
-              />
+              >
+                {DESTINATION_GUIDE_HERO_VIDEO_SOURCES.map((s) => (
+                  <source key={s.src} src={s.src} type={s.type} />
+                ))}
+              </video>
             ) : (
               <img
                 src={DESTINATION_GUIDE_HERO_IMAGE_1280}
@@ -13844,9 +13883,7 @@ export default function App() {
                 title={String(tab.label)}
                 aria-label={String(tab.label)}
               >
-                <span data-tour-focus className="inline-flex h-6 w-6 items-center justify-center">
-                  <Icon size={20} className="shrink-0" aria-hidden />
-                </span>
+                <Icon size={20} className="shrink-0" aria-hidden />
               </button>
             );
           })}
