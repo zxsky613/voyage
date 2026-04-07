@@ -278,12 +278,17 @@ function readSafeAreaInsetBottomPx() {
   }
 }
 
-/** Onglets : pas d’élargissement. Bouton + : presque circulaire (évite double pilule disgracieuse). */
-function spotlightMinPillAspectForTour(tourId) {
+/** Onglets : pas d’élargissement (silhouette déjà gérée par le bouton actif). */
+function spotlightMinPillAspectForTour(tourId, metrics) {
   if (String(tourId || "").startsWith("tab-")) return 1;
-  if (tourId === "plus-button") return 1.06;
+  if (tourId === "plus-button") {
+    const { vw } = metrics;
+    if (!vw || vw >= 900) return 1.28;
+    if (vw >= 640) return 1.38;
+    return 1.52;
+  }
   if (!tourId || String(tourId).length === 0) return 1;
-  const { vw } = getSpotlightLayoutMetrics();
+  const { vw } = metrics;
   if (!vw || vw >= 900) return 1.12;
   if (vw >= 640) return 1.1;
   return 1.08;
@@ -294,15 +299,13 @@ function SpotlightOverlay({ rect, tourId }) {
   if (!rect) return null;
   const metrics = getSpotlightLayoutMetrics();
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
-  const minAspect = spotlightMinPillAspectForTour(tourId);
+  const minAspect = spotlightMinPillAspectForTour(tourId, metrics);
   const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW);
   if (!baseFrame) return null;
   const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
   const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
   const isTab = String(tourId || "").startsWith("tab-");
-  const strokeW = isTab ? 2.25 : 2.5;
-  const holeFill = isTab ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)";
 
   return (
     <svg
@@ -325,23 +328,25 @@ function SpotlightOverlay({ rect, tourId }) {
         </mask>
       </defs>
       <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
-      <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill={holeFill} stroke="none" />
-      <rect
-        x={cx}
-        y={cy}
-        width={cw}
-        height={ch}
-        rx={r}
-        fill="none"
-        stroke="rgba(255,255,255,0.92)"
-        strokeWidth={strokeW}
-        style={{
-          filter:
-            "drop-shadow(0 0 8px rgba(99,102,241,0.45)) drop-shadow(0 0 18px rgba(255,255,255,0.22))",
-        }}
-      >
-        <animate attributeName="stroke-opacity" values="0.92;0.52;0.92" dur="1.8s" repeatCount="indefinite" />
-      </rect>
+      {/* Onglets : la pastille active fournit déjà l’encadré — pas de 2e cadre (fond + stroke SVG). */}
+      {isTab ? null : (
+        <rect
+          x={cx}
+          y={cy}
+          width={cw}
+          height={ch}
+          rx={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.9)"
+          strokeWidth="2.25"
+          style={{
+            filter:
+              "drop-shadow(0 0 6px rgba(99,102,241,0.4)) drop-shadow(0 0 14px rgba(255,255,255,0.18))",
+          }}
+        >
+          <animate attributeName="stroke-opacity" values="0.9;0.5;0.9" dur="1.8s" repeatCount="indefinite" />
+        </rect>
+      )}
     </svg>
   );
 }

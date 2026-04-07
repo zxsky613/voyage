@@ -4857,7 +4857,7 @@ function TopNav({ onMenu, onAdd, title }) {
           type="button"
           onClick={onAdd}
           data-tour-id="plus-button"
-          className={`shrink-0 rounded-full p-2.5 text-white transition hover:opacity-90 sm:p-3 ${GLASS_BUTTON_CLASS}`}
+          className={`inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white transition hover:opacity-90 sm:px-4 sm:py-3 ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
           <Plus size={20} className="shrink-0" aria-hidden />
