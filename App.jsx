@@ -4745,8 +4745,9 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
           title={dronePromptFr}
           className="h-full w-full object-cover object-[center_45%] sm:object-[center_40%]"
           referrerPolicy="no-referrer"
-          loading="lazy"
+          loading="eager"
           decoding="async"
+          fetchpriority="high"
           onLoad={markCityImageLoaded}
           onError={() => {
             if (!loadFailed) setLoadFailed(true);
@@ -11829,8 +11830,8 @@ export default function App() {
   );
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
-  /** true dès que l'onglet Recherche est visité une 1ère fois — garde le composant monté (display:none) par la suite */
-  const [destTabReady, setDestTabReady] = useState(() => readStoredActiveTab() === "destination");
+  /** Monte le composant Recherche dès le départ pour que la vidéo et le DOM soient prêts. */
+  const [destTabReady, setDestTabReady] = useState(true);
   const [destinationInvalidModalOpen, setDestinationInvalidModalOpen] = useState(false);
   const [destinationInvalidMessage, setDestinationInvalidMessage] = useState("");
   const [tripDateConflictModalOpen, setTripDateConflictModalOpen] = useState(false);
@@ -13613,7 +13614,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === "trips" ? (
+        <div style={{ display: activeTab === "trips" ? undefined : "none" }}>
           <AllTripsView
             trips={trips}
             onOpenTrip={(trip) => {
@@ -13623,9 +13624,9 @@ export default function App() {
             onEditTrip={setEditingTrip}
             onDeleteTrip={deleteTrip}
           />
-        ) : null}
+        </div>
 
-        {activeTab === "planner" ? (
+        <div style={{ display: activeTab === "planner" ? undefined : "none" }}>
           <div
             id="tp-planner-main"
             className="space-y-4 scroll-mt-[max(6rem,env(safe-area-inset-top,0px)+4.5rem)]"
@@ -13743,9 +13744,9 @@ export default function App() {
               setMonthCursor={setMonthCursor}
             />
           </div>
-        ) : null}
+        </div>
 
-        {activeTab === "budget" ? (
+        <div style={{ display: activeTab === "budget" ? undefined : "none" }}>
           <section className="pb-4">
             <div className="mb-6 rounded-[2rem] border border-amber-100/80 bg-gradient-to-br from-amber-50/75 via-white/95 to-slate-50/75 p-4 shadow-[0_14px_40px_rgba(180,83,9,0.06)] ring-1 ring-amber-100/50 sm:p-6">
               <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
@@ -13834,9 +13835,9 @@ export default function App() {
               })()}
             </div>
           </section>
-        ) : null}
+        </div>
 
-        {activeTab === "chat" ? (
+        <div style={{ display: activeTab === "chat" ? undefined : "none" }}>
           <ChatHubView
             trips={trips}
             activities={chatActivities}
@@ -13850,7 +13851,7 @@ export default function App() {
             votes={activityVotes}
             onVote={voteActivity}
           />
-        ) : null}
+        </div>
       </main>
 
       <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-1.5 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl sm:p-2">
