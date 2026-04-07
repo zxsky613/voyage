@@ -4839,7 +4839,7 @@ function AvoloBrand({ size = "md", className = "", light = false }) {
 
 function TopNav({ onMenu, onAdd, title }) {
   return (
-    <header className="sticky top-0 z-30 min-w-0 px-3 pt-[max(1rem,env(safe-area-inset-top,0px))] sm:px-5">
+    <header className="sticky top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(30,58,95,0.09)] backdrop-blur-xl ring-1 ring-sky-100/55 sm:px-6 sm:py-4">
         <button
           type="button"
@@ -13853,8 +13853,8 @@ export default function App() {
         ) : null}
       </main>
 
-      <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-2 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70">
-        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+      <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 px-2 py-1.5 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl ring-1 ring-slate-200/70 sm:p-2">
+        <div className="grid items-center gap-1.5 sm:gap-2" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -13873,7 +13873,7 @@ export default function App() {
                   }
                   setActiveTab(tab.id);
                 }}
-                className={`flex items-center justify-center rounded-[2rem] px-1 py-2 text-xs sm:px-2 sm:py-2.5 ${
+                className={`flex min-h-[2.75rem] items-center justify-center rounded-[2rem] px-1 py-1.5 text-xs sm:min-h-0 sm:px-2 sm:py-2.5 ${
                   active ? "text-white" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}

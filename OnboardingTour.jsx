@@ -166,22 +166,16 @@ function getSpotlightTargetByTourId(tourId) {
 }
 
 /**
- * Dimensions « viewport » pour le spotlight : Visual Viewport sur mobile (barre d’adresse, encoche),
- * sinon fenêtre — pour que cadre et masque restent cohérents sur téléphone comme sur PC.
+ * Dimensions pour le masque SVG (fixed + 100%) : mêmes repères que getBoundingClientRect()
+ * (layout viewport). Ne pas utiliser visualViewport.width/height seuls — sur iOS Safari ils
+ * divergent souvent du layout et le « cadre » lumineux ne recouvre plus l’onglet / le +.
  */
 function getSpotlightLayoutMetrics() {
   if (typeof window === "undefined") {
     return { vw: 0, vh: 0, safeTop: 0, safeBottom: 0 };
   }
-  const vv = window.visualViewport;
-  const vw =
-    vv && Number.isFinite(vv.width) && vv.width > 0
-      ? vv.width
-      : window.innerWidth;
-  const vh =
-    vv && Number.isFinite(vv.height) && vv.height > 0
-      ? vv.height
-      : window.innerHeight;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
   return {
     vw,
     vh,
@@ -225,12 +219,12 @@ function spotlightFrameFromRect(rect, metrics, pad, glowBleed) {
 }
 
 /**
- * Tous les encadrés du guide adoptent la même silhouette « pilule » que les onglets bas :
- * si le trou est trop carré (ex. bouton +), on élargit en conservant la hauteur et le centre horizontal
- * de l’élément réel, puis on borde le viewport.
+ * Onglets = déjà en pilule : ne pas élargir artificiellement (sinon halo clair « décollé » du bouton).
+ * Bouton + : léger élargissement seulement si presque carré, pour éviter une énorme pilule blanche.
  */
 function normalizeSpotlightToTabPillShape(frame, elementRect, metrics, minAspect, glowBleed) {
   if (typeof window === "undefined" || !elementRect || !frame || !metrics) return frame;
+  if (!(minAspect > 1)) return frame;
   const { vw } = metrics;
   let { cx, cy, cw, ch } = frame;
   const ratio = cw / ch;
@@ -284,50 +278,31 @@ function readSafeAreaInsetBottomPx() {
   }
 }
 
-/** Ratio largeur / hauteur mini pour la pilule : un peu plus souple sur grand écran (bouton +). */
-function spotlightMinPillAspect(metrics) {
-  const { vw } = metrics;
-  if (!vw || vw >= 900) return 1.28;
-  if (vw >= 640) return 1.35;
-  return 1.5;
+/** Onglets : pas d’élargissement. Bouton + : presque circulaire (évite double pilule disgracieuse). */
+function spotlightMinPillAspectForTour(tourId) {
+  if (String(tourId || "").startsWith("tab-")) return 1;
+  if (tourId === "plus-button") return 1.06;
+  if (!tourId || String(tourId).length === 0) return 1;
+  const { vw } = getSpotlightLayoutMetrics();
+  if (!vw || vw >= 900) return 1.12;
+  if (vw >= 640) return 1.1;
+  return 1.08;
 }
 
-/**
- * Garde le trou dans la zone utile (safe area haut / bas), mobile comme desktop.
- */
-function clampSpotlightFrameToSafeViewport(frame, elementRect, metrics, glowBleed) {
-  const { vh, safeTop, safeBottom } = metrics;
-  const minCy = safeTop + glowBleed;
-  const maxY = vh - safeBottom - glowBleed;
-  let { cx, cy, cw, ch } = frame;
-
-  if (cy < minCy) {
-    const bottom = cy + ch;
-    cy = minCy;
-    ch = Math.max(ch, bottom - cy, elementRect.bottom + glowBleed - cy);
-  }
-  if (cy + ch > maxY) {
-    cy = maxY - ch;
-    if (cy < minCy) {
-      cy = minCy;
-      ch = Math.max(48, maxY - minCy);
-    }
-  }
-  return { cx, cy, cw, ch };
-}
-
-function SpotlightOverlay({ rect }) {
+function SpotlightOverlay({ rect, tourId }) {
   const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
   if (!rect) return null;
   const metrics = getSpotlightLayoutMetrics();
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
-  const minAspect = spotlightMinPillAspect(metrics);
+  const minAspect = spotlightMinPillAspectForTour(tourId);
   const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW);
   if (!baseFrame) return null;
   const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
-  const frame = clampSpotlightFrameToSafeViewport(pill, rect, metrics, GLOW);
-  const { cx, cy, cw, ch } = frame;
+  const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
+  const isTab = String(tourId || "").startsWith("tab-");
+  const strokeW = isTab ? 2.25 : 2.5;
+  const holeFill = isTab ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)";
 
   return (
     <svg
@@ -350,7 +325,7 @@ function SpotlightOverlay({ rect }) {
         </mask>
       </defs>
       <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
-      <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="rgba(255,255,255,0.13)" stroke="none" />
+      <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill={holeFill} stroke="none" />
       <rect
         x={cx}
         y={cy}
@@ -358,11 +333,14 @@ function SpotlightOverlay({ rect }) {
         height={ch}
         rx={r}
         fill="none"
-        stroke="rgba(255,255,255,0.85)"
-        strokeWidth="3"
-        style={{ filter: "drop-shadow(0 0 12px rgba(99,102,241,0.7)) drop-shadow(0 0 28px rgba(255,255,255,0.35))" }}
+        stroke="rgba(255,255,255,0.92)"
+        strokeWidth={strokeW}
+        style={{
+          filter:
+            "drop-shadow(0 0 8px rgba(99,102,241,0.45)) drop-shadow(0 0 18px rgba(255,255,255,0.22))",
+        }}
       >
-        <animate attributeName="stroke-opacity" values="0.85;0.4;0.85" dur="1.8s" repeatCount="indefinite" />
+        <animate attributeName="stroke-opacity" values="0.92;0.52;0.92" dur="1.8s" repeatCount="indefinite" />
       </rect>
     </svg>
   );
@@ -607,7 +585,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
 
   const spotlightLayer = (
     <>
-      <SpotlightOverlay rect={targetRect} />
+      <SpotlightOverlay rect={targetRect} tourId={currentStep.tourId} />
 
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
