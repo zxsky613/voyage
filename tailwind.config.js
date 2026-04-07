@@ -7,14 +7,7 @@ export default {
       fontFamily: {
         /* .font-display : voir index.css (guillemets requis pour « Yeseva One » ; Tailwind ne les émet pas). */
         sans: [
-          "Avenir",
-          '"Avenir Next"',
-          '"Avenir Next Condensed"',
-          '"Avenir LT Std"',
-          '"Avenir LT Pro"',
-          '"Helvetica Neue"',
-          "Helvetica",
-          "Arial",
+          "Poppins",
           "ui-sans-serif",
           "system-ui",
           "sans-serif",

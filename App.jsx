@@ -4617,7 +4617,17 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   const prompt = resolveCanonicalCity(extractCityPrompt(title));
   const safeTitle = String(prompt || title || "voyage");
   const cacheKey = getCityImageCacheKey(title);
-  const [resolvedUrl, setResolvedUrl] = useState("");
+
+  const getInstantUrl = () => {
+    if (cityImageMemoryCache[cacheKey]) return String(cityImageMemoryCache[cacheKey]);
+    try {
+      const ls = window.localStorage.getItem(`tp_city_img_${cacheKey}`);
+      if (ls) { cityImageMemoryCache[cacheKey] = ls; return ls; }
+    } catch (_e) { /* ignore */ }
+    return buildCityImageUrl(title) || "";
+  };
+
+  const [resolvedUrl, setResolvedUrl] = useState(getInstantUrl);
   const [loadFailed, setLoadFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
   const cityImageElRef = useRef(null);
@@ -4629,6 +4639,8 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   useEffect(() => {
     setLoadFailed(false);
     setImgLoaded(false);
+    setResolvedUrl(getInstantUrl());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeTitle, prompt]);
 
   useEffect(() => {
@@ -4932,7 +4944,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
         }`}
       >
         <div className="mb-6 flex items-center justify-between">
-          <p className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("menu.title")}</p>
+          <p className="text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("menu.title")}</p>
           <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-slate-100" aria-label={t("menu.closeMenu")}>
             <X size={18} />
           </button>
@@ -4940,7 +4952,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
         <div className="space-y-3 text-sm text-slate-700">
           <div className="flex items-center gap-3.5">
             <MenuProfileAvatar user={user} />
-            <p className="min-w-0 flex-1 font-display text-base font-normal leading-snug tracking-[0.03em] text-slate-800 sm:text-[1.125rem]">
+            <p className="min-w-0 flex-1 text-base font-normal leading-snug tracking-[0.03em] text-slate-800 sm:text-[1.125rem]">
               {greetingName
                 ? t("menu.greeting", { name: greetingName })
                 : t("menu.greetingNoName")}
@@ -4948,7 +4960,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           </div>
           <LanguageSelector className="pt-1" />
           <div className="pt-2">
-            <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
+            <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
               {t("menu.navigation")}
             </p>
             <div className="space-y-2">
@@ -4986,7 +4998,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           </button>
           {/* ── Aide ── */}
           <div className="mt-4 pt-4 border-t border-slate-200/70">
-            <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
+            <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.28em] text-slate-500">
               {t("menu.help")}
             </p>
             <button
@@ -5514,7 +5526,7 @@ function AuthView() {
                     ✈️
                   </span>
                   <div className="min-w-0">
-                    <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                    <p className="text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                       {t("auth.inviteTitle")}
                     </p>
                     <h3 className="font-display text-[17px] font-normal leading-tight tracking-[0.02em] text-slate-900">
@@ -5531,7 +5543,7 @@ function AuthView() {
                     <div className="flex items-center gap-2.5">
                       <MapPin size={14} className="shrink-0 text-indigo-500" />
                       <div>
-                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
+                        <p className="text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
                           {t("auth.inviteDestination")}
                         </p>
                         <p className="font-display text-[14px] font-normal tracking-[0.02em] text-slate-900">
@@ -5544,10 +5556,10 @@ function AuthView() {
                     <div className="flex items-center gap-2.5">
                       <Calendar size={14} className="shrink-0 text-indigo-500" />
                       <div>
-                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
+                        <p className="text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
                           Dates
                         </p>
-                        <p className="font-display text-[13px] font-normal tracking-[0.02em] text-slate-800">
+                        <p className="text-[13px] font-normal tracking-[0.02em] text-slate-800">
                           {t("auth.inviteDates", {
                             start: formatDate(inviteStartDate),
                             end: formatDate(inviteEndDate),
@@ -5600,7 +5612,7 @@ function AuthView() {
                 >
                   <span>←</span> Retour
                 </button>
-                <h3 className="mb-1 font-display text-[10px] font-normal uppercase tracking-[0.22em] text-slate-400">
+                <h3 className="mb-1 text-[10px] font-normal uppercase tracking-[0.22em] text-slate-400">
                   {t("auth.inviteTitle")}
                 </h3>
                 <p className="mb-4 text-[15px] font-bold text-slate-900">{t("auth.inviteSignupStep")}</p>
@@ -6281,7 +6293,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
           </div>
           <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-4 pb-3 sm:px-6 sm:pt-5">
             <div>
-              <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+              <p className="text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                 {t("modals.shareTitle")}
               </p>
               <h2 className="font-display text-[17px] font-normal leading-tight text-slate-900">{tripTitle}</h2>
@@ -6294,7 +6306,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
           <div className="h-px shrink-0 bg-slate-100 mx-5" />
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="px-5 pt-4 pb-2 sm:px-6">
-              <p className="mb-3 font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+              <p className="mb-3 text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                 {t("modals.shareProgramSection")}
               </p>
               {dayEntries.length === 0 ? (
@@ -6335,7 +6347,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
             {invitedEmails.length > 0 && (
               <div className="px-5 pt-4 pb-2 sm:px-6">
                 <div className="h-px bg-slate-100 mb-4" />
-                <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+                <p className="mb-2 text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                   {t("modals.shareGuestsSection")}
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -6408,7 +6420,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session }) {
             >
               {t("planner.participantsListTitle")}
             </h2>
-            <p className="mt-2 font-display text-sm font-normal tracking-[0.02em] text-slate-600">
+            <p className="mt-2 text-sm font-normal tracking-[0.02em] text-slate-600">
               {t("planner.participantsListHint")}
             </p>
           </div>
@@ -6444,7 +6456,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session }) {
                   />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-display text-sm font-normal tracking-[0.02em] text-slate-900">
+                  <p className="truncate text-sm font-normal tracking-[0.02em] text-slate-900">
                     {label}
                   </p>
                   {emailLine ? <p className="truncate text-xs text-slate-500">{emailLine}</p> : null}
@@ -6945,7 +6957,7 @@ function CitySearchBox({
         else onChange(city);
         setFocused(false);
       }}
-      className="block w-full rounded-xl px-3 py-2 text-left font-display text-sm font-normal tracking-[0.02em] text-slate-700 transition hover:bg-slate-100"
+      className="block w-full rounded-xl px-3 py-2 text-left text-sm font-normal tracking-[0.02em] text-slate-700 transition hover:bg-slate-100"
     >
       {formatCitySuggestionDisplay(city, uiLanguage)}
     </button>
@@ -7122,7 +7134,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
   return (
     <section className="space-y-8">
       <div className="rounded-[2.2rem] bg-white/92 px-6 py-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
-        <p className="font-display text-xs font-normal uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
+        <p className="text-xs font-normal uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
         <h2 className="text-3xl font-semibold text-slate-900">
           {t("home.greeting", { name: String(greetingName || t("common.traveler")) })}{" "}
           <span className="inline-block">👋</span>
@@ -7370,7 +7382,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Rythme */}
           <section className="space-y-2">
-            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsPace")}</p>
+            <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsPace")}</p>
             <div className="space-y-2">
               {radioCard("pace", "relaxed",   pace, setPace, t("destination.prefsPaceRelaxed"))}
               {radioCard("pace", "moderate",  pace, setPace, t("destination.prefsPaceModerate"))}
@@ -7380,7 +7392,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Style */}
           <section className="space-y-2">
-            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsStyle")}</p>
+            <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsStyle")}</p>
             <div className="flex flex-wrap gap-2">
               {checkCard("cultural",    t("destination.prefsStyleCultural"))}
               {checkCard("gastronomy",  t("destination.prefsStyleGastronomy"))}
@@ -7394,7 +7406,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Voyageurs */}
           <section className="space-y-2">
-            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsTravelers")}</p>
+            <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsTravelers")}</p>
             <div className="grid grid-cols-2 gap-2">
               {radioCard("travelers", "solo",    travelers, setTravelers, t("destination.prefsTravelersSolo"))}
               {radioCard("travelers", "couple",  travelers, setTravelers, t("destination.prefsTravelerCouple"))}
@@ -7405,7 +7417,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Budget */}
           <section className="space-y-2">
-            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsBudget")}</p>
+            <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsBudget")}</p>
             <div className="space-y-2">
               {radioCard("budget", "low",    budget, setBudget, t("destination.prefsBudgetLow"))}
               {radioCard("budget", "medium", budget, setBudget, t("destination.prefsBudgetMedium"))}
@@ -7416,7 +7428,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
           {/* Souhaits libres */}
           <section className="space-y-2">
-            <p className="font-display text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsWishes")}</p>
+            <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsWishes")}</p>
             <textarea
               rows={3}
               value={wishes}
@@ -7946,6 +7958,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
 
 function DestinationGuideView({
   session,
+  visible = true,
   searchInput,
   onSearchInputChange,
   confirmedDestination,
@@ -8072,13 +8085,19 @@ function DestinationGuideView({
     const v = destHeroVideoRef.current;
     if (!v) return;
     const tryPlay = () => {
-      const p = v.play();
-      if (p && typeof p.then === "function") p.catch(() => {});
+      if (v.paused) {
+        const p = v.play();
+        if (p && typeof p.then === "function") p.catch(() => {});
+      }
     };
     tryPlay();
     v.addEventListener("loadeddata", tryPlay, { once: true });
-    return () => v.removeEventListener("loadeddata", tryPlay);
-  }, [showDestinationHeroVideo, DESTINATION_GUIDE_HERO_VIDEO_URL]);
+    v.addEventListener("canplay", tryPlay, { once: true });
+    return () => {
+      v.removeEventListener("loadeddata", tryPlay);
+      v.removeEventListener("canplay", tryPlay);
+    };
+  }, [showDestinationHeroVideo, DESTINATION_GUIDE_HERO_VIDEO_URL, visible]);
 
   const displayGuide = useMemo(() => {
     if (!guide) return null;
@@ -8628,7 +8647,7 @@ function DestinationGuideView({
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-xs font-normal uppercase tracking-[0.35em] text-sky-900/45">
+        <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-sky-900/45">
           {t("destination.guideHeading")}
         </h2>
       </div>
@@ -8717,7 +8736,7 @@ function DestinationGuideView({
                   className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/25 blur-3xl"
                   aria-hidden
                 />
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.3em] text-sky-700/90">
+                <p className="text-[11px] font-normal uppercase tracking-[0.3em] text-sky-700/90">
                   {t("destination.badgeDestination")}
                 </p>
                 <h3 className="mt-2 font-display text-[1.65rem] font-normal leading-tight tracking-[0.04em] text-slate-900 sm:text-3xl">
@@ -8804,7 +8823,7 @@ function DestinationGuideView({
                     <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
+                    <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                       {t("destination.mustSeeTitle")}
                     </h4>
                     <p className="text-[11px] text-slate-500">{t("destination.mustSeeSubtitle")}</p>
@@ -8818,7 +8837,7 @@ function DestinationGuideView({
                         key={`place-${i}-${raw.slice(0, 24)}`}
                         type="button"
                         onClick={() => setMustSeePlaceModalRaw(raw)}
-                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left font-display text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
+                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
                       >
                         {displayActivityTitleForLocale(raw, language)}
                       </button>
@@ -8856,7 +8875,7 @@ function DestinationGuideView({
                       />
                       <h4
                         id="destination-expert-tips-heading"
-                        className="font-display text-[11px] font-normal uppercase tracking-[0.26em] text-slate-300"
+                        className="text-[11px] font-normal uppercase tracking-[0.26em] text-slate-300"
                       >
                         {t("destination.tipsTitle")}
                       </h4>
@@ -8884,7 +8903,7 @@ function DestinationGuideView({
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
+                    <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                       {t("destination.activitiesTitle")}
                     </h4>
                     <p className="text-[11px] text-slate-500">{t("destination.activitiesSubtitle")}</p>
@@ -8904,7 +8923,7 @@ function DestinationGuideView({
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
-                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 font-display text-xs font-normal leading-snug tracking-[0.02em] text-indigo-950 shadow-sm ring-1 ring-white/80"
+                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-indigo-950 shadow-sm ring-1 ring-white/80"
                       >
                         <span>{displayActivityTitleForLocale(cell.title, language)}</span>
                         {costBadge != null && (
@@ -8931,7 +8950,7 @@ function DestinationGuideView({
                       <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                     </span>
                     <div>
-                      <h4 className="font-display text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
+                      <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
                         {t("destination.itineraryTitle")}
                         {VITE_ITINERARY_PREMIUM_ONLY ? (
                           <span className="ml-2 font-sans text-[10px] font-semibold normal-case tracking-normal text-amber-800/90">
@@ -8969,7 +8988,7 @@ function DestinationGuideView({
                     <div className="overflow-hidden rounded-2xl border border-indigo-200/60 bg-gradient-to-br from-slate-900 via-indigo-950 to-sky-950 p-5 shadow-[0_8px_32px_rgba(99,102,241,0.25)]">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-3">
                         <Sparkles className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2.5} aria-hidden />
-                        <p className="font-display text-[10px] font-normal uppercase tracking-[0.22em] text-slate-300">
+                        <p className="text-[10px] font-normal uppercase tracking-[0.22em] text-slate-300">
                           {t("destination.itineraryResultTitle")}
                         </p>
                       </div>
@@ -8979,7 +8998,7 @@ function DestinationGuideView({
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white ring-1 ring-white/20">
                               {Number(d?.day) || "·"}
                             </span>
-                            <span className="font-display font-normal tracking-[0.02em] text-white/90">
+                            <span className="font-normal tracking-[0.02em] text-white/90">
                               {String(d?.title || "")}
                             </span>
                           </li>
@@ -9078,7 +9097,7 @@ function DestinationGuideView({
         >
           <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
             <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-sky-600 border-t-transparent" aria-hidden />
-            <p className="font-display text-sm font-normal tracking-[0.03em] text-slate-700">
+            <p className="text-sm font-normal tracking-[0.03em] text-slate-700">
               {t("destination.itineraryGenerating")}
             </p>
           </div>
@@ -9130,7 +9149,7 @@ function DestinationGuideView({
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2
                 id="itinerary-modal-title"
-                className="min-w-0 flex-1 font-display text-sm font-normal leading-snug tracking-[0.03em] text-slate-900"
+                className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.03em] text-slate-900"
               >
                 {t("destination.itineraryModalTitle", {
                   city: displayCityForLocale(String(displayGuide.city), language),
@@ -9149,7 +9168,7 @@ function DestinationGuideView({
               {t("destination.itineraryModalDesc")}
             </p>
             <div className="w-full min-w-0">
-              <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
+              <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
                 {t("tripForm.dateRangeTitle")}
               </p>
               <TripDateRangeField
@@ -9330,7 +9349,7 @@ function DestinationGuideView({
               }}
             />
             <div className="mt-5">
-              <p className="font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
+              <p className="text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
                 {t("destination.addActivitiesTitle")}
               </p>
               <p className="mt-1 text-xs text-slate-500">
@@ -9385,7 +9404,7 @@ function DestinationGuideView({
                           }}
                           className="h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
-                        <span className="min-w-0 flex-1 font-display text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
+                        <span className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
                           {displayLabel}
                         </span>
                         {costBadge != null ? (
@@ -9409,7 +9428,7 @@ function DestinationGuideView({
               {sortedPickedIndices.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-sky-800/90">
+                    <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-sky-800/90">
                       {t("destination.scheduleTitle")}
                     </p>
                     {(() => {
@@ -9454,7 +9473,7 @@ function DestinationGuideView({
                             className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                              <span className="min-w-0 flex-1 font-display text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
+                              <span className="min-w-0 flex-1 text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
                                 {label}
                               </span>
                               {cell.cost > 0 ? (
@@ -9643,7 +9662,7 @@ function DestinationGuideView({
                 {t("destination.itineraryCalendarConflictHint")}
               </p>
               <div className="mt-4 w-full min-w-0">
-                <p className="mb-2 font-display text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
+                <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.2em] text-slate-500">
                   {t("tripForm.dateRangeTitle")}
                 </p>
                 <TripDateRangeField
@@ -9788,7 +9807,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-emerald-700">
             {t("home.now")}
           </h2>
-          <span className="rounded-full bg-emerald-100 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-emerald-700">
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-emerald-700">
             {t("trips.badgeInProgress")}
           </span>
         </div>
@@ -9815,7 +9834,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-sky-700">
             {t("home.upcoming")}
           </h2>
-          <span className="rounded-full bg-sky-100 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-sky-700">
+          <span className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-sky-700">
             {t("trips.badgeUpcoming")}
           </span>
         </div>
@@ -9842,7 +9861,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-600">
             {t("trips.memories")}
           </h2>
-          <span className="rounded-full bg-slate-200 px-3 py-1 font-display text-[10px] font-normal uppercase tracking-[0.18em] text-slate-600">
+          <span className="rounded-full bg-slate-200 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-slate-600">
             {t("trips.badgePast")}
           </span>
         </div>
@@ -9964,7 +9983,7 @@ function PlannerView({
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
               {"<"}
             </button>
-            <h2 className="min-w-0 truncate px-1 text-center font-display text-[10px] font-normal uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.32em]">
+            <h2 className="min-w-0 truncate px-1 text-center text-[10px] font-normal uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.32em]">
               {monthCursor.toLocaleDateString(getAppDateLocale(), { month: "long", year: "numeric" })}
             </h2>
             <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
@@ -10027,7 +10046,7 @@ function PlannerView({
         </div>
 
         <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
-          <h3 className="mb-3 break-all font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
             {formatDate(selectedDate)}
           </h3>
           <button
@@ -10237,10 +10256,10 @@ function PlannerView({
               </button>
             </div>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-              <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+              <p className="text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
                 {t("planner.activityFieldLabel")}
               </p>
-              <p className="mt-1 font-display text-lg font-normal leading-snug tracking-[0.02em] text-slate-900">
+              <p className="mt-1 text-lg font-normal leading-snug tracking-[0.02em] text-slate-900">
                 {String(viewingActivity?.title || viewingActivity?.name || "").trim()
                   ? displayActivityTitleForLocale(
                       String(viewingActivity?.title || viewingActivity?.name || ""),
@@ -10251,42 +10270,42 @@ function PlannerView({
             </div>
             <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
-                  {t("planner.dateField")}
+                <p className="text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                {t("planner.dateField")}
                 </p>
-                <p className="mt-1 break-all font-display text-sm font-normal tracking-[0.02em] text-slate-900">
+                <p className="mt-1 break-all text-sm font-normal tracking-[0.02em] text-slate-900">
                   {viewingActivity?.date ? formatDate(viewingActivity.date) : "-"}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
-                  {t("planner.timeField")}
+                <p className="text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                {t("planner.timeField")}
                 </p>
-                <p className="mt-1 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
+                <p className="mt-1 text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
                   {String(viewingActivity?.time || "--:--")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
-                  {t("planner.budgetField")}
+                <p className="text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                {t("planner.budgetField")}
                 </p>
-                <p className="mt-1 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
+                <p className="mt-1 text-sm font-normal tabular-nums tracking-[0.02em] text-slate-900">
                   {Number(viewingActivity?.cost || 0).toFixed(2)} {t("planner.currencyEur")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:px-4 sm:col-span-2">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
-                  {t("planner.locationField")}
+                <p className="text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                {t("planner.locationField")}
                 </p>
-                <p className="mt-1 break-words font-display text-sm font-normal tracking-[0.02em] text-slate-900">
+                <p className="mt-1 break-words text-sm font-normal tracking-[0.02em] text-slate-900">
                   {String(viewingActivity?.location || "-")}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:col-span-2 sm:px-4">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
-                  {t("planner.descriptionField")}
+                <p className="text-[11px] font-normal uppercase tracking-[0.12em] text-slate-500">
+                {t("planner.descriptionField")}
                 </p>
-                <p className="mt-1 whitespace-pre-wrap break-words font-display text-sm font-normal tracking-[0.02em] text-slate-700">
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm font-normal tracking-[0.02em] text-slate-700">
                   {String(viewingActivity?.description || "").trim() || t("planner.noDescriptionYet")}
                 </p>
               </div>
@@ -10390,7 +10409,7 @@ function PlannerView({
         <div className="fixed -inset-1 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setActivityToDelete(null); }}>
           <div className="min-w-0 w-full max-w-md overflow-x-hidden rounded-[2rem] bg-white/90 p-4 shadow-2xl backdrop-blur-xl sm:rounded-[3.5rem] sm:p-8" onClick={(e) => e.stopPropagation()}>
             <h2 className="mb-2 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">{t("planner.confirmTitle")}</h2>
-            <p className="mb-6 break-words font-display text-sm font-normal tracking-[0.02em] text-slate-700">
+            <p className="mb-6 break-words text-sm font-normal tracking-[0.02em] text-slate-700">
               {t("planner.deleteActivityQuestion", {
                 name: String(activityToDelete?.title || activityToDelete?.name || "").trim()
                   ? displayActivityTitleForLocale(
@@ -10497,7 +10516,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
     <div className="fixed -inset-1 z-[60] flex items-center justify-center bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
       <div className="min-w-0 w-full max-w-lg overflow-x-hidden rounded-[2rem] bg-white p-4 shadow-2xl ring-1 ring-slate-200/80 sm:p-7" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
-          <h3 className="min-w-0 flex-1 font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          <h3 className="min-w-0 flex-1 text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
             {initial?.id ? t("budget.editExpense") : t("budget.newExpenseModal")}
           </h3>
           <button
@@ -10539,7 +10558,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             />
           </div>
           <div>
-            <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
+            <p className="mb-2 text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
               {t("budget.paidBySection")}
             </p>
             <select
@@ -10555,10 +10574,10 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
             </select>
           </div>
           <div>
-            <p className="mb-2 font-display text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
+            <p className="mb-2 text-[10px] font-normal uppercase tracking-[0.16em] text-slate-500">
               {t("budget.splitBetween")}
             </p>
-            <p className="mb-2 font-display text-[11px] font-normal tracking-[0.02em] text-slate-500">
+            <p className="mb-2 text-[11px] font-normal tracking-[0.02em] text-slate-500">
               {t("budget.splitBetweenHint")}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -10645,16 +10664,16 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
                 "0 1px 2px rgba(0,0,0,0.85), 0 2px 16px rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.9)",
             }}
           >
-            <h3 className="break-words font-display text-lg font-normal tracking-[0.06em] text-white sm:text-xl">
+            <h3 className="break-words text-lg font-normal tracking-[0.06em] text-white sm:text-xl">
               {label}
             </h3>
             {dr ? (
-              <p className="mt-0.5 break-all font-display text-xs font-normal tracking-[0.02em] text-white/92">
+              <p className="mt-0.5 break-all text-xs font-normal tracking-[0.02em] text-white/92">
                 {dr}
               </p>
             ) : null}
             {groupExpensesEnabled ? (
-              <div className="mt-2.5 flex flex-col gap-1 font-display text-xs font-normal tracking-[0.02em] text-white/92 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
+              <div className="mt-2.5 flex flex-col gap-1 text-xs font-normal tracking-[0.02em] text-white/92 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
                 <span className="min-w-0">
                   <span className="text-white/82">{t("budget.sharedExpensesLabel")}</span>{" "}
                   <span className="tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
@@ -10668,12 +10687,12 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
                 </span>
               </div>
             ) : (
-              <p className="mt-2.5 font-display text-xs font-normal tracking-[0.02em] text-white/92">
+              <p className="mt-2.5 text-xs font-normal tracking-[0.02em] text-white/92">
                 <span className="text-white/82">{t("budget.plannerRefLabel")}</span>{" "}
                 <span className="tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
               </p>
             )}
-            <p className="mt-2 font-display text-[11px] font-normal tracking-[0.04em] text-white underline decoration-white/50 underline-offset-2">
+            <p className="mt-2 text-[11px] font-normal tracking-[0.04em] text-white underline decoration-white/50 underline-offset-2">
               {t("budget.openTripBudget")}
             </p>
           </div>
@@ -10779,17 +10798,17 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
           </div>
           <div className="flex items-start justify-between gap-2 px-4 pb-3 pt-1 sm:gap-3 sm:px-6 sm:pt-4">
             <div className="min-w-0 flex-1 pr-1">
-              <p className="font-display text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
+              <p className="text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                 {t("budget.tripDetailTitle")}
               </p>
               <h2
                 id="budget-trip-detail-title"
-                className="mt-1 line-clamp-2 break-words font-display text-lg font-normal leading-snug tracking-[0.03em] text-slate-900"
+                className="mt-1 line-clamp-2 break-words text-lg font-normal leading-snug tracking-[0.03em] text-slate-900"
               >
                 {label}
               </h2>
               {dr ? (
-                <p className="mt-0.5 break-all font-display text-xs font-normal tracking-[0.02em] text-slate-500">
+                <p className="mt-0.5 break-all text-xs font-normal tracking-[0.02em] text-slate-500">
                   {dr}
                 </p>
               ) : null}
@@ -10880,9 +10899,9 @@ function TripExpenseDetail({
       <div className="max-w-full overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="break-words font-display text-lg font-normal tracking-[0.03em] text-slate-900">{tripLabel}</h3>
+            <h3 className="break-words text-lg font-normal tracking-[0.03em] text-slate-900">{tripLabel}</h3>
             {dateRange ? (
-              <p className="mt-0.5 font-display text-xs font-normal uppercase tracking-[0.18em] text-slate-400">
+              <p className="mt-0.5 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">
                 {dateRange}
               </p>
             ) : null}
@@ -10891,7 +10910,7 @@ function TripExpenseDetail({
             <button
               type="button"
               onClick={() => onOpenParticipants(trip)}
-              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
+              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
             >
               <Users size={18} className="text-slate-600" strokeWidth={2} />
               {t("budget.participants")}
@@ -10901,8 +10920,8 @@ function TripExpenseDetail({
 
         {!groupExpensesEnabled ? (
           <div className="mb-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-            <p className="font-display font-normal tracking-[0.02em]">{t("budget.groupDisabledTitle")}</p>
-            <p className="mt-1 font-display text-xs font-normal leading-relaxed tracking-[0.02em] text-amber-900/85">
+            <p className="font-normal tracking-[0.02em]">{t("budget.groupDisabledTitle")}</p>
+            <p className="mt-1 text-xs font-normal leading-relaxed tracking-[0.02em] text-amber-900/85">
               {t("budget.groupDisabledBody")}
             </p>
           </div>
@@ -10912,34 +10931,34 @@ function TripExpenseDetail({
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50/80 px-4 py-3.5 ring-1 ring-indigo-200/50">
-                <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-indigo-800/80">
+                <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-indigo-800/80">
                   {t("budget.totalShared")}
                 </p>
-                <p className="mt-1.5 font-display text-2xl font-normal tabular-nums tracking-[0.02em] text-indigo-950">
+                <p className="mt-1.5 text-2xl font-normal tabular-nums tracking-[0.02em] text-indigo-950">
                   {formatEuroFR(totalGroup)}
                 </p>
-                <p className="mt-1 font-display text-[11px] font-normal leading-snug tracking-[0.02em] text-indigo-900/70">
+                <p className="mt-1 text-[11px] font-normal leading-snug tracking-[0.02em] text-indigo-900/70">
                   {t("budget.totalSharedHint")}
                 </p>
               </div>
               <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-3.5 ring-1 ring-slate-200/60">
-                <p className="font-display text-[10px] font-normal uppercase tracking-[0.18em] text-slate-500">
+                <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-slate-500">
                   {t("budget.plannerRefLabel")}
                 </p>
-                <p className="mt-1.5 font-display text-2xl font-normal tabular-nums tracking-[0.02em] text-slate-900">
+                <p className="mt-1.5 text-2xl font-normal tabular-nums tracking-[0.02em] text-slate-900">
                   {formatEuroFR(totalPlanner)}
                 </p>
-                <p className="mt-1 font-display text-[11px] font-normal leading-snug tracking-[0.02em] text-slate-500">
+                <p className="mt-1 text-[11px] font-normal leading-snug tracking-[0.02em] text-slate-500">
                   {t("budget.plannerRefHint")}
                 </p>
               </div>
             </div>
 
             <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-              <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+              <p className="text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
                 {t("budget.balances")}
               </p>
-              <p className="mt-1 font-display text-[11px] font-normal tracking-[0.02em] text-slate-500">
+              <p className="mt-1 text-[11px] font-normal tracking-[0.02em] text-slate-500">
                 {t("budget.balancesHint")}
               </p>
               <ul className="mt-3 space-y-2">
@@ -10952,11 +10971,11 @@ function TripExpenseDetail({
                       key={person}
                       className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-100"
                     >
-                      <span className="min-w-0 truncate font-display font-normal tracking-[0.02em] text-slate-800">
+                      <span className="min-w-0 truncate font-normal tracking-[0.02em] text-slate-800">
                         {displayName(person)}
                       </span>
                       <span
-                        className={`shrink-0 font-display tabular-nums font-normal tracking-[0.02em] ${
+                        className={`shrink-0 tabular-nums font-normal tracking-[0.02em] ${
                           pos ? "text-emerald-700" : neg ? "text-rose-700" : "text-slate-500"
                         }`}
                       >
@@ -10971,10 +10990,10 @@ function TripExpenseDetail({
 
             {settlements.length > 0 ? (
               <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/50 px-4 py-3">
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-emerald-800">
+                <p className="text-[11px] font-normal uppercase tracking-[0.16em] text-emerald-800">
                   {t("budget.settlementsTitle")}
                 </p>
-                <p className="mt-1 font-display text-[11px] font-normal tracking-[0.02em] text-emerald-900/70">
+                <p className="mt-1 text-[11px] font-normal tracking-[0.02em] text-emerald-900/70">
                   {t("budget.settlementsHint")}
                 </p>
                 <ul className="mt-3 space-y-2">
@@ -10984,15 +11003,15 @@ function TripExpenseDetail({
                       className="flex flex-col gap-2 rounded-xl bg-white px-3 py-2.5 text-sm text-slate-800 ring-1 ring-emerald-100/80 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
                     >
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="break-words font-display font-normal tracking-[0.02em]">
+                        <span className="break-words font-normal tracking-[0.02em]">
                           {displayName(s.from)}
                         </span>
                         <ArrowRight size={14} className="shrink-0 text-emerald-600" aria-hidden />
-                        <span className="break-words font-display font-normal tracking-[0.02em]">
+                        <span className="break-words font-normal tracking-[0.02em]">
                           {displayName(s.to)}
                         </span>
                       </div>
-                      <span className="shrink-0 font-display font-normal tabular-nums tracking-[0.02em] text-emerald-800">
+                      <span className="shrink-0 font-normal tabular-nums tracking-[0.02em] text-emerald-800">
                         {formatEuroFR(s.amount)}
                       </span>
                     </li>
@@ -11037,7 +11056,7 @@ function TripExpenseDetail({
                     setImportingPlanner(false);
                   }
                 }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {importingPlanner
                   ? t("budget.importingPlanner")
@@ -11048,7 +11067,7 @@ function TripExpenseDetail({
             <div className="mb-6 border-t border-slate-100 pt-4">
               <div className="mb-3 flex items-center gap-2">
                 <Receipt size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-                <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                <p className="text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
                   {t("budget.expenseList")}
                 </p>
               </div>
@@ -11065,23 +11084,23 @@ function TripExpenseDetail({
                         className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="break-words font-display font-normal tracking-[0.02em] text-slate-900">
+                          <p className="break-words font-normal tracking-[0.02em] text-slate-900">
                             {e.title}
                           </p>
-                          <p className="mt-0.5 break-words font-display text-xs font-normal tracking-[0.02em] text-slate-500">
+                          <p className="mt-0.5 break-words text-xs font-normal tracking-[0.02em] text-slate-500">
                             {t("budget.paidBy")}{" "}
                             <span className="text-slate-700">{displayName(e.paid_by)}</span>
                             {" · "}
                             {t("budget.splitLabel")} {splitLabel}
                           </p>
                           {e.expense_date ? (
-                            <p className="mt-1 font-display text-[10px] font-normal tracking-[0.02em] text-slate-400">
+                            <p className="mt-1 text-[10px] font-normal tracking-[0.02em] text-slate-400">
                               {e.expense_date}
                             </p>
                           ) : null}
                         </div>
                         <div className="flex shrink-0 items-start gap-2">
-                          <p className="pt-0.5 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
+                          <p className="pt-0.5 text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
                             {formatEuroFR(e.amount)}
                           </p>
                           <div className="flex items-center gap-0.5">
@@ -11108,7 +11127,7 @@ function TripExpenseDetail({
                   })}
                 </ul>
               ) : (
-                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center font-display text-sm font-normal tracking-[0.02em] text-slate-500">
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm font-normal tracking-[0.02em] text-slate-500">
                   {t("budget.noGroupExpenses")}
                 </p>
               )}
@@ -11119,7 +11138,7 @@ function TripExpenseDetail({
         <div className={groupExpensesEnabled ? "border-t border-slate-100 pt-4" : ""}>
           <div className="mb-3 flex items-center gap-2">
             <Calendar size={16} className="text-slate-400" strokeWidth={2} aria-hidden />
-            <p className="font-display text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+            <p className="text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
               {t("budget.plannerActivities")}
             </p>
           </div>
@@ -11131,15 +11150,15 @@ function TripExpenseDetail({
                   className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-display font-normal tracking-[0.02em] text-slate-900">
+                    <p className="font-normal tracking-[0.02em] text-slate-900">
                       {String(a?.title || a?.name || "").trim()
                         ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
                         : t("planner.activityNamePlaceholder")}
                     </p>
-                    <p className="mt-0.5 truncate font-display text-xs font-normal tracking-[0.02em] text-slate-500">
+                    <p className="mt-0.5 truncate text-xs font-normal tracking-[0.02em] text-slate-500">
                       {String(a?.location || t("budget.locationUnknown"))}
                     </p>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 font-display text-[10px] font-normal tracking-[0.02em] text-slate-400">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] font-normal tracking-[0.02em] text-slate-400">
                       {a?.date ? (
                         <span className="rounded-md bg-white px-2 py-0.5 ring-1 ring-slate-200/80">
                           {String(a.date)}
@@ -11149,7 +11168,7 @@ function TripExpenseDetail({
                     </div>
                   </div>
                   <div className="flex shrink-0 items-start gap-2">
-                    <p className="pt-0.5 font-display text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
+                    <p className="pt-0.5 text-sm font-normal tabular-nums tracking-[0.02em] text-slate-800">
                       {formatEuroFR(a?.cost)}
                     </p>
                     <div className="flex items-center gap-0.5">
@@ -11186,7 +11205,7 @@ function TripExpenseDetail({
               ))}
             </ul>
           ) : (
-            <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center font-display text-sm font-normal tracking-[0.02em] text-slate-500">
+            <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-sm font-normal tracking-[0.02em] text-slate-500">
               {t("budget.noActivitiesPlanner", { plannerTab: t("nav.planner") })}
             </p>
           )}
@@ -11223,7 +11242,7 @@ function TripExpenseDetail({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-start justify-between gap-3">
-              <h3 className="min-w-0 flex-1 break-words font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+              <h3 className="min-w-0 flex-1 break-words text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                 {t("planner.editActivityTitle")}
               </h3>
               <button
@@ -11367,7 +11386,7 @@ function ChatHubView({
   return (
     <section className="space-y-5">
       <div className="rounded-[2rem] bg-white/72 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/60 backdrop-blur-lg sm:p-5">
-        <h2 className="font-display text-xs font-normal uppercase tracking-[0.3em] text-slate-500">
+        <h2 className="text-xs font-normal uppercase tracking-[0.3em] text-slate-500">
           {t("chat.groupsTitle")}
         </h2>
         <div className="mt-3 grid min-w-0 gap-2 md:grid-cols-2">
@@ -11403,7 +11422,7 @@ function ChatHubView({
                           "0 1px 2px rgba(0,0,0,0.85), 0 2px 16px rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.9)",
                       }}
                     >
-                      <p className="font-display text-base font-normal tracking-[0.05em]">
+                      <p className="text-base font-normal tracking-[0.05em]">
                         {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
                       </p>
                       <p className="text-xs text-white/92">
@@ -11450,7 +11469,7 @@ function ChatHubView({
               <div className="min-w-0 flex-1 pr-1">
                 <h2
                   id="tp-chat-hub-title"
-                  className="break-words font-display text-base font-normal leading-snug tracking-[0.04em] text-slate-900 sm:text-lg"
+                  className="break-words text-base font-normal leading-snug tracking-[0.04em] text-slate-900 sm:text-lg"
                 >
                   {displayCityForLocale(String(activeTrip.title || ""), language) || t("modals.tripDefault")}
                 </h2>
@@ -11519,7 +11538,7 @@ function ChatHubView({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-0 sm:px-4 sm:pb-4">
               {hubSubView === "chat" ? (
                 <>
-                  <h3 className="break-words font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+                  <h3 className="break-words text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                     {t("chat.messagesHeading")}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -11605,7 +11624,7 @@ function ChatHubView({
                   </>
                 ) : (
                   <>
-                    <h3 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+                    <h3 className="text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
                       {t("chat.votesHeading")}
                     </h3>
                     <p className="mt-1 text-xs leading-relaxed text-slate-500">{t("chat.votesHint")}</p>
@@ -13585,6 +13604,7 @@ export default function App() {
           <div style={{ display: activeTab === "destination" ? undefined : "none" }}>
             <DestinationGuideView
               session={session}
+              visible={activeTab === "destination"}
               searchInput={destinationInput}
               onSearchInputChange={handleDestinationSearchChange}
               confirmedDestination={destinationConfirmed}
@@ -13642,7 +13662,7 @@ export default function App() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
                     <div className="min-w-0 max-w-full flex-1">
-                      <p className="font-display text-[10px] font-normal uppercase tracking-[0.28em] text-white/80">
+                      <p className="text-[10px] font-normal uppercase tracking-[0.28em] text-white/80">
                         {t("planner.activeTrip")}
                       </p>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
