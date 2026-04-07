@@ -284,13 +284,7 @@ function readSafeAreaInsetBottomPx() {
 
 /** Onglets : pas d’élargissement (silhouette déjà gérée par le bouton actif). */
 function spotlightMinPillAspectForTour(tourId, metrics) {
-  if (String(tourId || "").startsWith("tab-")) return 1;
-  if (tourId === "plus-button") {
-    const { vw } = metrics;
-    if (!vw || vw >= 900) return 1.28;
-    if (vw >= 640) return 1.38;
-    return 1.52;
-  }
+  if (String(tourId || "").startsWith("tab-") || tourId === "plus-button") return 1;
   if (!tourId || String(tourId).length === 0) return 1;
   const { vw } = metrics;
   if (!vw || vw >= 900) return 1.12;
@@ -304,8 +298,10 @@ function SpotlightOverlay({ rect, tourId }) {
   const metrics = getSpotlightLayoutMetrics();
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
   const isTab = String(tourId || "").startsWith("tab-");
+  const isPlus = tourId === "plus-button";
+  const uniformPad = isTab || isPlus;
   const minAspect = spotlightMinPillAspectForTour(tourId, metrics);
-  const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW, isTab);
+  const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW, uniformPad);
   if (!baseFrame) return null;
   const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
   const { cx, cy, cw, ch } = pill;
