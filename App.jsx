@@ -1344,7 +1344,7 @@ const TRIPS_SELECT_ATTEMPTS = [
 ];
 
 const GLASS_BUTTON_CLASS =
-  "font-display font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
+  "font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
 const GLASS_ACCENT_STYLE = {
   background:
     "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.92) 55%, rgba(15,23,42,0.96) 100%)",
@@ -2970,12 +2970,12 @@ async function fetchWikiDirectPlaceImage(placeName, cityName, uiLang) {
   if (stripped && stripped !== place) addT(stripped);
   const jobs = [];
   for (const lang of langsTry) {
-    for (const title of titles) {
-      jobs.push({ lang, title });
+    for (let i = 0; i < titles.length; i++) {
+      jobs.push({ lang, title: titles[i], rank: i });
     }
   }
   const results = await Promise.all(
-    jobs.map(async ({ lang, title }) => {
+    jobs.map(async ({ lang, title, rank }) => {
       try {
         const api = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&format=json&origin=*&pithumbsize=1920&redirects=1`;
         const r = await fetch(api);
@@ -2990,14 +2990,14 @@ async function fetchWikiDirectPlaceImage(placeName, cityName, uiLang) {
         const img = upgradeLandscapeImageUrl(src);
         if (!img || isLikelyWikiBrandOrLogoImage(img, title)) return null;
         const isPortrait = tw > 0 && th > 0 && th > tw * 1.15;
-        return { img, isPortrait, lang, title };
+        return { img, isPortrait, lang, title, rank };
       } catch { return null; }
     })
   );
-  const landscape = results.find((r) => r && !r.isPortrait);
-  if (landscape) return landscape.img;
-  const portrait = results.find((r) => r && r.isPortrait);
-  return portrait ? portrait.img : "";
+  const valid = results.filter(Boolean);
+  valid.sort((a, b) => a.rank - b.rank || (a.isPortrait ? 1 : 0) - (b.isPortrait ? 1 : 0));
+  const best = valid[0];
+  return best ? best.img : "";
 }
 async function finalizeWikiPlaceThumb(lang, res) {
   if (!res) return res;
@@ -4971,7 +4971,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
                     key={item.id}
                     type="button"
                     onClick={() => onSwitchTab(item.id)}
-                    className={`w-full rounded-2xl px-3 py-2 text-left text-sm font-display font-normal tracking-[0.04em] transition ${
+                    className={`w-full rounded-2xl px-3 py-2 text-left text-sm font-normal tracking-[0.04em] transition ${
                       active ? "text-white" : "border border-slate-200 bg-white hover:bg-slate-100"
                     }`}
                     style={active ? { backgroundColor: ACCENT } : undefined}
@@ -4985,14 +4985,14 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
           <button
             type="button"
             onClick={onOpenAccount}
-            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
+            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
           >
             {t("menu.account")}
           </button>
           <button
             type="button"
             onClick={onSignOut}
-            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
+            className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-normal tracking-[0.03em] hover:bg-slate-100"
           >
             {t("menu.signOut")}
           </button>
@@ -5007,7 +5007,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
                 onClose();
                 onShowTour?.();
               }}
-              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 font-display text-sm font-normal tracking-[0.03em] text-indigo-700 hover:bg-indigo-100 transition-colors"
+              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-normal tracking-[0.03em] text-indigo-700 hover:bg-indigo-100 transition-colors"
             >
               <span className="text-base leading-none">🧭</span>
               {t("menu.howItWorks")}
@@ -5341,7 +5341,7 @@ function AuthView() {
                   setMode("signin");
                   setMsg("");
                 }}
-                className="w-full rounded-full bg-white px-6 py-3 text-center font-display text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
+                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
               >
                 {t("auth.landingSignIn")}
               </button>
@@ -5352,7 +5352,7 @@ function AuthView() {
                   setMode("signup");
                   setMsg("");
                 }}
-                className={`w-full rounded-full px-6 py-3 text-center font-display text-base font-normal tracking-[0.03em] text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
+                className={`w-full rounded-full px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 {t("auth.landingSignUp")}
@@ -5591,7 +5591,7 @@ function AuthView() {
                   <button
                     type="button"
                     onClick={() => setInviteAccepted(true)}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 font-display text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
                   >
                     <span>🎉</span>
                     {t("auth.inviteAccept")}
@@ -5642,7 +5642,7 @@ function AuthView() {
                     type="button"
                     onClick={completeInviteSignup}
                     disabled={loading}
-                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 font-display text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
                   >
                     {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
                   </button>
@@ -6468,7 +6468,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session }) {
         <button
           type="button"
           onClick={onClose}
-          className="mt-5 w-full rounded-2xl border border-slate-200 py-3 font-display text-sm font-normal tracking-[0.03em] text-slate-800 transition hover:bg-slate-50"
+          className="mt-5 w-full rounded-2xl border border-slate-200 py-3 text-sm font-normal tracking-[0.03em] text-slate-800 transition hover:bg-slate-50"
         >
           {t("common.close")}
         </button>
@@ -6774,7 +6774,7 @@ function AccountModal({
           type="button"
           onClick={onDeleteAccount}
           disabled={deleting}
-          className="mt-5 w-full rounded-2xl px-4 py-3 font-display text-sm font-normal tracking-[0.03em] text-white disabled:opacity-60"
+          className="mt-5 w-full rounded-2xl px-4 py-3 text-sm font-normal tracking-[0.03em] text-white disabled:opacity-60"
           style={{ backgroundColor: "#e11d48" }}
         >
           {deleting ? t("accountModal.deleting") : t("accountModal.deleteAccount")}
@@ -8974,7 +8974,7 @@ function DestinationGuideView({
                       setItineraryModalOpen(true);
                     }}
                     disabled={itineraryLoading}
-                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 font-display text-xs font-normal tracking-[0.04em] text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-normal tracking-[0.04em] text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
                   >
                     {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
                   </button>
@@ -9012,7 +9012,7 @@ function DestinationGuideView({
                       <button
                         type="button"
                         onClick={() => setItineraryResultOpenPersist(true)}
-                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white ring-1 ring-white/20 transition hover:bg-white/20"
+                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-normal tracking-[0.04em] text-white ring-1 ring-white/20 transition hover:bg-white/20"
                       >
                         <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
                         {t("destination.itineraryResultView")}
@@ -9195,7 +9195,7 @@ function DestinationGuideView({
               <button
                 type="button"
                 onClick={() => setItineraryModalOpen(false)}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-display text-sm font-normal tracking-[0.03em] text-slate-700 hover:bg-slate-50 sm:w-auto"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
                 {t("destination.itineraryCancel")}
               </button>
@@ -9203,7 +9203,7 @@ function DestinationGuideView({
                 type="button"
                 onClick={handleGenerateItinerary}
                 disabled={itineraryLoading}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
+                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-normal tracking-[0.04em] text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
                 {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryNext")}
               </button>
@@ -10422,7 +10422,7 @@ function PlannerView({
             <div className={MODAL_GRID_2}>
               <button
                 onClick={() => setActivityToDelete(null)}
-                className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 font-display text-sm font-normal tracking-[0.03em] hover:bg-slate-100 sm:px-4"
+                className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-sm font-normal tracking-[0.03em] hover:bg-slate-100 sm:px-4"
               >
                 {t("common.cancel")}
               </button>
@@ -10431,7 +10431,7 @@ function PlannerView({
                   onDeleteActivity(activityToDelete);
                   setActivityToDelete(null);
                 }}
-                className="min-w-0 rounded-2xl px-2 py-3 font-display text-sm font-normal tracking-[0.03em] text-white sm:px-4"
+                className="min-w-0 rounded-2xl px-2 py-3 text-sm font-normal tracking-[0.03em] text-white sm:px-4"
                 style={{ backgroundColor: "#e11d48" }}
               >
                 {t("tripCard.delete")}
@@ -11499,7 +11499,7 @@ function ChatHubView({
                   role="tab"
                   aria-selected={hubSubView === "chat"}
                   onClick={() => setHubSubView("chat")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 font-display text-sm font-normal transition sm:px-4 sm:py-2.5 ${
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-normal transition sm:px-4 sm:py-2.5 ${
                     hubSubView === "chat"
                       ? "bg-slate-900 text-white shadow-sm"
                       : "bg-transparent text-slate-600 hover:bg-slate-100/80"
@@ -11513,7 +11513,7 @@ function ChatHubView({
                   role="tab"
                   aria-selected={hubSubView === "votes"}
                   onClick={() => setHubSubView("votes")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 font-display text-sm font-normal transition sm:px-4 sm:py-2.5 ${
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-normal transition sm:px-4 sm:py-2.5 ${
                     hubSubView === "votes"
                       ? "bg-slate-900 text-white shadow-sm"
                       : "bg-transparent text-slate-600 hover:bg-slate-100/80"

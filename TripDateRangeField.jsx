@@ -190,7 +190,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
             <button
               type="button"
               onClick={() => setPickerOpen(false)}
-              className="shrink-0 rounded-full px-3 py-1.5 font-display text-sm font-normal tracking-[0.03em] text-slate-600 hover:bg-slate-100"
+              className="shrink-0 rounded-full px-3 py-1.5 text-sm font-normal tracking-[0.03em] text-slate-600 hover:bg-slate-100"
             >
               {t("tripForm.dateRangeCancel")}
             </button>
@@ -272,7 +272,7 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
             <button
               type="button"
               onClick={apply}
-              className="shrink-0 rounded-2xl bg-slate-900 px-5 py-2.5 font-display text-sm font-normal tracking-[0.04em] text-white shadow-sm hover:bg-slate-800"
+              className="shrink-0 rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-medium tracking-[0.04em] text-white shadow-sm hover:bg-slate-800"
             >
               {t("tripForm.dateRangeApply")}
             </button>
