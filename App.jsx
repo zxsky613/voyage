@@ -4839,7 +4839,9 @@ function TopNav({ onMenu, onAdd, title }) {
           className={`shrink-0 rounded-full p-2.5 text-white transition hover:opacity-90 sm:p-3 ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
-          <Plus size={20} />
+          <span data-tour-focus className="inline-flex h-6 w-6 items-center justify-center">
+            <Plus size={20} />
+          </span>
         </button>
       </div>
     </header>
@@ -8015,6 +8017,7 @@ function DestinationGuideView({
 
   const [heroVideoFailed, setHeroVideoFailed] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [mobileViewport, setMobileViewport] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -8025,11 +8028,23 @@ function DestinationGuideView({
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const sync = () => setMobileViewport(!!mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
     setHeroVideoFailed(false);
   }, [DESTINATION_GUIDE_HERO_VIDEO_URL]);
 
+  // Mobile: on privilégie l'affichage vidéo même si "reduced motion" est détecté,
+  // car certains appareils le signalent agressivement et masquent la vidéo à tort.
+  const blockVideoForMotion = prefersReducedMotion && !mobileViewport;
   const showDestinationHeroVideo =
-    Boolean(DESTINATION_GUIDE_HERO_VIDEO_URL) && !prefersReducedMotion && !heroVideoFailed;
+    Boolean(DESTINATION_GUIDE_HERO_VIDEO_URL) && !blockVideoForMotion && !heroVideoFailed;
 
   const displayGuide = useMemo(() => {
     if (!guide) return null;
@@ -13822,16 +13837,15 @@ export default function App() {
                   }
                   setActiveTab(tab.id);
                 }}
-                className={`flex flex-col items-center justify-center gap-0.5 rounded-[2rem] px-1 py-2 text-xs sm:px-2 sm:py-2.5 ${
+                className={`flex items-center justify-center rounded-[2rem] px-1 py-2 text-xs sm:px-2 sm:py-2.5 ${
                   active ? "text-white" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}
                 title={String(tab.label)}
                 aria-label={String(tab.label)}
               >
-                <Icon size={20} className="shrink-0" aria-hidden />
-                <span className="max-w-full truncate px-0.5 text-center font-display text-[10px] font-normal leading-tight tracking-[0.06em] sm:text-[11px]">
-                  {String(tab.label)}
+                <span data-tour-focus className="inline-flex h-6 w-6 items-center justify-center">
+                  <Icon size={20} className="shrink-0" aria-hidden />
                 </span>
               </button>
             );

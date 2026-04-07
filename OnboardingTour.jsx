@@ -153,6 +153,17 @@ function snapshotDomRect(el) {
   };
 }
 
+/**
+ * Cible prioritaire du spotlight : si l'élément possède un enfant `[data-tour-focus]`,
+ * on cadre ce sous-élément (icône centrée) plutôt que tout le bouton.
+ */
+function getSpotlightTargetByTourId(tourId) {
+  const root = document.querySelector(`[data-tour-id="${tourId}"]`);
+  if (!root) return null;
+  const focused = root.querySelector("[data-tour-focus]");
+  return focused || root;
+}
+
 /** Marge pour stroke + drop-shadow (WebKit rogne si le trou dépasse du viewport / overflow-x-clip). */
 function spotlightFrameFromRect(rect, pad = 14, glowBleed = 22) {
   if (typeof window === "undefined") return null;
@@ -318,7 +329,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
     if (tab) onNavigateRef.current?.(tab);
 
     const measure = () => {
-      const el = document.querySelector(`[data-tour-id="${tourId}"]`);
+      const el = getSpotlightTargetByTourId(tourId);
       setTargetRect(snapshotDomRect(el));
     };
 
