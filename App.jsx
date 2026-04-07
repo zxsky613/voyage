@@ -4860,9 +4860,7 @@ function TopNav({ onMenu, onAdd, title }) {
           className={`shrink-0 rounded-full p-2.5 text-white transition hover:opacity-90 sm:p-3 ${GLASS_BUTTON_CLASS}`}
           style={GLASS_ACCENT_STYLE}
         >
-          <span data-tour-focus className="inline-flex h-6 w-6 items-center justify-center">
-            <Plus size={20} />
-          </span>
+          <Plus size={20} className="shrink-0" aria-hidden />
         </button>
       </div>
     </header>

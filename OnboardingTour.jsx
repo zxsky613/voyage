@@ -154,25 +154,58 @@ function snapshotDomRect(el) {
 }
 
 /**
- * Cible du spotlight : pour les onglets bas (`tab-*`), on cadre tout le bouton (fond actif + icône).
- * Sinon, si `[data-tour-focus]` existe (ex. bouton +), on cadre ce sous-élément pour un meilleur centrage.
+ * Cible du spotlight : onglets bas et bouton + = tout le bouton (même silhouette qu’à l’écran).
+ * Sinon, `[data-tour-focus]` si présent.
  */
 function getSpotlightTargetByTourId(tourId) {
   const root = document.querySelector(`[data-tour-id="${tourId}"]`);
   if (!root) return null;
-  if (String(tourId || "").startsWith("tab-")) return root;
+  if (String(tourId || "").startsWith("tab-") || tourId === "plus-button") return root;
   const focused = root.querySelector("[data-tour-focus]");
   return focused || root;
 }
 
 /**
- * Marge autour de l’élément ciblé. Padding symétrique horizontal / vertical : sinon près des bords
- * du viewport (ex. 1er onglet bas) padL ≠ padR et le trou du masque n’est plus centré sur le logo.
+ * Dimensions « viewport » pour le spotlight : Visual Viewport sur mobile (barre d’adresse, encoche),
+ * sinon fenêtre — pour que cadre et masque restent cohérents sur téléphone comme sur PC.
  */
-function spotlightFrameFromRect(rect, pad = 20, glowBleed = 22) {
-  if (typeof window === "undefined") return null;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+function getSpotlightLayoutMetrics() {
+  if (typeof window === "undefined") {
+    return { vw: 0, vh: 0, safeTop: 0, safeBottom: 0 };
+  }
+  const vv = window.visualViewport;
+  const vw =
+    vv && Number.isFinite(vv.width) && vv.width > 0
+      ? vv.width
+      : window.innerWidth;
+  const vh =
+    vv && Number.isFinite(vv.height) && vv.height > 0
+      ? vv.height
+      : window.innerHeight;
+  return {
+    vw,
+    vh,
+    safeTop: readSafeAreaInsetTopPx(),
+    safeBottom: readSafeAreaInsetBottomPx(),
+  };
+}
+
+/** Marges autour du trou : un peu plus serrées sur très petit écran, confortables sur desktop. */
+function spotlightPadAndGlow(metrics) {
+  const { vw, vh } = metrics;
+  const ref = Math.min(vw || 390, vh || 844) || 390;
+  const pad = Math.max(10, Math.min(22, Math.round(ref * 0.048 + 6)));
+  const glowBleed = Math.max(14, Math.min(28, Math.round(ref * 0.052 + 6)));
+  return { pad, glowBleed };
+}
+
+/**
+ * Marge autour de l’élément ciblé. Padding symétrique horizontal / vertical : sinon près des bords
+ * du viewport (ex. 1er onglet bas) le trou n’est plus centré sur le logo.
+ */
+function spotlightFrameFromRect(rect, metrics, pad, glowBleed) {
+  if (typeof window === "undefined" || !metrics) return null;
+  const { vw, vh } = metrics;
   const left = rect.left;
   const top = rect.top;
   const right = rect.right;
@@ -191,14 +224,110 @@ function spotlightFrameFromRect(rect, pad = 20, glowBleed = 22) {
   };
 }
 
+/**
+ * Tous les encadrés du guide adoptent la même silhouette « pilule » que les onglets bas :
+ * si le trou est trop carré (ex. bouton +), on élargit en conservant la hauteur et le centre horizontal
+ * de l’élément réel, puis on borde le viewport.
+ */
+function normalizeSpotlightToTabPillShape(frame, elementRect, metrics, minAspect, glowBleed) {
+  if (typeof window === "undefined" || !elementRect || !frame || !metrics) return frame;
+  const { vw } = metrics;
+  let { cx, cy, cw, ch } = frame;
+  const ratio = cw / ch;
+  if (ratio < minAspect) {
+    const elCx = (elementRect.left + elementRect.right) / 2;
+    let newW = Math.max(cw, ch * minAspect);
+    newW = Math.min(newW, vw - 2 * glowBleed);
+    cx = elCx - newW / 2;
+    cw = newW;
+    if (cx < glowBleed) cx = glowBleed;
+    if (cx + cw > vw - glowBleed) cx = Math.max(glowBleed, vw - glowBleed - cw);
+  }
+  return { cx, cy, cw, ch };
+}
+
+/** Rayon d’arrondi type barre d’onglets : moitié du petit côté (vraie pilule, sans plafond arbitraire à 24px). */
+function spotlightCornerRadius(cw, ch) {
+  return Math.min(cw, ch) / 2;
+}
+
+/** Lit env(safe-area-inset-top) en px (iPhone encoche / barre de statut). Sur PC → 0. */
+function readSafeAreaInsetTopPx() {
+  if (typeof document === "undefined") return 0;
+  try {
+    const probe = document.createElement("div");
+    probe.setAttribute("style", "position:fixed;left:-9999px;top:0;padding-top:env(safe-area-inset-top,0px);");
+    document.body.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    document.body.removeChild(probe);
+    return px;
+  } catch {
+    return 0;
+  }
+}
+
+/** zone indicator / barre d’home iOS — utile pour les onglets bas du guide. */
+function readSafeAreaInsetBottomPx() {
+  if (typeof document === "undefined") return 0;
+  try {
+    const probe = document.createElement("div");
+    probe.setAttribute(
+      "style",
+      "position:fixed;left:-9999px;top:0;padding-bottom:env(safe-area-inset-bottom,0px);"
+    );
+    document.body.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+    document.body.removeChild(probe);
+    return px;
+  } catch {
+    return 0;
+  }
+}
+
+/** Ratio largeur / hauteur mini pour la pilule : un peu plus souple sur grand écran (bouton +). */
+function spotlightMinPillAspect(metrics) {
+  const { vw } = metrics;
+  if (!vw || vw >= 900) return 1.28;
+  if (vw >= 640) return 1.35;
+  return 1.5;
+}
+
+/**
+ * Garde le trou dans la zone utile (safe area haut / bas), mobile comme desktop.
+ */
+function clampSpotlightFrameToSafeViewport(frame, elementRect, metrics, glowBleed) {
+  const { vh, safeTop, safeBottom } = metrics;
+  const minCy = safeTop + glowBleed;
+  const maxY = vh - safeBottom - glowBleed;
+  let { cx, cy, cw, ch } = frame;
+
+  if (cy < minCy) {
+    const bottom = cy + ch;
+    cy = minCy;
+    ch = Math.max(ch, bottom - cy, elementRect.bottom + glowBleed - cy);
+  }
+  if (cy + ch > maxY) {
+    cy = maxY - ch;
+    if (cy < minCy) {
+      cy = minCy;
+      ch = Math.max(48, maxY - minCy);
+    }
+  }
+  return { cx, cy, cw, ch };
+}
+
 function SpotlightOverlay({ rect }) {
   const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
   if (!rect) return null;
-  const PAD = 20;
-  const frame = spotlightFrameFromRect(rect, PAD, 22);
-  if (!frame) return null;
+  const metrics = getSpotlightLayoutMetrics();
+  const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
+  const minAspect = spotlightMinPillAspect(metrics);
+  const baseFrame = spotlightFrameFromRect(rect, metrics, pad, GLOW);
+  if (!baseFrame) return null;
+  const pill = normalizeSpotlightToTabPillShape(baseFrame, rect, metrics, minAspect, GLOW);
+  const frame = clampSpotlightFrameToSafeViewport(pill, rect, metrics, GLOW);
   const { cx, cy, cw, ch } = frame;
-  const r = Math.min(24, ch / 2);
+  const r = spotlightCornerRadius(cw, ch);
 
   return (
     <svg
