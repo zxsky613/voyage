@@ -1,0 +1,8 @@
+{
+  "appId": "com.avolo.app",
+  "appName": "AVOLO",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

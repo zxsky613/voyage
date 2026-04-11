@@ -21,26 +21,17 @@
  */
 export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   madrid: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Plaza_Mayor_de_Madrid%2C_Panorama_2.jpg/1920px-Plaza_Mayor_de_Madrid%2C_Panorama_2.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Madrid_-_Plaza_Mayor_2012.jpg/1920px-Madrid_-_Plaza_Mayor_2012.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Madrid_Gran_Via_Navidad_2008.jpg/1920px-Madrid_Gran_Via_Navidad_2008.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/2/29/Madrid-Almudena_Cathedral_and_Royal_Palace.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Gran_V%C3%ADa_%28Madrid%29_1.jpg/1920px-Gran_V%C3%ADa_%28Madrid%29_1.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Edificios_Skyline_Madrid_03.jpg/1920px-Edificios_Skyline_Madrid_03.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Madrid-Almudena_Cathedral_and_Royal_Palace.jpg/1920px-Madrid-Almudena_Cathedral_and_Royal_Palace.jpg",
   ],
   barcelona: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Barcelona_-_Parc_G%C3%BCell_-_Panorama_View_with_Torre_Gl%C3%B2ries%2C_Sagrada_Fam%C3%ADlia_%26_Montju%C3%AFc_01.jpg/1920px-Barcelona_-_Parc_G%C3%BCell_-_Panorama_View_with_Torre_Gl%C3%B2ries%2C_Sagrada_Fam%C3%ADlia_%26_Montju%C3%AFc_01.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Barcelona_Cityscape_Panorama_-_Jan_2007.jpg/1920px-Barcelona_Cityscape_Panorama_-_Jan_2007.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/View_Park_Guell_Sagrada.jpg/1920px-View_Park_Guell_Sagrada.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Barcelona_-_Montju%C3%AFc_-_Passeig_de_Santa_Madrona_-_Panorama_View_towards_the_Sagrada_Fam%C3%ADlia_01.jpg/1920px-Barcelona_-_Montju%C3%AFc_-_Passeig_de_Santa_Madrona_-_Panorama_View_towards_the_Sagrada_Fam%C3%ADlia_01.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Sagrada_Familia_01.jpg/1920px-Sagrada_Familia_01.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Sagrada_Familia_8-12-21_%281%29_%28cropped_3_to_2%29.jpg/1920px-Sagrada_Familia_8-12-21_%281%29_%28cropped_3_to_2%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%281%29.jpg/1920px-Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%281%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%286%29.jpg/1920px-Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%286%29.jpg",
   ],
   barcelone: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Barcelona_-_Parc_G%C3%BCell_-_Panorama_View_with_Torre_Gl%C3%B2ries%2C_Sagrada_Fam%C3%ADlia_%26_Montju%C3%AFc_01.jpg/1920px-Barcelona_-_Parc_G%C3%BCell_-_Panorama_View_with_Torre_Gl%C3%B2ries%2C_Sagrada_Fam%C3%ADlia_%26_Montju%C3%AFc_01.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Barcelona_Cityscape_Panorama_-_Jan_2007.jpg/1920px-Barcelona_Cityscape_Panorama_-_Jan_2007.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/View_Park_Guell_Sagrada.jpg/1920px-View_Park_Guell_Sagrada.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Barcelona_-_Montju%C3%AFc_-_Passeig_de_Santa_Madrona_-_Panorama_View_towards_the_Sagrada_Fam%C3%ADlia_01.jpg/1920px-Barcelona_-_Montju%C3%AFc_-_Passeig_de_Santa_Madrona_-_Panorama_View_towards_the_Sagrada_Fam%C3%ADlia_01.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Sagrada_Familia_01.jpg/1920px-Sagrada_Familia_01.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Sagrada_Familia_8-12-21_%281%29_%28cropped_3_to_2%29.jpg/1920px-Sagrada_Familia_8-12-21_%281%29_%28cropped_3_to_2%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%281%29.jpg/1920px-Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%281%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%286%29.jpg/1920px-Barcelona_-_Temple_Expiatori_de_la_Sagrada_Fam%C3%ADlia_%286%29.jpg",
   ],
@@ -183,16 +174,16 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg/1920px-Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg",
   ],
   lisbonne: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg/1920px-Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",
   ],
   lisbon: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg/1920px-Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_%285%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",
   ],
   porto: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Porto-Panorama_de_Ribeira-Rabelos-20120910.jpg/1920px-Porto-Panorama_de_Ribeira-Rabelos-20120910.jpg",

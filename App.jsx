@@ -1160,6 +1160,88 @@ function levenshteinDistance(a, b) {
   return dp[m][n];
 }
 
+/**
+ * Score de similarité requête → nom de lieu (catalogue ou1er segment « Ville, région, pays »).
+ * Rejette les faux positifs type « lofoten » → Lyon/Kyoto (Levenshtein trop lâche auparavant).
+ */
+function cityTokenSuggestionScore(qNorm, nameNorm) {
+  const q = String(qNorm || "").trim();
+  const n = String(nameNorm || "").trim();
+  if (!q || q.length < 2 || !n) return 0;
+  if (q.length === 2) {
+    return n.startsWith(q) || n === q ? 88_000 : 0;
+  }
+  if (n === q) return 100_000;
+  if (n.startsWith(q)) return 90_000 + Math.min(500, q.length * 12);
+  if (q.startsWith(n) && n.length >= 3) return 85_000;
+  if (n.includes(q)) return 80_000;
+  if (q.includes(n) && n.length >= 3) return 75_000;
+  const d = levenshteinDistance(q, n);
+  const minL = Math.min(q.length, n.length);
+  const maxD = Math.max(1, Math.floor(minL / 4));
+  if (minL >= 3 && d <= maxD) return 50_000 - d * 800;
+  let common = 0;
+  for (let i = 0; i < Math.min(q.length, n.length); i += 1) {
+    if (q[i] === n[i]) common += 1;
+    else break;
+  }
+  if (q.length >= 4 && common >= 3) return 40_000 + common * 40;
+  return 0;
+}
+
+/** Score pour une ligne complète de suggestion (géocodage avec région / pays). */
+function suggestionLineRelevanceScore(qNorm, line) {
+  const raw = String(line || "").trim();
+  if (!qNorm || qNorm.length < 2 || !raw) return 0;
+  const lineNorm = normalizeTextForSearch(raw);
+  const nameNorm = lineNorm.split(",")[0]?.trim() || "";
+  let best = cityTokenSuggestionScore(qNorm, nameNorm);
+  const segments = lineNorm.split(",").map((p) => p.trim()).filter(Boolean);
+  for (const seg of segments) {
+    const sc = cityTokenSuggestionScore(qNorm, seg);
+    if (sc > best) best = sc;
+    if (seg.includes(qNorm) && qNorm.length >= 3) best = Math.max(best, 65_000);
+  }
+  if (lineNorm.includes(qNorm) && qNorm.length >= 3) best = Math.max(best, 70_000);
+  return best;
+}
+
+/**
+ * Classe catalogue + Open-Meteo par pertinence réelle (pas « tout le catalogue puis l’API »).
+ * Mode pays : conserve l’ordre ancien (villes du pays d’abord).
+ */
+function rankAndMergeCitySuggestions(normalizedQuery, fallbackList, remoteList, max = 10) {
+  const q = String(normalizedQuery || "").trim();
+  if (!q || q.length < 2) return [];
+  if (countryGroupsMatchingQuery(q).length > 0) {
+    return mergeCitySuggestionLists(fallbackList || [], remoteList || [], max);
+  }
+  const scored = [];
+  for (const s of fallbackList || []) {
+    const raw = String(s || "").trim();
+    if (!raw) continue;
+    const sc = suggestionLineRelevanceScore(q, raw);
+    if (sc > 0) scored.push({ line: raw, sc });
+  }
+  for (const s of remoteList || []) {
+    const raw = String(s || "").trim();
+    if (!raw) continue;
+    const sc = suggestionLineRelevanceScore(q, raw);
+    if (sc > 0) scored.push({ line: raw, sc });
+  }
+  scored.sort((a, b) => b.sc - a.sc);
+  const seen = new Set();
+  const out = [];
+  for (const { line } of scored) {
+    const k = normalizeTextForSearch(line.split(",")[0]?.trim() || line);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(line);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** Liste locale d’abord, puis résultats API sans doublon (même ville). */
 function mergeCitySuggestionLists(localList, remoteList, max = 10) {
   const out = [];
@@ -1198,29 +1280,15 @@ function getCitySuggestions(input) {
     ];
     return mergeCitySuggestionLists(fromLocalized, mergeCitySuggestionLists(fromCountry, exactCanon, 12), 12);
   }
-  const ranked = CITY_SEARCH_ENTRIES.map((entry) => {
+  const catalogScored = CITY_SEARCH_ENTRIES.map((entry) => {
     const c = normalizeTextForSearch(entry.label);
-    let score = 0;
-    if (c === q) score = 100;
-    else if (c.startsWith(q)) score = 92;
-    else if (c.includes(q)) score = 75;
-    else {
-      const dist = levenshteinDistance(q, c);
-      const maxLen = Math.max(q.length, c.length);
-      const similarity = 1 - dist / Math.max(1, maxLen);
-      score = Math.round(similarity * 100);
-      if (q.length >= 5 && dist <= 2) score += 12;
-    }
-    return { city: entry.canonical, score };
-  }).sort((a, b) => b.score - a.score);
-
-  const strict = [...new Set(ranked.filter((x) => x.score >= 45).map((x) => x.city))].slice(0, 8);
-  const mergedStrict = mergeCitySuggestionLists(fromCountry, strict, 12);
-  if (mergedStrict.length > 0) return mergeCitySuggestionLists(fromLocalized, mergedStrict, 12);
-
-  // Fallback: always keep a few closest results, to avoid empty suggestion list.
-  const loose = [...new Set(ranked.filter((x) => x.score > 0).map((x) => x.city))].slice(0, 5);
-  return mergeCitySuggestionLists(fromLocalized, mergeCitySuggestionLists(fromCountry, loose, 12), 12);
+    const score = cityTokenSuggestionScore(q, c);
+    return score > 0 ? { city: entry.canonical, score } : null;
+  })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+  const strictCanon = [...new Set(catalogScored.map((x) => x.city))].slice(0, 10);
+  return mergeCitySuggestionLists(mergeCitySuggestionLists(fromLocalized, fromCountry, 12), strictCanon, 12);
 }
 
 const OPEN_METEO_ROWS_CACHE = {};
@@ -5516,6 +5584,15 @@ function isAuthSignupDuplicateEmailError(err) {
   return false;
 }
 
+/** URL de retour après clic sur le lien « confirmer l’e-mail » (à autoriser dans Supabase → Auth → URL). */
+function getAuthEmailRedirectTo() {
+  try {
+    return `${window.location.origin}${window.location.pathname}`;
+  } catch (_e) {
+    return typeof window !== "undefined" ? window.location.origin : "";
+  }
+}
+
 function AuthView() {
   const { t } = useI18n();
   const [showAuthLanding, setShowAuthLanding] = useState(() => !authHasInviteLink());
@@ -5591,12 +5668,14 @@ function AuthView() {
         if (profilePhotoFile) {
           avatarUrl = await fileToAvatarDataUrl(profilePhotoFile);
         }
-        // Avant signUp pour que SIGNED_IN (immédiat) voie encore le marqueur.
+        // Avant signUp pour que SIGNED_IN (immédiat ou après confirmation e-mail) voie encore le marqueur.
         markSignupExpectsOnboarding(safeEmail);
-        const { error } = await supabase.auth.signUp({
+        const emailRedirectTo = getAuthEmailRedirectTo();
+        const { data: signupData, error } = await supabase.auth.signUp({
           email: safeEmail,
           password: safePassword,
           options: {
+            emailRedirectTo: emailRedirectTo || undefined,
             data: {
               first_name: safeFirstName,
               last_name: safeLastName,
@@ -5610,7 +5689,13 @@ function AuthView() {
           clearSignupOnboardingMarkers();
           throw error;
         }
-        setMsg(t("auth.accountCreated"));
+        if (!signupData?.session) {
+          setMsg(t("auth.confirmEmailSent"));
+          setMode("signin");
+          setPassword("");
+        } else {
+          setMsg(t("auth.signupLoggedIn"));
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email: safeEmail,
@@ -5670,10 +5755,12 @@ function AuthView() {
     setMsg("");
     try {
       markSignupExpectsOnboarding(safeInviteEmail);
-      const { error } = await supabase.auth.signUp({
+      const emailRedirectTo = getAuthEmailRedirectTo();
+      const { data: inviteSignupData, error } = await supabase.auth.signUp({
         email: safeInviteEmail,
         password: safePassword,
         options: {
+          emailRedirectTo: emailRedirectTo || undefined,
           data: {
             first_name: safeFirst,
             last_name: safeLast,
@@ -5694,7 +5781,12 @@ function AuthView() {
       setPassword("");
       setInvitePromptOpen(false);
       clearInviteParams();
-      setMsg(t("auth.inviteCreated"));
+      if (!inviteSignupData?.session) {
+        setMsg(t("auth.confirmEmailSent"));
+        setMode("signin");
+      } else {
+        setMsg(t("auth.signupLoggedIn"));
+      }
     } catch (e) {
       clearSignupOnboardingMarkers();
       if (isAuthSignupDuplicateEmailError(e)) {
@@ -7301,10 +7393,10 @@ function CitySearchBox({
     if (!qk || remotePack.key !== qk) return [];
     return remotePack.list;
   }, [value, remotePack]);
-  const suggestions = useMemo(
-    () => mergeCitySuggestionLists(fallbackSuggestions, remoteSuggestions, 10),
-    [fallbackSuggestions, remoteSuggestions]
-  );
+  const suggestions = useMemo(() => {
+    const qk = normalizeTextForSearch(normalizeCityInput(value));
+    return rankAndMergeCitySuggestions(qk, fallbackSuggestions, remoteSuggestions, 10);
+  }, [fallbackSuggestions, remoteSuggestions, value]);
   const show = showSuggestions && !readOnly && focused && suggestions.length > 0;
   const dropdownReserve = !suggestPortal && show ? Math.min(suggestions.length, 6) * 42 + 16 : 0;
 
