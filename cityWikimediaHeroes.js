@@ -215,6 +215,11 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   chicago: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg/1920px-Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg",
   ],
+  colmar: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Petite_Venise_depuis_le_pont_de_la_rue_des_%C3%89coles_%28Colmar%29.jpg/1920px-Petite_Venise_depuis_le_pont_de_la_rue_des_%C3%89coles_%28Colmar%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/28/Paysage_%28Colmar%29_%2814%29.jpg/1920px-Paysage_%28Colmar%29_%2814%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/61/Petite_Venise_depuis_le_pont_de_la_rue_des_%C3%89coles_%28Colmar%29_%287%29.jpg/1920px-Petite_Venise_depuis_le_pont_de_la_rue_des_%C3%89coles_%28Colmar%29_%287%29.jpg",
+  ],
   "san francisco": [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Golden_Gate_Bridge_Panorama_Photo.jpg/1920px-Golden_Gate_Bridge_Panorama_Photo.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg/1920px-San_Francisco_skyline_from_Golden_Gate_Bridge%2C_09_2017.jpg",
@@ -232,6 +237,16 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/DowntownMiamiPanorama.jpg/1920px-DowntownMiamiPanorama.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Brickell_neighborhood_skyline_%2860062p%29.jpg/1920px-Brickell_neighborhood_skyline_%2860062p%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG/1920px-Miami_Night_Skyline_from_across_the_Biscayne_Bay-Downtown-March_2011.JPG",
+  ],
+  malta: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/Valletta_Panorama_1.jpg/1920px-Valletta_Panorama_1.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/Valletta_from_Sliema_-_panoramio_%281%29.jpg/1920px-Valletta_from_Sliema_-_panoramio_%281%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Valletta_Panorama_2.jpg/1920px-Valletta_Panorama_2.jpg",
+  ],
+  malte: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/64/Valletta_Panorama_1.jpg/1920px-Valletta_Panorama_1.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/Valletta_from_Sliema_-_panoramio_%281%29.jpg/1920px-Valletta_from_Sliema_-_panoramio_%281%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Valletta_Panorama_2.jpg/1920px-Valletta_Panorama_2.jpg",
   ],
   mykonos: [
     // Règle côte : mer + front de mer reconnaissables en premier ; jour lisible ; moulins en second repli

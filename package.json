@@ -13,7 +13,8 @@
     "fetch:destinations": "node scripts/fetch-destination-images.mjs",
     "upload:destinations": "node scripts/upload-destinations-to-supabase.mjs",
     "verify:city-heroes": "node scripts/verify-city-heroes.mjs",
-    "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs"
+    "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
+    "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",

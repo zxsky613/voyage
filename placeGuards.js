@@ -31,7 +31,7 @@ export function sanitizeMustSeePlaces(places, destinationHint = "") {
 
   /** Villes FR (ou assimilées) sans lien avec un city trip à New York — évite les homonymies WP. */
   const frenchCityWrongForNy =
-    /^(n[îi]mes|lyon|paris|marseille|toulouse|bordeaux|strasbourg|lille|nice|rennes|reims|toulon|grenoble|dijon|angers|antibes|cannes|nantes|montpellier|aix-en-provence|avignon)$/i;
+    /^(n[îi]mes|lyon|paris|marseille|toulouse|bordeaux|strasbourg|colmar|mulhouse|m[üu]lhausen|lille|nice|rennes|reims|toulon|grenoble|dijon|angers|antibes|cannes|nantes|montpellier|aix-en-provence|avignon|metz|nancy)$/i;
 
   const junkNameOnly = /^(fr[eé]d[eé]ric\s+)?chopin$/i;
 

@@ -2827,6 +2827,86 @@ function buildSuggestedActivitiesForCity(city) {
       act("Temple Wat Chalong", 0, "Gratuit", "Chalong, Phuket"),
     ];
   }
+  if (c.includes("metz")) {
+    return [
+      act("Cathédrale Saint-Étienne & crypte", 0, "Gratuit", "Metz"),
+      act("Centre Pompidou-Metz", 11, "Billet adulte", "Metz"),
+      act("Porte des Allemands", 0, "Gratuit", "Metz"),
+      act("Place Saint-Louis & quartier impérial", 0, "Gratuit", "Metz"),
+      act("Marché couvert", 0, "Gratuit (achats en sus)", "Metz"),
+      act("Plan d'eau — promenade sur la Moselle", 0, "Gratuit", "Metz"),
+    ];
+  }
+  if (c.includes("nancy")) {
+    return [
+      act("Place Stanislas — ensemble UNESCO", 0, "Gratuit", "Nancy"),
+      act("Musée Lorrain", 8, "Billet adulte", "Nancy"),
+      act("Parc de la Pépinière", 0, "Gratuit", "Nancy"),
+      act("Vieille ville & porte de la Craffe", 0, "Gratuit", "Nancy"),
+      act("Musée des beaux-arts — art & École de Nancy", 7, "Billet adulte", "Nancy"),
+      act("Cathédrale Notre-Dame-de-l'Annonciation", 0, "Gratuit", "Nancy"),
+    ];
+  }
+  if (c.includes("reims")) {
+    return [
+      act("Cathédrale Notre-Dame & façade des rois", 0, "Gratuit", "Reims"),
+      act("Palais du Tau", 8, "Billet adulte", "Reims"),
+      act("Basilique Saint-Remi", 0, "Gratuit", "Reims"),
+      act("Visite de cave de champagne", 25, "Dégustation type", "Reims"),
+      act("Place Drouet-d'Erlon", 0, "Gratuit", "Reims"),
+      act("Halles du Boulingrin", 0, "Gratuit (achats en sus)", "Reims"),
+    ];
+  }
+  if (c.includes("strasbourg")) {
+    return [
+      act("Cathédrale Notre-Dame & plateforme panoramique", 8, "Billet montée", "Grande Île, Strasbourg"),
+      act("Petite France & ponts couverts", 0, "Gratuit", "Grande Île, Strasbourg"),
+      act("Palais Rohan — musées", 7, "Billet musées", "Grande Île, Strasbourg"),
+      act("Parlement européen — visite Hemicycle", 0, "Gratuit (réservation)", "Quartier européen, Strasbourg"),
+      act("Barrage Vauban & panorama", 0, "Gratuit", "Petite France, Strasbourg"),
+      act("Croisière Batorama sur les canaux", 14, "Billet adulte", "Presqu'île Malraux, Strasbourg"),
+    ];
+  }
+  if (c.includes("colmar")) {
+    return [
+      act("Petite Venise — promenade des quais", 0, "Gratuit", "Centre historique, Colmar"),
+      act("Musée Unterlinden", 13, "Billet adulte", "Colmar"),
+      act("Maison Pfister & rue des Marchands", 0, "Gratuit", "Colmar"),
+      act("Marché couvert & dégustation alsacienne", 0, "Gratuit (achats en sus)", "Colmar"),
+      act("Musée Bartholdi", 6, "Billet adulte", "Colmar"),
+      act("Route des vins — Eguisheim ou Riquewihr (excursion)", 25, "Transport / dégustation", "Haut-Rhin"),
+    ];
+  }
+  if (c.includes("mulhouse") || c.includes("mülhausen") || c.includes("muhlouse")) {
+    return [
+      act("Cité de l'automobile", 18, "Billet adulte", "Mulhouse"),
+      act("Musée EDF Electropolis", 11, "Billet adulte", "Mulhouse"),
+      act("Temple Saint-Étienne", 0, "Gratuit", "Centre-ville, Mulhouse"),
+      act("Place de la Réunion & hôtel de ville", 0, "Gratuit", "Mulhouse"),
+      act("Parc zoologique & botanique", 20, "Billet adulte", "Mulhouse"),
+      act("Quartier Rebberg — villas Belle Époque", 0, "Gratuit", "Mulhouse"),
+    ];
+  }
+  if (c.includes("cannes")) {
+    return [
+      act("La Croisette & plages", 0, "Gratuit", "Cannes"),
+      act("Suquet & musée de la Castre", 6, "Billet musée", "Le Suquet, Cannes"),
+      act("Marché Forville", 0, "Gratuit (achats en sus)", "Cannes"),
+      act("Île Sainte-Marguerite (bateau)", 15, "Ferry A/R", "Îles de Lérins"),
+      act("Palais des Festivals", 0, "Gratuit (extérieur)", "Cannes"),
+      act("Rue d'Antibes & shopping", 0, "Gratuit", "Cannes"),
+    ];
+  }
+  if (c.includes("valencia") || c.includes("valència")) {
+    return [
+      act("Cité des arts et des sciences", 12, "Billet combiné type", "València, Espagne"),
+      act("Lonja de la Seda", 2, "Billet adulte", "València, Espagne"),
+      act("Marché Central", 0, "Gratuit", "València, Espagne"),
+      act("Quartier du Carmen & cathédrale", 0, "Gratuit", "València, Espagne"),
+      act("Jardin du Turia", 0, "Gratuit", "València, Espagne"),
+      act("Plage de la Malvarrosa", 0, "Gratuit", "València, Espagne"),
+    ];
+  }
   return [
     act("Centre historique de " + label, 0, "Gratuit", label),
     act("Principal musée de " + label, 15, "Entrée type", label),
