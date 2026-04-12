@@ -11,6 +11,7 @@ import path from "node:path";
 import { loadEnv } from "vite";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
+import { buildItineraryEnrichmentBlock } from "./api/_helpers.js";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -147,7 +148,8 @@ async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2, model
  * Catégories Foursquare v3 pertinentes pour le tourisme :
  * 10000 Arts & Entertainment · 16000 Landmarks & Outdoors · 12000 Community & Government
  */
-const FSQ_CATEGORIES = "10000,16000,12000";
+const FSQ_PRESET_POI = "10000,16000,12000";
+const FSQ_PRESET_RESTAURANTS = "13000";
 
 function resolveGeminiApiKey(mode, envDir) {
   const fromVite = loadEnv(mode, envDir, "GEMINI_");
@@ -416,11 +418,20 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         return;
       }
       const limit = Math.min(Number(body.limit) || 20, 50);
+      const preset = String(body.preset || "poi").toLowerCase();
+      const categoriesRaw = String(body.categories || "").trim();
+      const categories =
+        categoriesRaw ||
+        (preset === "restaurants" || preset === "dining" || preset === "food"
+          ? FSQ_PRESET_RESTAURANTS
+          : FSQ_PRESET_POI);
+      const fields = "name,location,categories,price";
       try {
         const fsqUrl =
           `https://api.foursquare.com/v3/places/search` +
           `?ll=${lat},${lon}` +
-          `&categories=${FSQ_CATEGORIES}` +
+          `&categories=${categories}` +
+          `&fields=${encodeURIComponent(fields)}` +
           `&sort=POPULARITY` +
           `&limit=${limit}` +
           `&radius=10000`;
@@ -524,6 +535,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         const startDate = String(body.startDate || "").trim();
         const endDate   = String(body.endDate   || "").trim();
         const prefs     = body.prefs && typeof body.prefs === "object" ? body.prefs : null;
+        const countryCode = String(body.countryCode || "").trim();
         const { ok, days, error: dayErr } = countInclusiveTripDays(startDate, endDate);
         if (!ok) {
           sendJson(res, 400, { error: dayErr });
@@ -531,16 +543,28 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         }
         const prefsBlock = formatPrefsForPrompt(prefs);
         const budgetHint = budgetRangeHint(prefs);
+        let enrichBlock = "";
+        try {
+          enrichBlock = await buildItineraryEnrichmentBlock({
+            startDate,
+            endDate,
+            countryCode,
+            uiLang,
+          });
+        } catch {
+          enrichBlock = "";
+        }
         const prompt =
           `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
           `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
           `${prefsBlock}\n` +
+          enrichBlock +
           `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
           `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
           `Règles STRICTES :\n` +
-          `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+          `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus.\n` +
           `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-          `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités.\n` +
+          `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
           `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
           `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
           `${langRule}\n` +
@@ -549,7 +573,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
           "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
           "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
-          "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
+          "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
+          "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
         try {
           const data = await runGroqJson({
             key: groqKey,
@@ -671,6 +696,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       const startDate = String(parsed.startDate || "").trim();
       const endDate = String(parsed.endDate || "").trim();
       const prefs = parsed.prefs && typeof parsed.prefs === "object" ? parsed.prefs : null;
+      const countryCode = String(parsed.countryCode || "").trim();
       if (!destination || destination.length > 120) {
         sendJson(res, 400, { error: "destination invalide (1–120 caractères)" });
         return;
@@ -685,16 +711,28 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       const langRule = geminiLangRuleParagraph(uiLang);
       const prefsBlock = formatPrefsForPrompt(prefs);
       const budgetHint = budgetRangeHint(prefs);
+      let enrichBlock = "";
+      try {
+        enrichBlock = await buildItineraryEnrichmentBlock({
+          startDate,
+          endDate,
+          countryCode,
+          uiLang,
+        });
+      } catch {
+        enrichBlock = "";
+      }
       const prompt =
         `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
         `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).` +
         `${prefsBlock}\n` +
+        enrichBlock +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
         `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
         `Règles STRICTES pour que le JSON soit valide :\n` +
-        `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}.\n` +
+        `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus.\n` +
         `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-        `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités.\n` +
+        `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
         `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
         `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
         `${langRule}\n` +
@@ -704,7 +742,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         "Tu produis uniquement un objet JSON valide, minifié ou non, sans clé en trop. " +
         "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
         "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets. " +
-        "Le champ costEur est toujours un entier JSON (jamais une chaîne).";
+        "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
+        "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
 
       try {
         const data = await runGeminiJson({

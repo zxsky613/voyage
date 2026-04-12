@@ -1,6 +1,9 @@
 import { handleCors, sendJson, parseBody, getFoursquareKey } from "../_helpers.js";
 
-const FSQ_CATEGORIES = "10000,16000,12000";
+/** Loisirs / culture / plein air — lieux « incontournables ». */
+const FSQ_PRESET_POI = "10000,16000,12000";
+/** Bars & restos — noms propres + palier prix (champ `price`) pour le guide. */
+const FSQ_PRESET_RESTAURANTS = "13000";
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -15,11 +18,21 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
   }
   const limit = Math.min(Number(body.limit) || 20, 50);
+  const preset = String(body.preset || "poi").toLowerCase();
+  const categoriesRaw = String(body.categories || "").trim();
+  const categories =
+    categoriesRaw ||
+    (preset === "restaurants" || preset === "dining" || preset === "food" ? FSQ_PRESET_RESTAURANTS : FSQ_PRESET_POI);
+  /** Champs utiles : prix relatif 1–4 (indicatif). */
+  const fields = "name,location,categories,price";
 
   try {
     const fsqUrl =
       `https://api.foursquare.com/v3/places/search` +
-      `?ll=${lat},${lon}&categories=${FSQ_CATEGORIES}&sort=POPULARITY&limit=${limit}&radius=10000`;
+      `?ll=${lat},${lon}` +
+      `&categories=${categories}` +
+      `&fields=${encodeURIComponent(fields)}` +
+      `&sort=POPULARITY&limit=${limit}&radius=10000`;
     const fsqResp = await fetch(fsqUrl, {
       headers: { Authorization: fsqKey, Accept: "application/json" },
     });

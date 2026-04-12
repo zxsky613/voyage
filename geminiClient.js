@@ -54,13 +54,21 @@ export async function fetchGeminiSuggestedActivities({ destination, language = "
   return j;
 }
 
-export async function fetchGeminiItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
+export async function fetchGeminiItinerary({
+  destination,
+  startDate,
+  endDate,
+  language = "fr",
+  prefs = null,
+  countryCode = "",
+}) {
   const r = await fetchPostJsonWithTimeout("/api/gemini/itinerary", {
     destination,
     startDate,
     endDate,
     language,
     prefs,
+    countryCode: String(countryCode || "").trim(),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -71,22 +79,111 @@ export async function fetchGeminiItinerary({ destination, startDate, endDate, la
 
 /**
  * Génère un programme jour par jour via Groq (llama-3.3-70b-versatile).
- * Groq est prioritaire sur Gemini pour l'itinéraire : plus rapide, free tier généreux.
- * Fallback automatique sur Gemini si Groq est indisponible ou sans clé.
+ * Pour l’app, préférer fetchItineraryGroqFirst : Groq d’abord, Gemini seulement en secours.
  */
-export async function fetchGroqItinerary({ destination, startDate, endDate, language = "fr", prefs = null }) {
+export async function fetchGroqItinerary({
+  destination,
+  startDate,
+  endDate,
+  language = "fr",
+  prefs = null,
+  countryCode = "",
+}) {
   const r = await fetchPostJsonWithTimeout("/api/groq/itinerary", {
     destination,
     startDate,
     endDate,
     language,
     prefs,
+    countryCode: String(countryCode || "").trim(),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
   }
   return j;
+}
+
+function countInclusiveTripDaysClient(startYmd, endYmd) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(startYmd) || !re.test(endYmd)) return { ok: false, days: 0 };
+  const t0 = Date.parse(`${startYmd}T12:00:00`);
+  const t1 = Date.parse(`${endYmd}T12:00:00`);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return { ok: false, days: 0 };
+  let a = t0;
+  let b = t1;
+  if (b < a) [a, b] = [b, a];
+  const diff = Math.round((b - a) / 86400000);
+  const days = diff + 1;
+  if (days > 14) return { ok: false, days: 0 };
+  return { ok: true, days };
+}
+
+function itineraryDayHasUsableContent(d) {
+  const hasTitle = String(d?.title || "").trim().length > 0;
+  const hasBullets =
+    Array.isArray(d?.bullets) && d.bullets.some((b) => String(b || "").trim().length > 0);
+  const hasActivities = Array.isArray(d?.activities) && d.activities.length > 0;
+  return hasTitle && (hasBullets || hasActivities);
+}
+
+function isGroqItineraryAcceptable(res, expectedDays) {
+  if (!res?.ok || !Array.isArray(res.data?.dayIdeas)) return false;
+  const list = res.data.dayIdeas;
+  if (list.length !== expectedDays) return false;
+  if (typeof res.data.tripDays === "number" && res.data.tripDays !== expectedDays) return false;
+  return list.every(itineraryDayHasUsableContent);
+}
+
+/**
+ * Programme jour par jour : appelle **toujours Groq en premier**, puis Gemini uniquement si
+ * Groq échoue (réseau, 5xx, JSON) ou si la réponse est incomplète (mauvais nombre de jours, jour vide).
+ * Même corps de requête (prefs, countryCode, langue) pour les deux backends.
+ */
+export async function fetchItineraryGroqFirst({
+  destination,
+  startDate,
+  endDate,
+  language = "fr",
+  prefs = null,
+  countryCode = "",
+}) {
+  const { ok, days: expectedDays } = countInclusiveTripDaysClient(
+    String(startDate || "").trim(),
+    String(endDate || "").trim()
+  );
+  if (!ok) {
+    throw new Error(
+      "Dates au format AAAA-MM-JJ requises ; le séjour doit compter au plus 14 jours."
+    );
+  }
+
+  let res = null;
+  try {
+    res = await fetchGroqItinerary({
+      destination,
+      startDate,
+      endDate,
+      language,
+      prefs,
+      countryCode,
+    });
+  } catch {
+    res = null;
+  }
+
+  if (isGroqItineraryAcceptable(res, expectedDays)) {
+    return res;
+  }
+
+  return await fetchGeminiItinerary({
+    destination,
+    startDate,
+    endDate,
+    language,
+    prefs,
+    countryCode,
+  });
 }
 
 /**

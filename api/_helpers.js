@@ -160,6 +160,202 @@ export function formatError(e) {
   return msg;
 }
 
+/** Une ligne par jour du séjour : jour du programme, date ISO, jour de la semaine (locale). */
+export function buildItineraryCalendarPromptBlock(startYmd, endYmd, uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  const loc =
+    code === "en"
+      ? "en-US"
+      : code === "de"
+        ? "de-DE"
+        : code === "es"
+          ? "es-ES"
+          : code === "it"
+            ? "it-IT"
+            : code === "zh"
+              ? "zh-CN"
+              : "fr-FR";
+  const lines = [];
+  const start = new Date(`${startYmd}T12:00:00`);
+  const end = new Date(`${endYmd}T12:00:00`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return "";
+  let a = start;
+  let b = end;
+  if (b < a) [a, b] = [b, a];
+  const dayWord =
+    code === "en"
+      ? "Day"
+      : code === "de"
+        ? "Tag"
+        : code === "es"
+          ? "Día"
+          : code === "it"
+            ? "Giorno"
+            : code === "zh"
+              ? "第"
+              : "Jour";
+  const d = new Date(a);
+  let n = 1;
+  while (d <= b) {
+    const iso = d.toISOString().slice(0, 10);
+    const weekday = d.toLocaleDateString(loc, { weekday: "long" });
+    if (code === "zh") {
+      lines.push(`- 第${n}天 = ${iso}（${weekday}）`);
+    } else {
+      lines.push(`- ${dayWord} ${n} = ${iso} (${weekday})`);
+    }
+    d.setDate(d.getDate() + 1);
+    n += 1;
+  }
+  return lines.join("\n");
+}
+
+/** Jours fériés nationaux (Nager.Date) — code pays ISO 3166-1 alpha-2. */
+export async function fetchNagerHolidaysInRange(countryCode, startYmd, endYmd) {
+  const cc = String(countryCode || "")
+    .trim()
+    .toUpperCase();
+  if (cc.length !== 2) return [];
+  let a = String(startYmd || "").trim();
+  let b = String(endYmd || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return [];
+  if (b < a) [a, b] = [b, a];
+  const y0 = Number(a.slice(0, 4));
+  const y1 = Number(b.slice(0, 4));
+  if (!Number.isFinite(y0) || !Number.isFinite(y1)) return [];
+  const out = [];
+  for (let y = y0; y <= y1; y += 1) {
+    try {
+      const r = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/${cc}`);
+      if (!r.ok) continue;
+      const arr = await r.json();
+      if (!Array.isArray(arr)) continue;
+      for (const h of arr) {
+        const date = String(h?.date || "").trim();
+        if (date >= a && date <= b) {
+          out.push({
+            date,
+            name: String(h?.localName || h?.name || "").trim() || date,
+          });
+        }
+      }
+    } catch {
+      /* réseau / timeout — pas bloquant */
+    }
+  }
+  out.sort((x, y) => x.date.localeCompare(y.date));
+  const seen = new Set();
+  return out.filter((h) => {
+    if (seen.has(h.date + h.name)) return false;
+    seen.add(h.date + h.name);
+    return true;
+  });
+}
+
+export async function formatNagerHolidaysForPrompt(countryCode, startYmd, endYmd, uiLang) {
+  const list = await fetchNagerHolidaysInRange(countryCode, startYmd, endYmd);
+  if (list.length === 0) return "";
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  const hdr =
+    code === "en"
+      ? "Public holidays during this trip (adapt the day: closures, crowds):"
+      : code === "de"
+        ? "Gesetzliche Feiertage in diesem Zeitraum (Programm anpassen):"
+        : code === "es"
+          ? "Festivos en estas fechas (adaptar el programa):"
+          : code === "it"
+            ? "Festività nel periodo (adatta il programma):"
+            : code === "zh"
+              ? "行程期间的公共假日（请据此调整安排）："
+              : "Jours fériés sur la période (adapter le programme : fermetures, affluence) :";
+  const lines = list.map((h) => `- ${h.date}: ${h.name}`);
+  return `\n${hdr}\n${lines.join("\n")}\n`;
+}
+
+/** Règles terrain + honnêteté sur les imprévus (marathon, travaux, etc.). */
+export function buildItinerarySchedulingRulesParagraph(uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") {
+    return (
+      "\nSCHEDULING & CLOSURE RULES (MANDATORY):\n" +
+      "- Use the calendar below: each \"Day N\" MUST match the listed calendar date and weekday.\n" +
+      "- Museums / monuments: respect TYPICAL weekly closing patterns for the destination country (e.g. many museums in France closed Monday; adapt to the city/country). If unsure for a specific venue, say \"check official hours / book online\" instead of inventing times.\n" +
+      "- Restaurants & shops: respect common local patterns (e.g. Sunday closures in some areas); say \"check opening hours\" when relevant.\n" +
+      "- If public holidays are listed below, adapt that day (closures, crowds) and mention the holiday name in that day's bullets.\n" +
+      "\nLIMITS (be honest):\n" +
+      "- You do NOT have real-time data: marathons, protests, roadworks, exceptional street or store closures, or weather. In at least ONE bullet somewhere in the itinerary, tell the traveler to check the official city website, public transport alerts, and local news before the trip.\n" +
+      "- For dense city-center days (often weekends), suggest a backup plan or time buffer in the bullets.\n"
+    );
+  }
+  if (code === "de") {
+    return (
+      "\nZEITPLAN & SCHLIESSZEITEN (VERPFLICHTEND):\n" +
+      "- Nutze den Kalender unten: Jeder \"Tag N\" muss zum angegebenen Datum und Wochentag passen.\n" +
+      "- Museen / Denkmäler: typische wöchentliche Ruhetage des Landes beachten (z. B. in Frankreich oft montags). Bei Unsicherheit: \"Öffnungszeiten prüfen / online buchen\".\n" +
+      "- Feiertage: falls unten aufgeführt, den Tag anpassen und im Text nennen.\n" +
+      "\nGRENZEN:\n" +
+      "- Keine Echtzeitdaten: Marathon, Demo, Bauarbeiten, Ausnahmeschließungen. Mindestens eine Erinnerung: offizielle Stadtseite, Verkehrsinfos, lokale Nachrichten vor Abreise prüfen.\n"
+    );
+  }
+  if (code === "es") {
+    return (
+      "\nHORARIOS Y CIERRES (OBLIGATORIO):\n" +
+      "- Usa el calendario: cada \"Día N\" debe coincidir con la fecha y el día de la semana indicados.\n" +
+      "- Museos: respeta los cierres semanales típicos del país. Si dudas: «comprobar horarios / reserva online».\n" +
+      "- Festivos listados abajo: adapta ese día y menciónalo en las viñetas.\n" +
+      "\nLÍMITES:\n" +
+      "- Sin datos en tiempo real (maratón, obras, manifestaciones). Al menos un recordatorio: web oficial de la ciudad, transporte y noticias locales antes del viaje.\n"
+    );
+  }
+  if (code === "it") {
+    return (
+      "\nORARI E CHIUSURE (OBBLIGATORIO):\n" +
+      "- Usa il calendario sotto: ogni \"Giorno N\" deve corrispondere alla data e al giorno della settimana indicati.\n" +
+      "- Musei: rispetta le chiusure settimanali tipiche del paese. In dubbio: «verificare orari / prenotazione online».\n" +
+      "- Se ci sono festività elencate, adatta il programma e citale.\n" +
+      "\nLIMITI:\n" +
+      "- Nessun dato in tempo reale (maratona, cantieri). Almeno un promemoria: sito ufficiale del comune, trasporti, notizie locali prima della partenza.\n"
+    );
+  }
+  if (code === "zh") {
+    return (
+      "\n时间安排与闭馆（必须遵守）：\n" +
+      "- 使用下方日历：每个「第N天」必须与所列日期和星期一致。\n" +
+      "- 博物馆/景点：尊重目的地国家常见的每周闭馆日（如法国许多博物馆周一闭馆）。不确定时请写「请查官网开放时间/线上预约」，不要编造时间。\n" +
+      "- 若下列列出公共假日，请在该日行程中考虑闭馆与人流并写出假日名称。\n" +
+      "\n局限说明：\n" +
+      "- 你无法获得实时信息（马拉松、游行、道路施工、临时封路或商店停业）。行程中至少有一处提醒：出发前查阅城市官网、交通公告与本地新闻。\n"
+    );
+  }
+  return (
+    "\nCONTRAINTES D'HORAIRES ET FERMETURES (OBLIGATOIRE) :\n" +
+    "- S'appuie sur le calendrier ci-dessous : chaque « Jour N » correspond à la date et au jour de la semaine indiqués — ne pas les mélanger.\n" +
+    "- Musées / monuments : respecte les fermetures hebdomadaires TYPIQUES du pays de la destination (ex. beaucoup de musées en France fermés le lundi ; adapte selon la ville et le pays). Si la règle d'un lieu précis est incertaine, indique « vérifier les horaires sur le site officiel / réservation en ligne » plutôt qu'un horaire inventé.\n" +
+    "- Restaurants et commerces : selon les habitudes locales, évite un planning incohérent ; utilise « vérifier ouverture » quand c'est pertinent.\n" +
+    "- Jours fériés : s'ils sont listés ci-dessous, adapte le jour concerné (fermetures, affluence) et cite le nom du jour férié dans les bullets de ce jour.\n" +
+    "\nLIMITES (honnêteté) :\n" +
+    "- Tu n'as pas les données en temps réel : marathon, manifestation, travaux, fermeture exceptionnelle d'une rue ou d'un magasin, météo. Dans au moins une bullet du programme, rappelle explicitement de consulter avant le départ le site officiel de la ville ou de la région, les infos transports et l'actualité locale pour anticiper les imprévus.\n" +
+    "- Pour les zones sensibles aux événements (centre-ville un week-end), propose dans les bullets une alternative ou une marge horaire.\n"
+  );
+}
+
+/** Bloc à injecter dans les prompts Groq/Gemini d'itinéraire. */
+export async function buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang }) {
+  const cal = buildItineraryCalendarPromptBlock(startDate, endDate, uiLang);
+  const [holidays, rules] = await Promise.all([
+    formatNagerHolidaysForPrompt(countryCode, startDate, endDate, uiLang),
+    Promise.resolve(buildItinerarySchedulingRulesParagraph(uiLang)),
+  ]);
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  const calTitle =
+    code === "en"
+      ? "Exact calendar (each program day = one real date)"
+      : code === "zh"
+        ? "精确日历（行程中的每一天对应下方日期）"
+        : "Calendrier exact (chaque jour du programme = une date réelle)";
+  return `\n${calTitle} :\n${cal}\n${holidays}${rules}`;
+}
+
 export function getGeminiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }

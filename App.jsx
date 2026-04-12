@@ -35,8 +35,7 @@ import { resolveTravelTips } from "./travelTipsData.js";
 import {
   fetchGeminiTripSuggestions,
   fetchGeminiSuggestedActivities,
-  fetchGeminiItinerary,
-  fetchGroqItinerary,
+  fetchItineraryGroqFirst,
   fetchGroqTips,
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
@@ -904,7 +903,7 @@ const CITY_CATALOG = [
   "London", "Barcelona", "Madrid", "Rome", "Milan", "Venise", "Berlin", "Amsterdam",
   "Bruxelles", "Berne", "Lisbonne", "Porto", "Prague", "Vienne", "Budapest", "Athènes", "Istanbul",
   "Dubai", "Doha", "Abu Dhabi", "Le Caire", "Marrakech", "Tunis", "Alger",
-  "Sydney", "Melbourne", "Auckland", "Cape Town", "Rio de Janeiro", "Sao Paulo", "Phuket",
+  "Sydney", "Melbourne", "Mykonos", "Auckland", "Cape Town", "Rio de Janeiro", "Sao Paulo", "Phuket",
 ];
 
 const CITY_ALIASES = {
@@ -923,6 +922,7 @@ const CITY_ALIASES = {
   Rome: ["Roma"],
   Milan: ["Milano"],
   Berne: ["Bern"],
+  Mykonos: ["Myconos"],
 };
 
 const CITY_SEARCH_ENTRIES = CITY_CATALOG.flatMap((canonical) => {
@@ -2162,7 +2162,7 @@ const COASTAL_CITIES = new Set([
   "tel aviv", "mumbai", "hong kong", "singapour", "singapore", "seattle",
   "copenhague", "copenhagen", "stockholm", "oslo", "helsinki", "vancouver",
   "san diego", "havana", "la havane", "cartagena", "dubrovnik", "split",
-  "mykonos", "santorini", "casablanca", "tunis", "alger", "dakar",
+  "mykonos", "myconos", "santorini", "casablanca", "tunis", "alger", "dakar",
   "mombasa", "zanzibar", "goa", "colombo", "abu dhabi", "doha",
   "yokohama", "osaka", "busan", "shanghai", "qingdao",
 ]);
@@ -2427,7 +2427,7 @@ function buildSuggestedActivitiesForCity(city) {
       act("Port d'Ibiza & quartier de la Marina", 0, "Gratuit", "Port, Ibiza"),
     ];
   }
-  if (c.includes("mykonos")) {
+  if (c.includes("mykonos") || c.includes("myconos")) {
     return [
       act("Petite Venise & moulins à vent", 0, "Gratuit", "Chóra, Mykonos"),
       act("Plage Paradise Beach", 0, "Gratuit (transat ~15€)", "Paradise, Mykonos"),
@@ -3764,6 +3764,26 @@ async function fetchWikiPlaceSummaryForPlace(placeTitle, cityLabel, uiLang, opti
   return { extract: "", thumb: thumbOnly, wikiTitle: "", wikiHostLang: "" };
 }
 
+// ─── Foursquare Places — palier prix API (1–4) → € indicatif / pers. repas ─────
+function fsqPriceTierToIndicativeEur(price) {
+  const p = Number(price);
+  if (!Number.isFinite(p) || p < 1) return null;
+  const tier = Math.min(4, Math.max(1, Math.floor(p)));
+  const map = { 1: 15, 2: 28, 3: 45, 4: 75 };
+  return map[tier] ?? null;
+}
+
+function fsqRestaurantCostNote(eur, lang) {
+  const n = Math.round(Number(eur) || 0);
+  const code = String(lang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") return `≈${n}€/person (indicative — Foursquare price tier)`;
+  if (code === "de") return `≈${n}€/Pers. (Richtwert — Foursquare-Preisstufe)`;
+  if (code === "es") return `≈${n}€/pers. (orientativo — nivel Foursquare)`;
+  if (code === "it") return `≈${n}€/pers. (indicativo — fascia prezzo Foursquare)`;
+  if (code === "zh") return `约${n}欧元/人（参考价，Foursquare价位）`;
+  return `≈${n}€/pers. (indicatif — palier Foursquare)`;
+}
+
 // ─── Foursquare Places — estimation de coût d'après les catégories ────────────
 function fsqEstimateCost(categories) {
   const names = (categories || []).map((c) => String(c?.name || "").toLowerCase());
@@ -3880,6 +3900,61 @@ async function fetchFoursquarePlaces(lat, lon) {
     return { places, activities };
   } catch (_e) {
     return { places: [], activities: [] };
+  }
+}
+
+/**
+ * Restaurants réels (catégorie Dining & Drinking) — noms Foursquare + € indicatif
+ * (palier `price` 1–4 ou repli heuristique catégories).
+ */
+async function fetchFoursquareRestaurantActivities(lat, lon, uiLang = "fr") {
+  try {
+    const resp = await fetch("/api/foursquare/places", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lon, limit: 36, preset: "restaurants" }),
+    });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    if (!json.ok || !Array.isArray(json.results)) return [];
+
+    const seen = new Set();
+    const dining = json.results.filter((r) => {
+      const name = String(r?.name || "").trim();
+      if (name.length < 2) return false;
+      const k = name.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      const cats = (r.categories || []).map((c) => String(c?.name || "").toLowerCase()).join(" ");
+      if (
+        /hotel|hostel|motel|resort|gas station|parking|pharmacy|supermarket|grocery/i.test(
+          `${name} ${cats}`
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    return dining.slice(0, 6).map((r) => {
+      const tierEur = fsqPriceTierToIndicativeEur(r.price);
+      const fallbackEur = fsqEstimateCost(r.categories);
+      const eur = tierEur != null ? tierEur : fallbackEur;
+      const loc = r?.location || {};
+      const locality = String(loc.locality || loc.region || "").trim();
+      const neighborhood = String(loc.neighborhood || loc.sublocality || "").trim();
+      const location = [neighborhood, locality].filter(Boolean).join(", ") || "";
+      const catLabel = String(r.categories?.[0]?.name || "").trim();
+      return {
+        title: String(r.name),
+        estimatedCostEur: eur,
+        costNote: fsqRestaurantCostNote(eur, uiLang),
+        location,
+        description: catLabel ? `${catLabel}.` : "",
+      };
+    });
+  } catch (_e) {
+    return [];
   }
 }
 
@@ -4004,11 +4079,16 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   // Wikivoyage si disponible (description voyage > encyclopédie Wikipedia)
   const summaryText = wikivoyageText || summaryPack.summaryText;
 
-  // Foursquare : POIs réels via proxy serveur (appel séquentiel — nécessite lat/lon)
-  const otmData =
+  // Foursquare : POIs « incontournables » + file parallèle restaurants (noms réels + palier prix)
+  const [otmData, restaurantActs] = await Promise.all([
     Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? await fetchFoursquarePlaces(latitude, longitude)
-      : { places: [], activities: [] };
+      ? fetchFoursquarePlaces(latitude, longitude)
+      : Promise.resolve({ places: [], activities: [] }),
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? fetchFoursquareRestaurantActivities(latitude, longitude, uiLanguage)
+      : Promise.resolve([]),
+  ]);
+  const useFsqRestaurants = restaurantActs.length >= 4;
 
   const heroStem = heroImageStemFromDestination(imageCtx) || safeCity;
   const bundledUrl = getBundledCityHeroPath(heroStem);
@@ -4075,10 +4155,19 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
   const tips = buildTravelTips(safeCity);
-  // OTM en priorité si disponible, sinon données locales — au moins 6 propositions
+  /** Restaurants Foursquare (noms exacts + € indicatif palier) si assez de résultats, sinon POI mixtes. */
+  const suggestedActivitySource = useFsqRestaurants
+    ? restaurantActs
+    : otmData.activities.length > 0
+      ? otmData.activities
+      : buildSuggestedActivitiesForCity(safeCity);
+  const suggestedActivityMin = useFsqRestaurants
+    ? Math.min(6, restaurantActs.length)
+    : MIN_SUGGESTED_ACTIVITIES;
   const suggestedActivities = ensureMinSuggestedActivities(
-    otmData.activities.length > 0 ? otmData.activities : buildSuggestedActivitiesForCity(safeCity),
-    safeCity
+    suggestedActivitySource,
+    safeCity,
+    suggestedActivityMin
   );
 
   const displayCountry = String(geoPack.country || "").trim();
@@ -4140,6 +4229,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
         ? { lat: latitude, lon: longitude }
         : null,
     country: displayCountry || null,
+    countryCode: countryCodeNorm || null,
     adminRegion: displayRegion || null,
     situationMap,
   };
@@ -5289,6 +5379,11 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
     setImgLoaded(true);
   }, []);
 
+  /** Nouvelle URL → réinitialiser avant peinture (évite overlay masqué alors que la nouvelle image charge). */
+  useLayoutEffect(() => {
+    setImgLoaded(false);
+  }, [displaySrc]);
+
   const cityImageRef = useCallback(
     (node) => {
       cityImageElRef.current = node;
@@ -5299,10 +5394,46 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
     [markCityImageLoaded]
   );
 
+  /** onLoad React ne part pas toujours (cache agressif, decode async) : load natif + decode() + rAF. */
   useLayoutEffect(() => {
     const el = cityImageElRef.current;
-    if (!el || loadFailed) return;
-    if (el.complete && el.naturalWidth > 0) markCityImageLoaded();
+    if (!el || loadFailed || !displaySrc) return;
+
+    let cancelled = false;
+    const mark = () => {
+      if (!cancelled) markCityImageLoaded();
+    };
+    const tryDecode = () => {
+      if (cancelled || !el.isConnected) return;
+      if (el.complete && el.naturalWidth > 0) {
+        mark();
+        return;
+      }
+      const dec = el.decode && typeof el.decode === "function" ? el.decode() : null;
+      if (dec && typeof dec.then === "function") {
+        dec.then(mark).catch(() => {
+          if (el.complete && el.naturalWidth > 0) mark();
+        });
+      }
+    };
+
+    tryDecode();
+    el.addEventListener("load", mark, { passive: true });
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      tryDecode();
+      raf2 = requestAnimationFrame(tryDecode);
+    });
+    const t = window.setTimeout(tryDecode, 80);
+
+    return () => {
+      cancelled = true;
+      el.removeEventListener("load", mark);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(t);
+    };
   }, [displaySrc, loadFailed, markCityImageLoaded]);
 
   return (
@@ -5311,6 +5442,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
     >
       {displaySrc ? (
         <img
+          key={displaySrc}
           ref={cityImageRef}
           src={displaySrc}
           alt={`${safeTitle} — vue aérienne drone, photo de voyage`}
@@ -5922,17 +6054,6 @@ function AuthView() {
                 type="button"
                 onClick={() => {
                   setShowAuthLanding(false);
-                  setMode("signin");
-                  setMsg("");
-                }}
-                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
-              >
-                {t("auth.landingSignIn")}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAuthLanding(false);
                   setMode("signup");
                   setMsg("");
                 }}
@@ -5940,6 +6061,17 @@ function AuthView() {
                 style={GLASS_ACCENT_STYLE}
               >
                 {t("auth.landingSignUp")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAuthLanding(false);
+                  setMode("signin");
+                  setMsg("");
+                }}
+                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
+              >
+                {t("auth.landingSignIn")}
               </button>
             </div>
             <div className="mt-6 flex justify-center pb-2 sm:mt-8">
@@ -8367,6 +8499,7 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
       setImageUrl(cached.imageUrl);
       setTextLoading(false);
       setImageLoading(false);
+      setImgRendered(false);
       return;
     }
 
@@ -8441,6 +8574,44 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
     };
   }, [open, rawName, city, language]);
 
+  const mustSeeImgRef = useRef(null);
+  useLayoutEffect(() => {
+    setImgRendered(false);
+  }, [imageUrl]);
+
+  useLayoutEffect(() => {
+    if (!open || !imageUrl) return;
+    const el = mustSeeImgRef.current;
+    if (!el) return;
+    let cancelled = false;
+    const mark = () => {
+      if (!cancelled) setImgRendered(true);
+    };
+    const sync = () => {
+      if (cancelled || !el.isConnected) return;
+      if (el.complete && el.naturalWidth > 0) mark();
+    };
+    sync();
+    el.addEventListener("load", mark, { passive: true });
+    if (typeof el.decode === "function") {
+      el.decode().then(mark).catch(() => sync());
+    }
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      sync();
+      raf2 = requestAnimationFrame(sync);
+    });
+    const t = window.setTimeout(sync, 80);
+    return () => {
+      cancelled = true;
+      el.removeEventListener("load", mark);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(t);
+    };
+  }, [open, imageUrl]);
+
   if (!open) return null;
 
   return (
@@ -8470,6 +8641,8 @@ function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language
                 </div>
               ) : null}
               <img
+                key={imageUrl}
+                ref={mustSeeImgRef}
                 src={imageUrl}
                 alt=""
                 className="relative z-[2] h-44 w-full object-cover object-[center_45%] sm:h-52 sm:object-[center_40%]"
@@ -9027,20 +9200,15 @@ function DestinationGuideView({
   }, [confirmedDestination, language]);
 
   async function fetchItineraryProgram(dest, startDate, endDate, prefs) {
-    let res = null;
-    try {
-      res = await fetchGroqItinerary({ destination: dest, startDate, endDate, language, prefs });
-    } catch {
-      res = null;
-    }
-    const groqDays = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
-    const groqHasContent = groqDays.length > 0 && groqDays.some((d) =>
-      String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0)
-    );
-    if (!groqHasContent) {
-      res = await fetchGeminiItinerary({ destination: dest, startDate, endDate, language, prefs });
-    }
-    return res;
+    const countryCode = String(displayGuide?.countryCode || "").trim();
+    return fetchItineraryGroqFirst({
+      destination: dest,
+      startDate,
+      endDate,
+      language,
+      prefs,
+      countryCode,
+    });
   }
 
   async function handleGenerateItinerary() {
@@ -10735,7 +10903,7 @@ function PlannerView({
                 {activityFormError}
               </p>
             ) : null}
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -10749,12 +10917,12 @@ function PlannerView({
                 rows={3}
                 className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <div className="min-w-0 w-full max-w-full">
+              <div className="min-w-0 w-full max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white [contain:inline-size]">
                 <input
                   type="time"
                   value={activityTime}
                   onChange={(e) => setActivityTime(e.target.value)}
-                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full border-0 bg-transparent px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-300/60 sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:min-w-0 [&::-webkit-datetime-edit]:max-w-full [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:min-w-0 [&::-webkit-datetime-edit-fields-wrapper]:max-w-full [&::-webkit-datetime-edit-fields-wrapper]:py-0"
                 />
               </div>
               <input
@@ -10914,7 +11082,7 @@ function PlannerView({
                 <X size={18} />
               </button>
             </div>
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -10928,12 +11096,12 @@ function PlannerView({
                 rows={3}
                 className="box-border w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base sm:text-sm"
               />
-              <div className="min-w-0 w-full max-w-full">
+              <div className="min-w-0 w-full max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white [contain:inline-size]">
                 <input
                   type="time"
                   value={activityTime}
                   onChange={(e) => setActivityTime(e.target.value)}
-                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                  className="box-border block min-h-[3rem] w-full min-w-0 max-w-full border-0 bg-transparent px-4 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-300/60 sm:min-h-0 sm:text-sm [&::-webkit-datetime-edit]:min-w-0 [&::-webkit-datetime-edit]:max-w-full [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:min-w-0 [&::-webkit-datetime-edit-fields-wrapper]:max-w-full [&::-webkit-datetime-edit-fields-wrapper]:py-0"
                 />
               </div>
               <input
@@ -11851,12 +12019,12 @@ function TripExpenseDetail({
                 className="box-border w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3.5 text-base sm:px-4 sm:text-sm"
               />
               <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
-                <div className="min-w-0 w-full max-w-full">
+                <div className="min-w-0 w-full max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white [contain:inline-size]">
                   <input
                     type="time"
                     value={editTime}
                     onChange={(e) => setEditTime(e.target.value)}
-                    className="box-border block min-h-[3rem] min-w-0 w-full max-w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] sm:min-h-0 sm:px-4 sm:text-sm [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:py-0"
+                    className="box-border block min-h-[3rem] min-w-0 w-full max-w-full border-0 bg-transparent px-3 py-3 text-start text-base [color-scheme:light] [font-variant-numeric:tabular-nums] outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-300/60 sm:min-h-0 sm:px-4 sm:text-sm [&::-webkit-datetime-edit]:min-w-0 [&::-webkit-datetime-edit]:max-w-full [&::-webkit-datetime-edit]:text-start [&::-webkit-datetime-edit-fields-wrapper]:min-w-0 [&::-webkit-datetime-edit-fields-wrapper]:max-w-full [&::-webkit-datetime-edit-fields-wrapper]:py-0"
                   />
                 </div>
                 <div className="relative min-w-0 w-full">

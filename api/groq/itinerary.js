@@ -2,6 +2,7 @@ import {
   handleCors, sendJson, parseBody, getGroqKey,
   runGroqJson, countInclusiveTripDays, resolveUiLanguage,
   langRuleParagraph, formatPrefsForPrompt, budgetRangeHint, formatError,
+  buildItineraryEnrichmentBlock,
 } from "../_helpers.js";
 
 export default async function handler(req, res) {
@@ -17,6 +18,7 @@ export default async function handler(req, res) {
   const startDate = String(body.startDate || "").trim();
   const endDate = String(body.endDate || "").trim();
   const prefs = body.prefs && typeof body.prefs === "object" ? body.prefs : null;
+  const countryCode = String(body.countryCode || "").trim();
   const { ok, days, error: dayErr } = countInclusiveTripDays(startDate, endDate);
   if (!ok) return sendJson(res, 400, { error: dayErr });
 
@@ -25,20 +27,39 @@ export default async function handler(req, res) {
   const prefsBlock = formatPrefsForPrompt(prefs);
   const bHint = budgetRangeHint(prefs);
 
+  let enrichBlock = "";
+  try {
+    enrichBlock = await buildItineraryEnrichmentBlock({
+      startDate,
+      endDate,
+      countryCode,
+      uiLang,
+    });
+  } catch {
+    enrichBlock = "";
+  }
+
   const prompt =
     `Tu es un expert voyage. Ville / destination: "${destination}".\n` +
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
-    `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
+    enrichBlock +
+    `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
     `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
-    `Règles OBLIGATOIRES :\n` +
-    `- Exactement ${days} objets dans dayIdeas.\n` +
-    `- Chaque objet DOIT avoir un champ "title" non vide (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-    `- Chaque objet DOIT avoir un champ "bullets" avec 2-3 phrases courtes décrivant les activités.\n` +
-    `- costEur = entier estimé par jour.\n` +
-    `Budget : ${bHint}.\n${langRule}\nLieux réels uniquement.`;
+    `Règles STRICTES :\n` +
+    `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus (même ordre).\n` +
+    `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
+    `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
+    `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${bHint}. Inclure repas, entrées, transports locaux.\n` +
+    `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
+    `${langRule}\n` +
+    `Lieux réels pour cette destination (pas de lieux inventés).`;
 
   const systemPrompt =
-    "Tu produis uniquement un objet JSON valide. Chaque dayIdeas DOIT contenir title (non vide) et bullets (tableau non vide). costEur est toujours un entier JSON.";
+    "Tu produis uniquement un objet JSON valide. " +
+    "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
+    "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
+    "Le champ costEur est toujours un entier JSON. " +
+    "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
 
   try {
     const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });

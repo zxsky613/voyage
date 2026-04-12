@@ -174,13 +174,13 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg/1920px-Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg",
   ],
   lisbonne: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",
   ],
   lisbon: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg/1920px-Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_pano.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",

@@ -79,6 +79,7 @@ const NAMES = {
   "rio de janeiro": { fr: "Rio de Janeiro", en: "Rio de Janeiro", de: "Rio de Janeiro", es: "Río de Janeiro", it: "Rio de Janeiro", zh: "里约热内卢" },
   "sao paulo": { fr: "São Paulo", en: "São Paulo", de: "São Paulo", es: "São Paulo", it: "San Paolo", zh: "圣保罗" },
   phuket: { fr: "Phuket", en: "Phuket", de: "Phuket", es: "Phuket", it: "Phuket", zh: "普吉岛" },
+  mykonos: { fr: "Mykonos", en: "Mykonos", de: "Mykonos", es: "Mykonos", it: "Mykonos", zh: "米科诺斯" },
 };
 
 /** Variantes de saisie / stockage → clé dans NAMES. */
@@ -99,6 +100,7 @@ const KEY_ALIASES = {
   athens: "athenes",
   algiers: "alger",
   marrakesh: "marrakech",
+  myconos: "mykonos",
 };
 
 /** Libellé catalogue App.jsx / CITY_CATALOG (une entrée par clé NAMES). */
@@ -161,6 +163,7 @@ const KEY_TO_CATALOG_CITY = {
   "rio de janeiro": "Rio de Janeiro",
   "sao paulo": "Sao Paulo",
   phuket: "Phuket",
+  mykonos: "Mykonos",
 };
 
 function normalizeLocalSearchQuery(s) {

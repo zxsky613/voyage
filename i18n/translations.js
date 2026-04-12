@@ -107,8 +107,8 @@ export const translations = {
     auth: {
       brand: "AVOLO",
       landingTagline: "Crée, planifie et suis tes voyages en un clic.",
-      landingSignUp: "Inscription",
-      landingSignIn: "Connexion",
+      landingSignUp: "C'EST PARTI !",
+      landingSignIn: "J'AI DEJA UN COMPTE",
       backToWelcome: "Retour",
       logoAlt: "Logo AVOLO",
       signIn: "Se connecter",
