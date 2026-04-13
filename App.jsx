@@ -120,7 +120,14 @@ const SUPABASE_ANON_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
   "YOUR_ANON_KEY";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    flowType: "pkce",
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
 
 /**
@@ -601,6 +608,29 @@ function saveChatCacheToStorage(cache) {
   }
 }
 
+/** Fusionne cache local + serveur (même id = une entrée), tri par created_at — évite d’effacer l’historique si le serveur renvoie []. */
+function mergeChatMessageLists(existing, server) {
+  const map = new Map();
+  const add = (m) => {
+    if (!m || typeof m !== "object") return;
+    const id = String(m.id ?? "");
+    if (!id) return;
+    const cur = map.get(id);
+    if (!cur) {
+      map.set(id, m);
+      return;
+    }
+    const tNew = String(m.created_at || "");
+    const tOld = String(cur.created_at || "");
+    map.set(id, tNew >= tOld ? m : cur);
+  };
+  for (const m of existing || []) add(m);
+  for (const m of server || []) add(m);
+  return Array.from(map.values()).sort((a, b) =>
+    String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
+  );
+}
+
 function loadActivityDescriptionCache() {
   try {
     const raw = window.localStorage.getItem(ACTIVITY_DESC_CACHE_KEY);
@@ -886,6 +916,71 @@ function normalizeTextForSearch(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 }
+
+/**
+ * GetYourGuide — `data-gyg-location-id` (portail partenaire > Outils > Widget ville).
+ * Clés = normalizeTextForSearch(ville), ex. "paris". Sinon `VITE_GYG_DEFAULT_LOCATION_ID`.
+ */
+const GYG_LOCATION_IDS_BY_NORMALIZED_CITY = {
+  paris: "16",
+};
+
+/** Slug URL getyourguide.com/{slug}-l{id}/ quand le nom affiché ≠ segment anglais (optionnel). */
+const GYG_SLUG_BY_NORMALIZED_CITY = {
+  "new york": "new-york",
+  "los angeles": "los-angeles",
+  "san francisco": "san-francisco",
+  "rio de janeiro": "rio-de-janeiro",
+  "sao paulo": "sao-paulo",
+  "le caire": "cairo",
+  bruxelles: "brussels",
+  florence: "florence",
+  venise: "venice",
+  vienne: "vienna",
+  munich: "munich",
+  marrakech: "marrakesh",
+  pekin: "beijing",
+  "hong kong": "hong-kong",
+};
+
+function resolveGetYourGuideLocationId(cityLabel) {
+  const key = normalizeTextForSearch(String(cityLabel || "").trim());
+  if (key && Object.prototype.hasOwnProperty.call(GYG_LOCATION_IDS_BY_NORMALIZED_CITY, key)) {
+    return String(GYG_LOCATION_IDS_BY_NORMALIZED_CITY[key] || "").trim();
+  }
+  return String(import.meta.env?.VITE_GYG_DEFAULT_LOCATION_ID || "").trim();
+}
+
+function slugForGetYourGuidePath(cityLabel) {
+  const key = normalizeTextForSearch(String(cityLabel || "").split(",")[0].trim());
+  if (!key) return "";
+  if (Object.prototype.hasOwnProperty.call(GYG_SLUG_BY_NORMALIZED_CITY, key)) {
+    return GYG_SLUG_BY_NORMALIZED_CITY[key];
+  }
+  return key.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+}
+
+/** Lien affilié destination (partner_id). Préfère /{slug}-l{id}/ ; sinon recherche sur getyourguide.com/s/. */
+function buildGetYourGuideAffiliateUrl(cityLabel, partnerId) {
+  const pid = String(partnerId || "").trim();
+  if (!pid) return "";
+  const cityToken = String(cityLabel || "").split(",")[0].trim();
+  const q = cityToken || "tours";
+  const lid = resolveGetYourGuideLocationId(cityToken);
+  const slug = slugForGetYourGuidePath(cityToken);
+  let u;
+  if (slug && lid) {
+    u = new URL(`https://www.getyourguide.com/${slug}-l${lid}/`);
+  } else {
+    u = new URL("https://www.getyourguide.com/s/");
+    u.searchParams.set("q", q);
+  }
+  u.searchParams.set("partner_id", pid);
+  return u.toString();
+}
+
+const GYG_LOGO_SRC =
+  "https://upload.wikimedia.org/wikipedia/commons/8/86/GetYourGuide_logo.svg";
 
 /** Open-Meteo Geocoding : langue des résultats (aligné sur les codes app). */
 function openMeteoLanguageParam(appLang) {
@@ -5076,6 +5171,12 @@ function normTripId(id) {
   return String(id ?? "").trim();
 }
 
+/** Filtre `.in("trip_id", …)` PostgREST : un id non-uuid fait échouer toute la requête. */
+function isUuidLike(v) {
+  const s = String(v || "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
+}
+
 /** Évite les doublons si la liste brute contient deux fois le même id (course requêtes / état). */
 function dedupeTripsById(trips) {
   const seen = new Set();
@@ -5257,6 +5358,26 @@ function parseMissingSchemaColumnName(err) {
     if (m?.[1]) return String(m[1]).trim();
   }
   return "";
+}
+
+/**
+ * Erreur « vraie » table absente / cache PostgREST — pas une simple erreur de permission ou autre.
+ * Évite de traiter p.ex. "permission denied for table trip_expenses" comme « exécute le script SQL ».
+ */
+function isTripExpensesSchemaMissingError(err) {
+  const msg = [err?.message, err?.details, err?.hint].filter(Boolean).map(String).join("\n");
+  const low = msg.toLowerCase();
+  if (/permission denied|violates row-level security/i.test(low)) return false;
+  const code = String(err?.code || "");
+  const st = Number(err?.status ?? err?.statusCode);
+  // PGRST204 = colonne absente du cache : ce n’est pas « la table n’existe pas » (évite faux bandeau SQL).
+  if (code === "PGRST204") return false;
+  if (/could not find the .*column/i.test(msg) || /column.*does not exist/i.test(low)) return false;
+  if (code === "PGRST205" || code === "42P01") return true;
+  if (st === 404 && /trip_expenses/i.test(msg)) return true;
+  if (/could not find the table/i.test(msg)) return true;
+  if (/does not exist/i.test(msg) && (/relation/i.test(msg) || /table/i.test(low))) return true;
+  return false;
 }
 
 function mergeActivitiesFromServer(prev, fetched, tripIds, graceRef) {
@@ -5986,7 +6107,7 @@ function getAuthEmailRedirectTo() {
 }
 
 function AuthView() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [showAuthLanding, setShowAuthLanding] = useState(() => !authHasInviteLink());
   const [mode, setMode] = useState("signin");
   const [firstName, setFirstName] = useState("");
@@ -6008,6 +6129,9 @@ function AuthView() {
   const [inviteEndDate, setInviteEndDate] = useState("");
   const [inviteAccepted, setInviteAccepted] = useState(false);
   const [emailExistsModalOpen, setEmailExistsModalOpen] = useState(false);
+  const [awaitingEmailConfirm, setAwaitingEmailConfirm] = useState(false);
+  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [resendLoading, setResendLoading] = useState(false);
 
   useEffect(() => {
     try {
@@ -6074,6 +6198,7 @@ function AuthView() {
               full_name: `${safeFirstName} ${safeLastName}`.trim(),
               avatar_url: avatarUrl || "",
               initials_avatar_bg: randomInitialsBgFromPalette(),
+              locale: language,
             },
           },
         });
@@ -6082,10 +6207,14 @@ function AuthView() {
           throw error;
         }
         if (!signupData?.session) {
+          setAwaitingEmailConfirm(true);
+          setConfirmationEmail(safeEmail);
           setMsg(t("auth.confirmEmailSent"));
           setMode("signin");
           setPassword("");
         } else {
+          setAwaitingEmailConfirm(false);
+          setConfirmationEmail("");
           setMsg(t("auth.signupLoggedIn"));
         }
       } else {
@@ -6094,6 +6223,8 @@ function AuthView() {
           password: safePassword,
         });
         if (error) throw error;
+        setAwaitingEmailConfirm(false);
+        setConfirmationEmail("");
       }
     } catch (e) {
       if (mode === "signup") clearSignupOnboardingMarkers();
@@ -6101,8 +6232,18 @@ function AuthView() {
         setEmailExistsModalOpen(true);
         setMsg("");
       } else {
+        const code = String(e?.code || "");
         const raw = String(e?.message || "");
-        if (raw.toLowerCase().includes("invalid login credentials")) {
+        const low = raw.toLowerCase();
+        if (
+          code === "email_not_confirmed" ||
+          low.includes("email not confirmed") ||
+          low.includes("not confirmed")
+        ) {
+          setAwaitingEmailConfirm(true);
+          setConfirmationEmail(safeEmail);
+          setMsg(t("auth.emailNotConfirmed"));
+        } else if (low.includes("invalid login credentials")) {
           setMsg(t("auth.invalidCredentials"));
         } else {
           setMsg(raw || t("auth.errGeneric"));
@@ -6160,6 +6301,7 @@ function AuthView() {
             invited_email: safeInviteEmail,
             invited_trip: String(inviteTripName || "").trim(),
             initials_avatar_bg: randomInitialsBgFromPalette(),
+            locale: language,
           },
         },
       });
@@ -6174,9 +6316,13 @@ function AuthView() {
       setInvitePromptOpen(false);
       clearInviteParams();
       if (!inviteSignupData?.session) {
+        setAwaitingEmailConfirm(true);
+        setConfirmationEmail(safeInviteEmail);
         setMsg(t("auth.confirmEmailSent"));
         setMode("signin");
       } else {
+        setAwaitingEmailConfirm(false);
+        setConfirmationEmail("");
         setMsg(t("auth.signupLoggedIn"));
       }
     } catch (e) {
@@ -6189,6 +6335,29 @@ function AuthView() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resendConfirmationEmail = async () => {
+    const em = String(confirmationEmail || email || "").trim();
+    if (!em) {
+      setMsg(t("auth.forgotNeedEmail"));
+      return;
+    }
+    setResendLoading(true);
+    try {
+      const emailRedirectTo = getAuthEmailRedirectTo();
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: em,
+        options: emailRedirectTo ? { emailRedirectTo } : {},
+      });
+      if (error) throw error;
+      setMsg(t("auth.confirmEmailResendSent"));
+    } catch (e) {
+      setMsg(String(e?.message || t("auth.confirmEmailResendErr")));
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -6365,6 +6534,10 @@ function AuthView() {
             setMode((m) => {
               if (invitePromptOpen) return "signup";
               const next = m === "signin" ? "signup" : "signin";
+              if (next === "signup") {
+                setAwaitingEmailConfirm(false);
+                setConfirmationEmail("");
+              }
               if (next === "signin") {
                 setFirstName("");
                 setLastName("");
@@ -6396,6 +6569,16 @@ function AuthView() {
           <div className="mt-4 rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-700">
             {String(msg)}
           </div>
+        ) : null}
+        {awaitingEmailConfirm && String(confirmationEmail || email || "").trim() ? (
+          <button
+            type="button"
+            onClick={resendConfirmationEmail}
+            disabled={resendLoading || loading}
+            className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+          >
+            {resendLoading ? t("auth.loading") : t("auth.confirmEmailResend")}
+          </button>
         ) : null}
         <footer className="mt-6 border-t border-slate-200/60 pt-4">
           <LanguageFab placement="authFooter" />
@@ -9993,6 +10176,37 @@ function DestinationGuideView({
                     );
                   })}
                 </div>
+                {(() => {
+                  const gygPid = String(import.meta.env?.VITE_GYG_PARTNER_ID || "").trim();
+                  const cityToken = String(displayGuide.city || "").split(",")[0].trim();
+                  if (!gygPid || !cityToken) return null;
+                  const gygHref = buildGetYourGuideAffiliateUrl(cityToken, gygPid);
+                  if (!gygHref) return null;
+                  return (
+                    <div className="mt-4 rounded-2xl border border-indigo-100/90 bg-white/95 px-4 py-3 ring-1 ring-indigo-50/80">
+                      <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
+                        {t("destination.gygWidgetTitle")}
+                      </p>
+                      <p className="mb-3 text-[11px] leading-snug text-slate-500">{t("destination.gygWidgetHint")}</p>
+                      <a
+                        href={gygHref}
+                        target="_blank"
+                        rel="sponsored noopener noreferrer"
+                        className="inline-flex max-w-full items-center rounded-xl border border-indigo-200/80 bg-white px-3 py-2 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+                        aria-label={t("destination.gygLinkAria", { city: displayCityForLocale(cityToken, language) })}
+                      >
+                        <img
+                          src={GYG_LOGO_SRC}
+                          alt=""
+                          className="h-7 w-auto max-w-[min(200px,100%)] object-contain object-left"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                        <ExternalLink className="ml-2 h-4 w-4 shrink-0 text-slate-400" strokeWidth={2} aria-hidden />
+                      </a>
+                    </div>
+                  );
+                })()}
               </section>
 
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
@@ -11894,6 +12108,7 @@ function TripExpenseDetail({
   onAddGroupExpense,
   onUpdateGroupExpense,
   onDeleteGroupExpense,
+  onShareTrip,
 }) {
   const { t, language } = useI18n();
   const [editingActivity, setEditingActivity] = useState(null);
@@ -11903,7 +12118,6 @@ function TripExpenseDetail({
   const [editTime, setEditTime] = useState("");
   const [groupModal, setGroupModal] = useState(null);
   const [groupSaving, setGroupSaving] = useState(false);
-  const [importingPlanner, setImportingPlanner] = useState(false);
 
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
@@ -11944,8 +12158,6 @@ function TripExpenseDetail({
     return String(b?.id || "").localeCompare(String(a?.id || ""));
   });
 
-  const plannerWithCost = sortedActivities.filter((a) => Number(a.cost || 0) > 0);
-
   return (
     <>
       <div className="max-w-full overflow-x-hidden rounded-[2rem] border border-slate-200/80 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-5">
@@ -11959,14 +12171,26 @@ function TripExpenseDetail({
             ) : null}
           </div>
           {!isTripPastByEndDate(trip) ? (
-            <button
-              type="button"
-              onClick={() => onOpenParticipants(trip)}
-              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
-            >
-              <Users size={18} className="text-slate-600" strokeWidth={2} />
-              {t("budget.participants")}
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              {typeof onShareTrip === "function" ? (
+                <button
+                  type="button"
+                  onClick={() => onShareTrip(trip)}
+                  className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-indigo-900 shadow-sm transition hover:bg-indigo-100 sm:w-auto"
+                >
+                  <Share2 size={18} className="text-indigo-700" strokeWidth={2} />
+                  {t("tripCard.share")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onOpenParticipants(trip)}
+                className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-800 shadow-sm transition hover:bg-slate-100 sm:w-auto"
+              >
+                <Users size={18} className="text-slate-600" strokeWidth={2} />
+                {t("budget.participants")}
+              </button>
+            </div>
           ) : null}
         </div>
 
@@ -12081,38 +12305,6 @@ function TripExpenseDetail({
               >
                 <Plus size={18} />
                 {t("budget.newExpense")}
-              </button>
-              <button
-                type="button"
-                disabled={importingPlanner || plannerWithCost.length === 0}
-                onClick={async () => {
-                  if (plannerWithCost.length === 0) return;
-                  setImportingPlanner(true);
-                  try {
-                    for (const a of plannerWithCost) {
-                      const ymd = toYMDLoose(a?.date_key || a?.date);
-                      await onAddGroupExpense({
-                        trip_id: trip.id,
-                        title: t("budget.importLineTitle", {
-                          activity: String(a?.title || a?.name || "").trim()
-                            ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
-                            : t("planner.activityNamePlaceholder"),
-                        }),
-                        amount: Number(a.cost || 0),
-                        paid_by: "Moi",
-                        split_between: [],
-                        expense_date: ymd || null,
-                      });
-                    }
-                  } finally {
-                    setImportingPlanner(false);
-                  }
-                }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {importingPlanner
-                  ? t("budget.importingPlanner")
-                  : t("budget.importPlanner", { count: plannerWithCost.length })}
               </button>
             </div>
 
@@ -12275,9 +12467,13 @@ function TripExpenseDetail({
         onSave={async (payload) => {
           setGroupSaving(true);
           try {
-            if (payload.id) await onUpdateGroupExpense(payload);
-            else await onAddGroupExpense(payload);
-            setGroupModal(null);
+            if (payload.id) {
+              await onUpdateGroupExpense(payload);
+              setGroupModal(null);
+            } else {
+              const ok = await onAddGroupExpense(payload);
+              if (ok) setGroupModal(null);
+            }
           } finally {
             setGroupSaving(false);
           }
@@ -12915,9 +13111,13 @@ export default function App() {
   const [chatTripId, setChatTripId] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatMessagesByTrip, setChatMessagesByTrip] = useState(() => loadChatCacheFromStorage());
+  const chatMessagesByTripRef = useRef(chatMessagesByTrip);
+  chatMessagesByTripRef.current = chatMessagesByTrip;
   const [chatInput, setChatInput] = useState("");
   const [activityVotes, setActivityVotes] = useState([]);
   const [chatMessagesLocal, setChatMessagesLocal] = useState({});
+  const chatMessagesLocalRef = useRef(chatMessagesLocal);
+  chatMessagesLocalRef.current = chatMessagesLocal;
   const [activityVotesLocal, setActivityVotesLocal] = useState({});
   const [selectedDate, setSelectedDate] = useState(() => readStoredPlannerDate() || getTodayStr());
   const [monthCursor, setMonthCursor] = useState(() => {
@@ -12956,6 +13156,10 @@ export default function App() {
   const [tripExpenses, setTripExpenses] = useState([]);
   /** False si la table `trip_expenses` n’existe pas encore (script SQL non exécuté). */
   const [tripExpensesTableReady, setTripExpensesTableReady] = useState(true);
+  /** Incrémenté au retour sur l’onglet si les dépenses groupe sont indisponibles — relance la lecture sans F5. */
+  const [tripExpensesRetryNonce, setTripExpensesRetryNonce] = useState(0);
+  const tripExpensesTableReadyRef = useRef(true);
+  tripExpensesTableReadyRef.current = tripExpensesTableReady;
 
   const selectedTrip =
     trips.find((t) => normTripId(t.id) === normTripId(selectedTripId)) || null;
@@ -13444,35 +13648,101 @@ export default function App() {
   }, [trips, session]);
 
   useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!session || authLoading) return;
+      if (!tripExpensesTableReadyRef.current) setTripExpensesRetryNonce((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [session, authLoading]);
+
+  useEffect(() => {
     if (authLoading || !session) {
       setTripExpenses([]);
+      setTripExpensesTableReady(true);
       return undefined;
     }
     const myGen = ++loadTripExpensesGenRef.current;
     const loadTripExpenses = async () => {
-      const tripIds = (tripsRef.current || []).map((t) => normTripId(t?.id)).filter(Boolean);
+      const rawTripIds = (tripsRef.current || []).map((t) => normTripId(t?.id)).filter(Boolean);
+      const tripIds = rawTripIds.filter(isUuidLike);
+      if (rawTripIds.length > 0 && tripIds.length === 0 && import.meta.env.DEV) {
+        console.warn("[trip_expenses] aucun id voyage au format uuid — requête .in() ignorée", rawTripIds);
+      }
       if (tripIds.length === 0) {
-        if (myGen === loadTripExpensesGenRef.current) setTripExpenses([]);
+        if (myGen === loadTripExpensesGenRef.current) {
+          setTripExpenses([]);
+          setTripExpensesTableReady(true);
+        }
         return;
       }
       try {
-        const { data, error } = await supabase.from("trip_expenses").select("*").in("trip_id", tripIds);
-        if (error) {
-          const msg = String(error.message || "");
-          if (/trip_expenses|relation|does not exist|Could not find the table|schema cache/i.test(msg)) {
+        const probe = () => supabase.from("trip_expenses").select("id").limit(1);
+        let { error: probeErr } = await probe();
+        if (probeErr?.code === "PGRST205" || /schema cache/i.test(String(probeErr?.message || ""))) {
+          await new Promise((r) => setTimeout(r, 2000));
+          ({ error: probeErr } = await probe());
+        }
+        if (probeErr?.code === "PGRST205" || /schema cache/i.test(String(probeErr?.message || ""))) {
+          await new Promise((r) => setTimeout(r, 4000));
+          ({ error: probeErr } = await probe());
+        }
+        if (probeErr) {
+          if (isTripExpensesSchemaMissingError(probeErr)) {
+            if (import.meta.env.DEV) {
+              console.warn("[trip_expenses] sonde: table / cache", {
+                code: probeErr?.code,
+                message: probeErr?.message,
+                details: probeErr?.details,
+                hint: probeErr?.hint,
+              });
+            }
             if (myGen === loadTripExpensesGenRef.current) {
               setTripExpensesTableReady(false);
               setTripExpenses([]);
             }
             return;
           }
+          throw probeErr;
+        }
+        // Toujours activer l’UI après sonde OK : ne pas exiger myGen ici (Strict Mode / re-renders
+        // peuvent incrémenter la génération entre la sonde et ce point → bandeau bloqué à tort).
+        setTripExpensesTableReady(true);
+
+        if (myGen !== loadTripExpensesGenRef.current) return;
+
+        let data;
+        let error;
+        const selectExpenses = () =>
+          supabase.from("trip_expenses").select("*").in("trip_id", tripIds);
+        ({ data, error } = await selectExpenses());
+        if (error?.code === "PGRST205" || /schema cache/i.test(String(error?.message || ""))) {
+          await new Promise((r) => setTimeout(r, 2000));
+          ({ data, error } = await selectExpenses());
+        }
+        if (error?.code === "PGRST205" || /schema cache/i.test(String(error?.message || ""))) {
+          await new Promise((r) => setTimeout(r, 4000));
+          ({ data, error } = await selectExpenses());
+        }
+        if (error) {
+          if (import.meta.env.DEV) {
+            console.warn("[trip_expenses] lecture par trip_id", {
+              code: error?.code,
+              message: error?.message,
+              tripIds,
+            });
+          }
           throw error;
         }
         if (myGen !== loadTripExpensesGenRef.current) return;
-        setTripExpensesTableReady(true);
         setTripExpenses((data || []).map(normalizeTripExpenseRow).filter(Boolean));
       } catch (e) {
         if (myGen !== loadTripExpensesGenRef.current) return;
+        if (!isTripExpensesSchemaMissingError(e)) {
+          setTripExpensesTableReady(true);
+        }
         setNotice(String(e?.message || "Erreur chargement depenses groupe"));
       }
     };
@@ -13482,7 +13752,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "trip_expenses" }, loadTripExpenses)
       .subscribe();
     return () => supabase.removeChannel(exChannel);
-  }, [trips, session, authLoading]);
+  }, [trips, session, authLoading, tripExpensesRetryNonce]);
 
   useEffect(() => {
     if (trips.length === 0) {
@@ -13505,7 +13775,7 @@ export default function App() {
         return;
       }
 
-      const cachedMessages = chatMessagesByTrip[chatTripId];
+      const cachedMessages = chatMessagesByTripRef.current[chatTripId];
       if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
         setChatMessages(cachedMessages);
       }
@@ -13531,16 +13801,20 @@ export default function App() {
         const sortedMessages = (data || []).slice().sort((a, b) =>
           String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
         );
-        setChatMessages(sortedMessages);
-        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sortedMessages }));
+        const prevList = chatMessagesByTripRef.current[chatTripId] || [];
+        const localOnly = chatMessagesLocalRef.current[chatTripId] || [];
+        const merged = mergeChatMessageLists(
+          mergeChatMessageLists(prevList, localOnly),
+          sortedMessages
+        );
+        setChatMessages(merged);
+        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: merged }));
       } catch (_e) {
-        // Keep durable cache first, then in-memory local fallback.
-        const cached = chatMessagesByTrip[chatTripId];
-        if (Array.isArray(cached) && cached.length > 0) {
-          setChatMessages(cached);
-        } else {
-          setChatMessages(chatMessagesLocal[chatTripId] || []);
-        }
+        const prevList = chatMessagesByTripRef.current[chatTripId] || [];
+        const localFallback = chatMessagesLocalRef.current[chatTripId] || [];
+        const merged = mergeChatMessageLists(prevList, localFallback);
+        setChatMessages(merged);
+        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: merged }));
       }
 
       try {
@@ -14190,9 +14464,9 @@ export default function App() {
   };
 
   const addGroupExpense = async (row) => {
-    if (!tripExpensesTableReady) return;
+    if (!tripExpensesTableReady) return false;
     const tid = normTripId(row?.trip_id);
-    if (!tid) return;
+    if (!tid) return false;
     let body = {
       trip_id: tid,
       title: String(row?.title || "Dépense").trim(),
@@ -14204,17 +14478,23 @@ export default function App() {
     if (session?.user?.id) body.owner_id = session.user.id;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const { data, error } = await supabase.from("trip_expenses").insert(body).select("*");
-      if (!error && data?.[0]) {
-        const norm = normalizeTripExpenseRow(data[0]);
-        if (norm) setTripExpenses((prev) => [...(prev || []), norm]);
+      if (!error) {
+        const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+        if (row) {
+          const norm = normalizeTripExpenseRow(row);
+          if (norm) setTripExpenses((prev) => [...(prev || []), norm]);
+        } else {
+          // INSERT OK mais pas de ligne renvoyée (RLS / cache PostgREST) : forcer un rechargement.
+          setTripExpensesRetryNonce((n) => n + 1);
+        }
         setNotice("");
-        return;
+        return true;
       }
       if (error) {
-        const msg = String(error.message || "");
-        if (/trip_expenses|relation|does not exist|Could not find the table/i.test(msg)) {
+        const msg = String(error?.message || "");
+        if (isTripExpensesSchemaMissingError(error)) {
           setTripExpensesTableReady(false);
-          return;
+          return false;
         }
         const missing = parseMissingSchemaColumnName(error);
         if (missing && Object.prototype.hasOwnProperty.call(body, missing)) {
@@ -14228,9 +14508,10 @@ export default function App() {
           continue;
         }
         setNotice(msg);
-        return;
+        return false;
       }
     }
+    return false;
   };
 
   const updateGroupExpense = async (row) => {
@@ -15046,6 +15327,7 @@ export default function App() {
             onAddGroupExpense={addGroupExpense}
             onUpdateGroupExpense={updateGroupExpense}
             onDeleteGroupExpense={deleteGroupExpense}
+            onShareTrip={(tr) => setShareTrip(tr)}
           />
         </BudgetTripDetailShell>
       ) : null}

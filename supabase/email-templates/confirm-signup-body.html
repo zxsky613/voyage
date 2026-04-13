@@ -1,0 +1,61 @@
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.5;color:#1a1a1a;">
+  <tr>
+    <td>
+{{ if eq (index .Data "locale") "en" }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">Confirm your email address</h2>
+      <p style="margin:0 0 16px;">Thank you for signing up for <strong>AVOLO</strong>. To activate your account and secure your access, please confirm your email address using the button below.</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">Confirm my email address</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">If the button does not work, copy this link into your browser:</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">If you did not create an AVOLO account, you can safely ignore this email.</p>
+{{ else if eq (index .Data "locale") "de" }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">Bestätigen Sie Ihre E-Mail-Adresse</h2>
+      <p style="margin:0 0 16px;">Vielen Dank für Ihre Registrierung bei <strong>AVOLO</strong>. Bitte bestätigen Sie Ihre E-Mail-Adresse über die Schaltfläche unten, um Ihr Konto zu aktivieren.</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">E-Mail-Adresse bestätigen</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">Wenn die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in den Browser:</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">Wenn Sie kein Konto bei AVOLO erstellt haben, können Sie diese E-Mail ignorieren.</p>
+{{ else if eq (index .Data "locale") "es" }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">Confirma tu correo electrónico</h2>
+      <p style="margin:0 0 16px;">Gracias por registrarte en <strong>AVOLO</strong>. Para activar tu cuenta y asegurar el acceso, confirma tu dirección de correo con el botón siguiente.</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">Confirmar mi correo</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">Si el botón no funciona, copia este enlace en tu navegador:</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">Si no creaste una cuenta en AVOLO, puedes ignorar este mensaje.</p>
+{{ else if eq (index .Data "locale") "it" }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">Conferma il tuo indirizzo email</h2>
+      <p style="margin:0 0 16px;">Grazie per esserti registrato su <strong>AVOLO</strong>. Per attivare l’account e proteggere l’accesso, conferma il tuo indirizzo email con il pulsante qui sotto.</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">Conferma la mia email</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">Se il pulsante non funziona, copia questo link nel browser:</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">Se non hai creato un account su AVOLO, puoi ignorare questa email.</p>
+{{ else if eq (index .Data "locale") "zh" }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">请确认你的电子邮箱</h2>
+      <p style="margin:0 0 16px;">感谢注册 <strong>AVOLO</strong>。为激活账户并保障你的访问安全，请点击下方按钮确认邮箱地址。</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">确认邮箱</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">若按钮无法打开，请将以下链接复制到浏览器：</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">如非你本人注册 AVOLO，可忽略此邮件。</p>
+{{ else }}
+      <h2 style="margin:0 0 16px;font-size:20px;font-weight:600;">Confirmez votre adresse e-mail</h2>
+      <p style="margin:0 0 16px;">Merci de votre inscription sur <strong>AVOLO</strong>. Pour activer votre compte et sécuriser votre accès, veuillez confirmer votre adresse en cliquant sur le bouton ci-dessous.</p>
+      <p style="margin:24px 0;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">Confirmer mon adresse e-mail</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :</p>
+      <p style="margin:0 0 24px;font-size:13px;word-break:break-all;color:#6b7280;">{{ .ConfirmationURL }}</p>
+      <p style="margin:0;font-size:13px;color:#9ca3af;">Si vous n’avez pas créé de compte sur AVOLO, vous pouvez ignorer cet e-mail en toute sécurité.</p>
+{{ end }}
+    </td>
+  </tr>
+</table>
