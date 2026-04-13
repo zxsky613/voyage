@@ -811,6 +811,34 @@ const TRAVEL_TIPS_OVERRIDES_ML = {
       },
     ],
   },
+  visby: {
+    do: [
+      {
+        fr: "Les remparts (Ringmur) ceinturent toute la vieille ville : parcours sur les chemins de ronde possible en saison — chaussures plates indispensables sur les pavés glissants.",
+        en: "The Ringmur walls encircle the old town: you can walk sections of the battlements in season—flat shoes are a must on slippery cobblestones.",
+        de: "Die Ringmur umschließt die Altweg: in der Saison sind Teile des Wehrgangs begehbar—flache Schuhe auf den rutschigen Kopfsteinen sind Pflicht.",
+        es: "La Ringmur rodea el casco antiguo: en temporada se puede recorrer parte de las almurallas—calzado plano imprescindible en los adoquines resbaladizos.",
+        it: "La Ringmur cinge la città vecchia: in stagione si percorrono tratti delle mura—scarpe basse obbligatorie sui ciottoli scivolosi.",
+        zh: "环城墙（Ringmur）环绕老城，季节适宜时可走部分城垛步道——鹅卵石路面很滑，务必穿平底鞋。",
+      },
+      {
+        fr: "Visby compte de nombreuses ruines d'églises médiévales au cœur de la ville — prends une carte au musée ou à l'office de tourisme pour enchaîner Sankta Karin, Drotten, San Lars sans te perdre.",
+        en: "Visby has many medieval church ruins right in town—grab a map at the museum or tourist office to link Sankta Karin, Drotten, St Lars without getting lost.",
+        de: "Visby hat mitten in der Stadt viele mittelalterliche Kirchenruinen—hol dir im Museum oder beim Tourismusbüro einen Plan für Sankta Karin, Drotten, St. Lars.",
+        es: "Visby concentra ruinas de iglesias medievales en el centro—pide un plano en el museo u oficina de turismo para enlazar Sankta Karin, Drotten, San Lars.",
+        it: "Visby ha molte rovine di chiese medievali in centro—prendi una mappa al museo o in ufficio turistico per collegare Sankta Karin, Drotten, San Lars.",
+        zh: "维斯比城内遍布中世纪教堂遗址——在博物馆或旅游中心取地图，按图走访圣卡琳、德罗滕、圣拉尔斯等遗址。",
+      },
+      {
+        fr: "Pour rejoindre Gotland depuis la Suède continentale : ferries depuis Nynäshamn ou Oskarshamn — réserve sur le site de la compagnie en haute saison ; hors saison les horaires se réduisent fortement.",
+        en: "To reach Gotland from mainland Sweden: ferries from Nynäshamn or Oskarshamn—book with the operator online in high season; off-season schedules shrink sharply.",
+        de: "Nach Gotland ab dem schwedischen Festland: Fähren ab Nynäshamn oder Oskarshamn—in der Hochsaison online buchen; außerhalb der Saison gibt es deutlich weniger Abfahrten.",
+        es: "Para llegar a Gotland desde Suecia continental: ferris desde Nynäshamn u Oskarshamn—reserva en la web del operador en temporada alta; fuera de temporada los enlaces se reducen mucho.",
+        it: "Per Gotland dalla Svezia continentale: traghetti da Nynäshamn o Oskarshamn—prenota sul sito della compagnia in alta stagione; fuori stagione i collegamenti calano molto.",
+        zh: "从瑞典大陆前往哥得兰岛：从尼奈斯港或奥斯卡港乘渡轮——旺季务必在航运公司官网预订；淡季班次明显减少。",
+      },
+    ],
+  },
   valencia: {
     do: [
       {

@@ -24,10 +24,15 @@ export async function sendTripInvitesWithResend(opts) {
   const programmeText = String(opts?.programmeText || "").trim();
 
   if (!apiKey) {
-    return { ok: false, status: 500, error: "RESEND_API_KEY is missing" };
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "Clé Resend absente : ajoutez RESEND_API_KEY dans .env.local (dev) ou les variables d’environnement du déploiement (ex. Vercel), puis redémarrez.",
+    };
   }
   if (recipients.length === 0) {
-    return { ok: false, status: 400, error: "No recipients provided" };
+    return { ok: false, status: 400, error: "Aucun destinataire valide." };
   }
 
   const title = String(trip?.title || "Voyage");

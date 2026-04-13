@@ -901,7 +901,9 @@ const CITY_CATALOG = [
   "Tokyo", "Kyoto", "Osaka", "Seoul", "Bangkok", "Singapore", "Bali", "Jakarta", "Beijing", "Shanghai", "Guangzhou",
   "New York", "Los Angeles", "San Francisco", "Miami", "Chicago", "Toronto", "Vancouver",
   "London", "Barcelona", "Madrid", "Rome", "Milan", "Venise", "Berlin", "Amsterdam",
+  "Stockholm", "Visby", "Copenhague", "Oslo", "Helsinki", "Dublin",
   "Bruxelles", "Berne", "Lisbonne", "Porto", "Prague", "Vienne", "Budapest", "Athènes", "Istanbul",
+  "Seville", "Valencia", "Naples", "Palermo", "Edinburgh", "Warsaw", "Krakow", "Turin",
   "Dubai", "Doha", "Abu Dhabi", "Le Caire", "Marrakech", "Tunis", "Alger",
   "Sydney", "Melbourne", "Mykonos", "Auckland", "Cape Town", "Rio de Janeiro", "Sao Paulo", "Phuket",
 ];
@@ -923,6 +925,15 @@ const CITY_ALIASES = {
   Milan: ["Milano"],
   Berne: ["Bern"],
   Mykonos: ["Myconos"],
+  Copenhague: ["Copenhagen", "København", "Kobenhavn"],
+  Naples: ["Napoli"],
+  Seville: ["Séville", "Sevilla"],
+  Edinburgh: ["Édimbourg", "Edimbourg"],
+  Warsaw: ["Varsovie", "Warszawa"],
+  Krakow: ["Cracovie", "Kraków"],
+  Turin: ["Torino"],
+  Valencia: ["València"],
+  Visby: ["Gotland"],
 };
 
 const CITY_SEARCH_ENTRIES = CITY_CATALOG.flatMap((canonical) => {
@@ -948,11 +959,15 @@ const COUNTRY_QUERY_GROUPS = [
     cities: ["Rome", "Milan", "Venise", "Florence", "Naples", "Turin", "Palermo"],
     geoCountries: ["italie", "italy", "italia"],
   },
-  { match: ["espagne", "spain"], cities: ["Barcelona", "Madrid"], geoCountries: ["espagne", "spain", "espana"] },
   {
-    match: ["royaume-uni", "united kingdom", "angleterre", "england", "ecosse", "scotland"],
+    match: ["espagne", "spain"],
+    cities: ["Barcelona", "Madrid", "Seville", "Valencia"],
+    geoCountries: ["espagne", "spain", "espana"],
+  },
+  {
+    match: ["royaume-uni", "united kingdom", "angleterre", "england"],
     cities: ["London"],
-    geoCountries: ["royaume-uni", "united kingdom", "angleterre", "england", "ecosse", "scotland"],
+    geoCountries: ["royaume-uni", "united kingdom", "angleterre", "england"],
   },
   {
     match: ["allemagne", "germany", "deutschland"],
@@ -971,6 +986,41 @@ const COUNTRY_QUERY_GROUPS = [
     geoCountries: ["suisse", "switzerland", "schweiz"],
   },
   { match: ["portugal"], cities: ["Lisbonne", "Porto"], geoCountries: ["portugal"] },
+  {
+    match: ["suede", "sweden", "sverige"],
+    cities: ["Stockholm", "Visby"],
+    geoCountries: ["suede", "sweden", "sverige"],
+  },
+  {
+    match: ["danemark", "denmark", "danmark"],
+    cities: ["Copenhague"],
+    geoCountries: ["danemark", "denmark", "danmark"],
+  },
+  {
+    match: ["norvege", "norway", "norge"],
+    cities: ["Oslo"],
+    geoCountries: ["norvege", "norway", "norge"],
+  },
+  {
+    match: ["finlande", "finland", "suomi"],
+    cities: ["Helsinki"],
+    geoCountries: ["finlande", "finland", "suomi"],
+  },
+  {
+    match: ["irlande", "ireland", "eire"],
+    cities: ["Dublin"],
+    geoCountries: ["irlande", "ireland", "eire"],
+  },
+  {
+    match: ["pologne", "poland", "polska"],
+    cities: ["Warsaw", "Krakow"],
+    geoCountries: ["pologne", "poland", "polska"],
+  },
+  {
+    match: ["ecosse", "scotland"],
+    cities: ["Edinburgh"],
+    geoCountries: ["ecosse", "scotland"],
+  },
   {
     match: ["autriche", "austria", "osterreich"],
     cities: ["Vienne"],
@@ -2905,6 +2955,136 @@ function buildSuggestedActivitiesForCity(city) {
       act("Quartier du Carmen & cathédrale", 0, "Gratuit", "València, Espagne"),
       act("Jardin du Turia", 0, "Gratuit", "València, Espagne"),
       act("Plage de la Malvarrosa", 0, "Gratuit", "València, Espagne"),
+    ];
+  }
+  if (c.includes("visby")) {
+    return [
+      act("Promenade sur les remparts (Ringmur)", 0, "Gratuit", "Visby, Gotland"),
+      act("Cathédrale Sainte-Marie (Sankta Maria)", 0, "Gratuit", "Visby"),
+      act("Gotlands museum", 12, "Billet adulte", "Visby"),
+      act("Ruines Sankta Karin & Sankta Lars", 0, "Gratuit", "Visby"),
+      act("Almedalen & port hanséatique", 0, "Gratuit", "Visby"),
+      act("Högklint — falaises & vue sur la mer", 0, "Gratuit", "Gotland"),
+    ];
+  }
+  if (c.includes("stockholm")) {
+    return [
+      act("Gamla Stan & palais royal", 0, "Gratuit", "Stockholm"),
+      act("Musée Vasa", 17, "Billet adulte", "Djurgården, Stockholm"),
+      act("Croisière archipel (Strömma)", 25, "Billet type", "Depuis Nybrokajen, Stockholm"),
+      act("Skansen", 16, "Billet adulte", "Djurgården, Stockholm"),
+      act("Hôtel de ville Stadshuset", 12, "Visite guidée", "Kungsholmen, Stockholm"),
+      act("Quartier Södermalm & Monteliusvägen", 0, "Gratuit", "Södermalm, Stockholm"),
+    ];
+  }
+  if (c.includes("copenhague") || c.includes("copenhagen") || c.includes("københavn")) {
+    return [
+      act("Nyhavn & promenade", 0, "Gratuit", "Copenhague"),
+      act("Tivoli Gardens", 22, "Billet adulte", "Centre, Copenhague"),
+      act("Château de Rosenborg", 14, "Billet adulte", "Copenhague"),
+      act("Christiansborg — tour du Parlement", 15, "Billet adulte", "Slotsholmen, Copenhague"),
+      act("Petite Sirène", 0, "Gratuit", "Langelinie, Copenhague"),
+      act("Marché Torvehallerne", 0, "Gratuit (repas en sus)", "Nørreport, Copenhague"),
+    ];
+  }
+  if (c.includes("oslo")) {
+    return [
+      act("Musée des navires vikings", 12, "Billet adulte", "Bygdøy, Oslo"),
+      act("Parc Vigeland", 0, "Gratuit", "Frogner, Oslo"),
+      act("Forteresse Akershus", 0, "Gratuit (musées en sus)", "Akershus, Oslo"),
+      act("Opéra d'Oslo — toit accessible", 0, "Gratuit", "Bjørvika, Oslo"),
+      act("Musée du peuple norvégien", 15, "Billet adulte", "Bygdøy, Oslo"),
+      act("Palais royal & relève de la garde", 0, "Gratuit", "Sentrum, Oslo"),
+    ];
+  }
+  if (c.includes("helsinki")) {
+    return [
+      act("Forteresse Suomenlinna (ferry)", 8, "Billet ferry A/R", "Helsinki"),
+      act("Église Temppeliaukio", 5, "Billet adulte", "Helsinki"),
+      act("Cathédrale luthérienne", 0, "Gratuit", "Senate Square, Helsinki"),
+      act("Marché Kauppatori", 0, "Gratuit", "Waterfront, Helsinki"),
+      act("Musée national de Finlande", 14, "Billet adulte", "Helsinki"),
+      act("Ouspenski & quartier Katajanokka", 0, "Gratuit", "Helsinki"),
+    ];
+  }
+  if (c.includes("dublin")) {
+    return [
+      act("Trinity College — Livre de Kells", 15, "Billet adulte", "Dublin"),
+      act("Guinness Storehouse", 28, "Billet adulte", "St. James's Gate, Dublin"),
+      act("Temple Bar", 0, "Gratuit", "Dublin"),
+      act("Château de Dublin", 8, "Billet adulte", "Dublin"),
+      act("Cathédrale Saint-Patrick", 8, "Billet adulte", "Dublin"),
+      act("Phoenix Park & Zoo", 0, "Gratuit (zoo payant)", "Dublin"),
+    ];
+  }
+  if (c.includes("naples") || c.includes("napoli")) {
+    return [
+      act("Musée archéologique national", 15, "Billet adulte", "Naples"),
+      act("Centre historique & Spaccanapoli", 0, "Gratuit", "Naples"),
+      act("Castel dell'Ovo", 0, "Gratuit", "Lungomare, Naples"),
+      act("Catacombes de San Gennaro", 11, "Billet adulte", "Naples"),
+      act("Castel Nuovo (Maschio Angioino)", 6, "Billet adulte", "Naples"),
+      act("Pizza historique — Via dei Tribunali", 12, "Repas type", "Naples"),
+    ];
+  }
+  if (c.includes("palermo")) {
+    return [
+      act("Palais des Normands & chapelle Palatine", 12, "Billet adulte", "Palerme"),
+      act("Cathédrale de Palerme", 0, "Gratuit", "Palerme"),
+      act("Teatro Massimo", 10, "Visite guidée", "Palerme"),
+      act("Marché Ballarò", 0, "Gratuit (street food en sus)", "Palerme"),
+      act("Catacombes des Capucins", 3, "Billet adulte", "Palerme"),
+      act("Monreale — cathédrale (excursion)", 8, "Bus + entrée", "Monreale"),
+    ];
+  }
+  if (c.includes("séville") || c.includes("seville") || c.includes("sevilla")) {
+    return [
+      act("Alcázar de Séville", 14, "Billet adulte", "Santa Cruz, Séville"),
+      act("Cathédrale & Giralda", 12, "Billet adulte", "Séville"),
+      act("Plaza de España", 0, "Gratuit", "Parque María Luisa, Séville"),
+      act("Quartier Santa Cruz", 0, "Gratuit", "Séville"),
+      act("Metropol Parasol (Setas)", 12, "Billet adulte", "Encarnación, Séville"),
+      act("Torre del Oro", 3, "Billet adulte", "Guadalquivir, Séville"),
+    ];
+  }
+  if (c.includes("turin") || c.includes("torino")) {
+    return [
+      act("Mole Antonelliana & musée du cinéma", 12, "Billet adulte", "Turin"),
+      act("Palais royal & Armeria", 12, "Billet adulte", "Turin"),
+      act("Musée égyptien", 15, "Billet adulte", "Turin"),
+      act("Place San Carlo", 0, "Gratuit", "Turin"),
+      act("Cathédrale & chapelle du Suaire", 0, "Gratuit (Suaire non exposé)", "Turin"),
+      act("Piazza Castello & palais Madama", 10, "Billet musée", "Turin"),
+    ];
+  }
+  if (c.includes("varsovie") || c.includes("warsaw") || c.includes("warszawa")) {
+    return [
+      act("Vieille ville (Stare Miasto)", 0, "Gratuit", "Varsovie"),
+      act("Château royal", 12, "Billet adulte", "Varsovie"),
+      act("Musée de l'insurrection", 7, "Billet adulte", "Varsovie"),
+      act("Palais de la culture & des sciences", 8, "Billet panorama", "Varsovie"),
+      act("Parc Lazienki", 5, "Palais sur l'île", "Varsovie"),
+      act("Quartier Praga", 0, "Gratuit", "Varsovie"),
+    ];
+  }
+  if (c.includes("cracovie") || /krak[oó]w/i.test(c)) {
+    return [
+      act("Place du Marché (Rynek Główny)", 0, "Gratuit", "Cracovie"),
+      act("Château de Wawel", 15, "Billet combiné", "Cracovie"),
+      act("Quartier Kazimierz", 0, "Gratuit", "Cracovie"),
+      act("Mine de sel Wieliczka", 25, "Billet + transport", "Wieliczka"),
+      act("Collegium Maius", 4, "Billet adulte", "Cracovie"),
+      act("Église Sainte-Marie (hejnal)", 5, "Billet adulte", "Cracovie"),
+    ];
+  }
+  if (c.includes("edinburgh") || c.includes("édimbourg") || c.includes("edimbourg")) {
+    return [
+      act("Château d'Édimbourg", 19, "Billet adulte", "Édimbourg"),
+      act("Royal Mile", 0, "Gratuit", "Édimbourg"),
+      act("Arthur's Seat", 0, "Gratuit", "Holyrood Park, Édimbourg"),
+      act("Palais de Holyroodhouse", 18, "Billet adulte", "Édimbourg"),
+      act("National Museum of Scotland", 0, "Gratuit", "Édimbourg"),
+      act("Calton Hill", 0, "Gratuit", "Édimbourg"),
     ];
   }
   return [
@@ -6824,8 +7004,21 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [state, setState] = useState("idle");
+  const [manualMailto, setManualMailto] = useState("");
+  const [fallbackInviteUrl, setFallbackInviteUrl] = useState("");
+  const [lastApiError, setLastApiError] = useState("");
+  const [copyLinkState, setCopyLinkState] = useState("");
 
-  useEffect(() => { if (open) { setEmail(""); setState("idle"); } }, [open]);
+  useEffect(() => {
+    if (open) {
+      setEmail("");
+      setState("idle");
+      setManualMailto("");
+      setFallbackInviteUrl("");
+      setLastApiError("");
+      setCopyLinkState("");
+    }
+  }, [open]);
 
   if (!open || !trip) return null;
 
@@ -6847,10 +7040,44 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
     ).join("\n\n");
   };
 
+  const buildMailtoFallback = (trimmed, programme) => {
+    const inviteParams = new URLSearchParams({
+      invite: "1",
+      email: trimmed,
+      trip: tripTitle,
+      ...(inviterName ? { from: inviterName } : {}),
+      ...(startDate ? { start: startDate } : {}),
+      ...(endDate ? { end: endDate } : {}),
+    });
+    const inviteUrl = `${window.location.origin}?${inviteParams.toString()}`;
+    const subj = encodeURIComponent(
+      `\u2708\uFE0F ${inviterName ? `${inviterName} t'invite` : "Invitation"} : ${tripTitle}`
+    );
+    const bodyLines = [
+      `Salut,`,
+      ``,
+      `${inviterName ? `${inviterName} t'` : "On t'"}invite \u00e0 rejoindre le voyage "${tripTitle}" !`,
+      ``,
+      `\uD83D\uDCC5 Dates : ${dateRange}`,
+      programme ? `\n\uD83D\uDCCB Programme :\n${programme}` : "",
+      ``,
+      `\uD83D\uDD17 Acc\u00e8de aux d\u00e9tails et rejoins le voyage directement :`,
+      inviteUrl,
+      ``,
+      `\u00c0 bient\u00f4t ! \uD83C\uDF0D`,
+    ].join("\n");
+    return {
+      inviteUrl,
+      mailto: `mailto:${encodeURIComponent(trimmed)}?subject=${subj}&body=${encodeURIComponent(bodyLines)}`,
+    };
+  };
+
   const handleSend = async () => {
     const trimmed = email.trim();
     if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return;
     setState("sending");
+    setLastApiError("");
+    setCopyLinkState("");
     const programme = buildProgramme();
     const inv = await postTripInvitesToApi({
       to: [trimmed],
@@ -6865,30 +7092,41 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
       setTimeout(onClose, 1500);
       return;
     }
-    const inviteParams = new URLSearchParams({
-      invite: "1",
-      email: trimmed,
-      trip: tripTitle,
-      ...(inviterName ? { from: inviterName } : {}),
-      ...(startDate ? { start: startDate } : {}),
-      ...(endDate ? { end: endDate } : {}),
-    });
-    const inviteUrl = `${window.location.origin}?${inviteParams.toString()}`;
-    const subj = encodeURIComponent(`\u2708\uFE0F ${inviterName ? `${inviterName} t'invite` : "Invitation"} : ${tripTitle}`);
-    const bodyLines = [
-      `Salut,`, ``,
-      `${inviterName ? `${inviterName} t'` : "On t'"}invite \u00e0 rejoindre le voyage "${tripTitle}" !`, ``,
-      `\uD83D\uDCC5 Dates : ${dateRange}`,
-      programme ? `\n\uD83D\uDCCB Programme :\n${programme}` : "",
-      ``,
-      `\uD83D\uDD17 Acc\u00e8de aux d\u00e9tails et rejoins le voyage directement :`,
-      inviteUrl,
-      ``,
-      `\u00c0 bient\u00f4t ! \uD83C\uDF0D`,
-    ].join("\n");
-    window.location.href = `mailto:${encodeURIComponent(trimmed)}?subject=${subj}&body=${encodeURIComponent(bodyLines)}`;
-    setState("sent");
-    setTimeout(onClose, 1500);
+    const fb = buildMailtoFallback(trimmed, programme);
+    setFallbackInviteUrl(fb.inviteUrl);
+    setManualMailto(fb.mailto);
+    setLastApiError(String(inv.error || NOTICE_INVITE_EMAIL_FAILED).trim());
+    setState("needs_manual");
+  };
+
+  const openMailtoFallback = () => {
+    if (!manualMailto) return;
+    window.location.href = manualMailto;
+  };
+
+  const copyInviteLink = async () => {
+    const url = String(fallbackInviteUrl || "").trim();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyLinkState("copied");
+      return;
+    } catch (_e) {
+      /* fallback */
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      setCopyLinkState(document.execCommand("copy") ? "copied" : "error");
+      document.body.removeChild(ta);
+    } catch (_err) {
+      setCopyLinkState("error");
+    }
   };
 
   return (
@@ -6920,7 +7158,18 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">E-mail</label>
             <input
-              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (state === "needs_manual") {
+                  setState("idle");
+                  setManualMailto("");
+                  setFallbackInviteUrl("");
+                  setLastApiError("");
+                  setCopyLinkState("");
+                }
+              }}
               onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
               placeholder={t("modals.shareInviteEmailPlaceholder")}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -6931,12 +7180,63 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
             <span className="mt-0.5 shrink-0">ℹ️</span>
             <span>{t("modals.shareInviteEmailHint")}</span>
           </p>
-          <button
-            type="button" onClick={handleSend} disabled={state === "sent"}
-            className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
-          >
-            {state === "sent" ? `\u2713 ${t("modals.shareInviteEmailSent")}` : state === "sending" ? t("modals.shareInviteEmailSending") : t("modals.shareInviteEmailSend")}
-          </button>
+          {state === "needs_manual" && (
+            <div className="space-y-2 rounded-xl bg-amber-50 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-100">
+              <p className="font-semibold">{t("modals.shareInviteEmailApiFailed")}</p>
+              {lastApiError ? (
+                <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words font-normal text-amber-950/90">
+                  {lastApiError}
+                </p>
+              ) : null}
+              <p className="font-normal">{t("modals.shareInviteEmailManualExplain")}</p>
+              <p className="text-[10px] font-normal text-amber-800/90">
+                {t("modals.shareInviteEmailResendConfigHint")}
+              </p>
+            </div>
+          )}
+          {state === "needs_manual" ? (
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={openMailtoFallback}
+                disabled={!manualMailto}
+                className="w-full rounded-xl border border-slate-200 bg-white py-3 text-[13px] font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50"
+              >
+                {t("modals.shareInviteEmailOpenMail")}
+              </button>
+              <button
+                type="button"
+                onClick={copyInviteLink}
+                disabled={!fallbackInviteUrl}
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50"
+              >
+                {copyLinkState === "copied"
+                  ? `\u2713 ${t("modals.shareInviteEmailLinkCopied")}`
+                  : t("modals.shareInviteEmailCopyLink")}
+              </button>
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={state === "sending"}
+                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+              >
+                {t("modals.shareInviteEmailRetry")}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={state === "sending" || state === "sent"}
+              className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+            >
+              {state === "sent"
+                ? `\u2713 ${t("modals.shareInviteEmailSent")}`
+                : state === "sending"
+                  ? t("modals.shareInviteEmailSending")
+                  : t("modals.shareInviteEmailSend")}
+            </button>
+          )}
         </div>
       </div>
     </div>
