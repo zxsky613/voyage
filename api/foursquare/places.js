@@ -18,6 +18,8 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
   }
   const limit = Math.min(Number(body.limit) || 20, 50);
+  const localeRaw = String(body.locale || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const acceptLanguage = localeRaw === "zh" ? "zh-CN" : localeRaw;
   const preset = String(body.preset || "poi").toLowerCase();
   const categoriesRaw = String(body.categories || "").trim();
   const categories =
@@ -34,7 +36,11 @@ export default async function handler(req, res) {
       `&fields=${encodeURIComponent(fields)}` +
       `&sort=POPULARITY&limit=${limit}&radius=10000`;
     const fsqResp = await fetch(fsqUrl, {
-      headers: { Authorization: fsqKey, Accept: "application/json" },
+      headers: {
+        Authorization: fsqKey,
+        Accept: "application/json",
+        "Accept-Language": acceptLanguage,
+      },
     });
     if (!fsqResp.ok) {
       const errText = await fsqResp.text();

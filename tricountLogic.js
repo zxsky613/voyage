@@ -8,7 +8,7 @@ const EPS = 1e-6;
 /**
  * @param {string[]} canonicalParticipants — ex. ["Moi", "a@b.com"]
  * @param {Array<{ amount?: number, paid_by?: string, split_between?: string[] }>} expenses
- * @returns {Record<string, number>} solde positif = on vous doit, négatif = vous devez
+ * @returns {Record<string, number>} solde positif = on te doit, négatif = tu dois
  */
 export function computeTricountBalances(canonicalParticipants, expenses) {
   const base =

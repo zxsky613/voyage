@@ -12,6 +12,7 @@ import { loadEnv } from "vite";
 import { sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
 import { buildItineraryEnrichmentBlock } from "./api/_helpers.js";
+import { fetchLandmarkNamesFromOverpass } from "./api/osm/overpassLandmarks.js";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -383,6 +384,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isSuggestedActivities = pathname === "/api/gemini/suggested-activities";
     const isItinerary = pathname === "/api/gemini/itinerary";
     const isFoursquare = pathname === "/api/foursquare/places";
+    const isOsmLandmarks = pathname === "/api/osm/landmarks";
     const isGroqItinerary   = pathname === "/api/groq/itinerary";
     const isGroqTips        = pathname === "/api/groq/tips";
     const isGroqDescription = pathname === "/api/groq/description";
@@ -390,9 +392,35 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isGroqSuggestedActivities = pathname === "/api/groq/suggested-activities";
     if (
       !isSuggestions && !isSuggestedActivities && !isItinerary &&
-      !isFoursquare && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
+      !isFoursquare && !isOsmLandmarks && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
       !isGroqSuggestions && !isGroqSuggestedActivities
     ) return next();
+
+    // ── Route OSM / Overpass (lieux nommés sans clé API) ─────────────────────
+    if (isOsmLandmarks) {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      const lat = Number(body.lat);
+      const lon = Number(body.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        sendJson(res, 400, { ok: false, error: "lat/lon invalides ou manquants." });
+        return;
+      }
+      const radius = Math.min(Math.max(Number(body.radius) || 11000, 2000), 25000);
+      const hint = String(body.cityHint || body.destination || "").trim();
+      try {
+        const raw = await fetchLandmarkNamesFromOverpass(lat, lon, radius);
+        const names = sanitizeMustSeePlaces(raw, hint || "destination");
+        sendJson(res, 200, { ok: true, names, count: names.length });
+      } catch (e) {
+        sendJson(res, 502, { ok: false, error: String(e?.message || e), names: [] });
+      }
+      return;
+    }
 
     // ── Route Foursquare ──────────────────────────────────────────────────────
     if (isFoursquare) {

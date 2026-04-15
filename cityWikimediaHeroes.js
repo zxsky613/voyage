@@ -163,6 +163,13 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   bruxelles: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Grand-Place%2C_Brussels_-_panorama%2C_June_2018.jpg/1920px-Grand-Place%2C_Brussels_-_panorama%2C_June_2018.jpg",
   ],
+  /** Bâle / Basel — clés normalizeTextForSearch (ville hors catalogue). */
+  basel: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Basel_-_M%C3%BCnsterpfalz1.jpg/1920px-Basel_-_M%C3%BCnsterpfalz1.jpg",
+  ],
+  bale: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Basel_-_M%C3%BCnsterpfalz1.jpg/1920px-Basel_-_M%C3%BCnsterpfalz1.jpg",
+  ],
   berne: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Bern_Panorama_von_Rosengarten_20211007.jpg/1920px-Bern_Panorama_von_Rosengarten_20211007.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Bern_Bundesplatz_panosphere_20211007.jpg/1920px-Bern_Bundesplatz_panosphere_20211007.jpg",

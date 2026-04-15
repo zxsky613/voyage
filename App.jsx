@@ -56,6 +56,7 @@ import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale } from "./i18n/cityDisplay.js";
 import { activityTitleSaveValue, displayActivityTitleForLocale } from "./i18n/activityDisplay.js";
+import { translations, DEFAULT_LOCALE } from "./i18n/translations.js";
 import {
   OnboardingTour,
   hasSeenOnboardingForUser,
@@ -129,6 +130,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
+
+/** Page statique (`public/`) — politique de confidentialité (App Store, mentions légales, lien in-app). */
+const PRIVACY_POLICY_HREF = `${import.meta.env.BASE_URL}politique-confidentialite.html`;
 
 /**
  * Pénalités légende Unsplash : éviter les résultats géographiquement incohérents (pont de Brooklyn pour San Francisco, etc.).
@@ -918,11 +922,32 @@ function normalizeTextForSearch(value) {
 }
 
 /**
+ * Cadrage vertical des photos hero ville / guide (`object-position` Y). Plus le % est élevé, plus on voit le bas de la photo (skyline quand le ciel domine en haut).
+ * Clés = `normalizeTextForSearch` du premier segment « ville ».
+ */
+const DESTINATION_GUIDE_HERO_OBJECT_POSITION_CLASS_BY_NORMALIZED_CITY = {
+  munster: "object-[center_68%] sm:object-[center_64%]",
+};
+
+function destinationGuideHeroObjectPositionClass(cityStemOrLabel) {
+  const key = normalizeTextForSearch(String(cityStemOrLabel || "").split(",")[0].trim());
+  if (
+    key &&
+    Object.prototype.hasOwnProperty.call(DESTINATION_GUIDE_HERO_OBJECT_POSITION_CLASS_BY_NORMALIZED_CITY, key)
+  ) {
+    return DESTINATION_GUIDE_HERO_OBJECT_POSITION_CLASS_BY_NORMALIZED_CITY[key];
+  }
+  return "object-[center_45%] sm:object-[center_40%]";
+}
+
+/**
  * GetYourGuide — `data-gyg-location-id` (portail partenaire > Outils > Widget ville).
- * Clés = normalizeTextForSearch(ville), ex. "paris". Sinon `VITE_GYG_DEFAULT_LOCATION_ID`.
+ * Clés = normalizeTextForSearch(ville), ex. "paris". Sinon pas d’ID : lien recherche `?q=` (évite slug + ID Paris par défaut).
  */
 const GYG_LOCATION_IDS_BY_NORMALIZED_CITY = {
   paris: "16",
+  /** https://www.getyourguide.com/mykonos-l472/ — Cyclades, Grèce */
+  mykonos: "472",
 };
 
 /** Slug URL getyourguide.com/{slug}-l{id}/ quand le nom affiché ≠ segment anglais (optionnel). */
@@ -948,7 +973,7 @@ function resolveGetYourGuideLocationId(cityLabel) {
   if (key && Object.prototype.hasOwnProperty.call(GYG_LOCATION_IDS_BY_NORMALIZED_CITY, key)) {
     return String(GYG_LOCATION_IDS_BY_NORMALIZED_CITY[key] || "").trim();
   }
-  return String(import.meta.env?.VITE_GYG_DEFAULT_LOCATION_ID || "").trim();
+  return "";
 }
 
 function slugForGetYourGuidePath(cityLabel) {
@@ -979,8 +1004,8 @@ function buildGetYourGuideAffiliateUrl(cityLabel, partnerId) {
   return u.toString();
 }
 
-const GYG_LOGO_SRC =
-  "https://upload.wikimedia.org/wikipedia/commons/8/86/GetYourGuide_logo.svg";
+/** Logo servi en local (l’ancienne URL Commons renvoyait 404 → cadre « vide »). */
+const GYG_LOGO_SRC = `${import.meta.env.BASE_URL}getyourguide-logo.svg`;
 
 /** Open-Meteo Geocoding : langue des résultats (aligné sur les codes app). */
 function openMeteoLanguageParam(appLang) {
@@ -1658,6 +1683,9 @@ const WIKI_EN_PAGE_TITLE = Object.freeze({
   mumbai: "Mumbai",
   "rio de janeiro": "Rio de Janeiro",
   berne: "Bern",
+  /** EN : article « Basel » — pas « Bâle » (échec pageimages / résumé). */
+  bale: "Basel",
+  basel: "Basel",
 });
 
 /** Titre de page Wikipédia FR quand il diffère du nom canon dans l’app. */
@@ -1692,6 +1720,9 @@ const WIKI_FR_PAGE_TITLE = Object.freeze({
   marrakesh: "Marrakech",
   "cape town": "Le Cap",
   montreal: "Montréal",
+  /** FR : article « Bâle » — pas « Basel » seul. */
+  basel: "Bâle",
+  bale: "Bâle",
 });
 
 const wikiHeroUrlInflight = Object.create(null);
@@ -2128,12 +2159,8 @@ function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
       heroImageCandidates: dedupeImageUrlChain([fast]).map((u) => upgradeLandscapeImageUrl(String(u || ""))),
     };
   }
-  return {
-    ...guide,
-    imageUrl: "",
-    landscapeImageUrl: "",
-    heroImageCandidates: [],
-  };
+  /* Pas de cache Unsplash : garder les URLs du guide (Commons / fetch) — ne pas vider l’image. */
+  return guide;
 }
 
 async function getCachedCityImage(cityInput) {
@@ -2260,12 +2287,15 @@ function buildActivityImageQuery(activity) {
   ).trim();
 }
 
-function buildTravelTips(city) {
+function buildTravelTips(city, placesOverride = null) {
   const display = String(city || "").trim() || "la destination";
   const canonical = resolveCanonicalCity(display);
   const key = normalizeTextForSearch(canonical);
   const label = String(canonical || display).trim() || display;
-  const places = getIconicPlacesFallback(display) || [];
+  const places =
+    placesOverride != null
+      ? placesOverride
+      : getIconicPlacesFallback(display) || [];
   return resolveTravelTips(key, label, places);
 }
 
@@ -3182,6 +3212,26 @@ function buildSuggestedActivitiesForCity(city) {
       act("Calton Hill", 0, "Gratuit", "Édimbourg"),
     ];
   }
+  const cityDeaccent = String(city || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const firstTok = cityDeaccent.split(/[\s,]+/)[0] || "";
+  if (
+    c.includes("bâle") ||
+    c.includes("basel") ||
+    cityDeaccent.includes("basel") ||
+    firstTok === "bale"
+  ) {
+    return [
+      act("Cathédrale de Bâle (Münster) & place de la cathédrale", 0, "Gratuit", "Altstadt, Bâle"),
+      act("Marktplatz & Rathaus — hôtel de ville rouge", 0, "Gratuit", "Centre historique, Bâle"),
+      act("Kunstmuseum Basel — grands maîtres", 18, "Billet adulte", "St. Alban-Graben, Bâle"),
+      act("Fondation Beyeler — art moderne (Riehen)", 26, "Billet adulte", "Riehen, Bâle"),
+      act("Musée Tinguely — machines animées", 14, "Billet adulte", "Paul Sacher-Anlage, Bâle"),
+      act("Zoo de Bâle — espèces & vivarium", 22, "Billet adulte", "Binningen, Bâle"),
+    ];
+  }
   return [
     act("Centre historique de " + label, 0, "Gratuit", label),
     act("Principal musée de " + label, 15, "Entrée type", label),
@@ -3266,7 +3316,8 @@ function buildInstantDestinationGuide(rawQuery) {
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
   return {
     city: safeCity,
-    description: `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`,
+    /** Rempli par Wikivoyage / Wikipedia / Groq (fetch rapide) — pas de phrase générique qui clignote avant la vraie description. */
+    description: "",
     places:
       getIconicPlacesFallback(safeCity) ||
       buildExplorationPlacesFallback(safeCity) ||
@@ -3343,6 +3394,33 @@ async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
   } catch (_e) {
     return null;
   }
+}
+
+/** Mini-carte pays (contour GeoJSON + bbox) — partagé par le guide complet et le chargement rapide. */
+async function buildSituationMapForDestination(latitude, longitude, displayCountry, countryCodeNorm) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const countryMap = await fetchCountryMapData(
+    String(displayCountry || "").trim(),
+    String(countryCodeNorm || "").trim().toLowerCase(),
+    latitude,
+    longitude
+  );
+  let bbox = null;
+  if (countryMap?.bbox) {
+    bbox = expandBoundingBox(countryMap.bbox);
+    bbox = unionBboxWithPoint(bbox, latitude, longitude);
+  } else {
+    bbox = bboxAroundPoint(latitude, longitude);
+  }
+  const latN = Number(latitude);
+  const lonN = Number(longitude);
+  return {
+    miniMap: {
+      geojson: countryMap?.geojson || null,
+      viewBbox: bbox,
+    },
+    openMapUrl: `https://www.openstreetmap.org/?mlat=${latN}&mlon=${lonN}#map=7/${latN}/${lonN}`,
+  };
 }
 
 function expandBoundingBox(box, pad = 0.07) {
@@ -4125,12 +4203,13 @@ function fsqEstimateCost(categories) {
  * La clé API reste côté serveur (FOURSQUARE_API_KEY dans .env, sans préfixe VITE_).
  * Retourne { places: string[], activities: ActivityObj[] }.
  */
-async function fetchFoursquarePlaces(lat, lon) {
+async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   try {
     const resp = await fetch("/api/foursquare/places", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lat, lon, limit: 20 }),
+      body: JSON.stringify({ lat, lon, limit: 20, locale }),
     });
     if (!resp.ok) return { places: [], activities: [] };
     const json = await resp.json();
@@ -4179,15 +4258,42 @@ async function fetchFoursquarePlaces(lat, lon) {
 }
 
 /**
+ * Lieux nommés via OpenStreetMap (Overpass), sans clé — repli si Foursquare vide.
+ */
+async function fetchOsmLandmarkNames(lat, lon, cityHint = "", uiLang = "fr") {
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  try {
+    const resp = await fetch("/api/osm/landmarks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lat,
+        lon,
+        radius: 11000,
+        cityHint: String(cityHint || "").trim(),
+        locale,
+      }),
+    });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    if (!json?.ok || !Array.isArray(json.names)) return [];
+    return json.names.map((x) => String(x || "").trim()).filter(Boolean);
+  } catch (_e) {
+    return [];
+  }
+}
+
+/**
  * Restaurants réels (catégorie Dining & Drinking) — noms Foursquare + € indicatif
  * (palier `price` 1–4 ou repli heuristique catégories).
  */
 async function fetchFoursquareRestaurantActivities(lat, lon, uiLang = "fr") {
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   try {
     const resp = await fetch("/api/foursquare/places", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lat, lon, limit: 36, preset: "restaurants" }),
+      body: JSON.stringify({ lat, lon, limit: 36, preset: "restaurants", locale }),
     });
     if (!resp.ok) return [];
     const json = await resp.json();
@@ -4271,6 +4377,77 @@ function truncateDescription(text, maxChars = 320) {
   return cut.trimEnd() + "…";
 }
 
+/** Phrase de repli quand aucune source wiki / Groq n’est disponible (évite l’affichage vide en fin de chargement). */
+function genericDestinationDescriptionFallback(safeCity) {
+  const c = String(safeCity || "").trim() || "Ville";
+  return `${c} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`;
+}
+
+/**
+ * Priorité Groq → Wikivoyage / Wikipédia (tronqué) → repli générique seulement si demandé.
+ * `useGenericFallback: false` pour le premier rendu réseau (pas de flash « trop général » avant les sources).
+ */
+function composeDestinationGuideDescription(
+  groqDesc,
+  wikivoyageText,
+  summaryText,
+  safeCity,
+  { useGenericFallback = false } = {}
+) {
+  const groq = String(groqDesc || "").trim();
+  if (groq) return groq;
+  const wiki = String(wikivoyageText || "").trim();
+  const summ = String(summaryText || "").trim();
+  const fromWiki = truncateDescription(wiki || summ || "");
+  if (fromWiki) return fromWiki;
+  if (useGenericFallback) return truncateDescription(genericDestinationDescriptionFallback(safeCity));
+  return "";
+}
+
+const _nominatimGeoInflight = Object.create(null);
+
+/** Géocode ville (léger) — partagé par le guide complet et l’aperçu mini-carte immédiat (requêtes en cours dédupliquées). */
+async function fetchNominatimCityGeo(safeCity, acceptLanguage = "fr") {
+  const q = String(safeCity || "").trim();
+  if (q.length < 2) return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
+  const lang = String(acceptLanguage || "fr").toLowerCase().split("-")[0] || "fr";
+  const k = `${normalizeTextForSearch(q)}\x1e${lang}`;
+  const inflight = _nominatimGeoInflight[k];
+  if (inflight) return inflight;
+
+  const run = (async () => {
+    try {
+      const geoResp = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&accept-language=${encodeURIComponent(
+          lang
+        )}&q=${encodeURIComponent(q)}`
+      );
+      if (!geoResp.ok) return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
+      const geoJsonRaw = await geoResp.json();
+      const first = Array.isArray(geoJsonRaw) && geoJsonRaw.length > 0 ? geoJsonRaw[0] : null;
+      const addr = first?.address && typeof first.address === "object" ? first.address : {};
+      const region = String(
+        addr.state || addr.region || addr.county || addr.state_district || ""
+      ).trim();
+      return {
+        lat: Number(first?.lat),
+        lon: Number(first?.lon),
+        country: String(addr.country || "").trim(),
+        countryCode: String(addr.country_code || "").trim(),
+        region,
+      };
+    } catch (_e) {
+      return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
+    }
+  })();
+
+  _nominatimGeoInflight[k] = run;
+  run.finally(() => {
+    if (_nominatimGeoInflight[k] === run) delete _nominatimGeoInflight[k];
+  });
+  return run;
+}
+
 async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const cityStem = extractCityPrompt(city) || String(city || "").trim();
   if (cityStem.length < 2) return null;
@@ -4287,31 +4464,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   /** Pas de titres Wikipédia bruts comme « lieux » (homonymes / hors sujet). Lieux = répertoire emblématique + repli exploration ; enrichissement IA optionnel via VITE_GEMINI_DESTINATION_ENRICH. */
   const wikiPlaceTitlesP = Promise.resolve([]);
 
-  const nominatimP = (async () => {
-    try {
-      const geoResp = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&accept-language=fr&q=${encodeURIComponent(
-          safeCity
-        )}`
-      );
-      if (!geoResp.ok) return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
-      const geoJson = await geoResp.json();
-      const first = Array.isArray(geoJson) && geoJson.length > 0 ? geoJson[0] : null;
-      const addr = first?.address && typeof first.address === "object" ? first.address : {};
-      const region = String(
-        addr.state || addr.region || addr.county || addr.state_district || ""
-      ).trim();
-      return {
-        lat: Number(first?.lat),
-        lon: Number(first?.lon),
-        country: String(addr.country || "").trim(),
-        countryCode: String(addr.country_code || "").trim(),
-        region,
-      };
-    } catch (_e) {
-      return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
-    }
-  })();
+  const nominatimP = fetchNominatimCityGeo(safeCity, uiLanguage);
 
   /** Image persistante d’abord : évite un nouvel Unsplash à chaque chargement (stabilité + moins d’API). */
   const cachedCityImage = await getCachedCityImage(imageCtx);
@@ -4332,7 +4485,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     return u ? upgradeLandscapeImageUrl(String(u)) : "";
   })();
 
-  const [summaryPack, wikivoyageText, groqDesc, places, geoPack, wikiHeroUrls, unsplashHero] = await Promise.all([
+  const [summaryPack, wikivoyageText, groqDesc, , geoPack, wikiHeroUrls, unsplashHero] = await Promise.all([
     wikiSummaryP,
     wikivoyageP,
     groqDescP,
@@ -4357,7 +4510,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   // Foursquare : POIs « incontournables » + file parallèle restaurants (noms réels + palier prix)
   const [otmData, restaurantActs] = await Promise.all([
     Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? fetchFoursquarePlaces(latitude, longitude)
+      ? fetchFoursquarePlaces(latitude, longitude, uiLanguage)
       : Promise.resolve({ places: [], activities: [] }),
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchFoursquareRestaurantActivities(latitude, longitude, uiLanguage)
@@ -4429,13 +4582,38 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     ...(cachedUsable && !commonsFirst ? [cachedCityImage] : []),
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
-  const tips = buildTravelTips(safeCity);
+  let osmLandmarkNames = [];
+  if (otmData.places.length === 0 && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    osmLandmarkNames = await fetchOsmLandmarkNames(latitude, longitude, safeCity, uiLanguage);
+  }
+
+  const rawPlacesList =
+    otmData.places.length > 0
+      ? otmData.places
+      : osmLandmarkNames.length > 0
+        ? osmLandmarkNames
+        : getIconicPlacesFallback(safeCity) || buildExplorationPlacesFallback(safeCity) || [];
+
+  const placesForGuide = clampPlacesList(sanitizeMustSeePlaces(rawPlacesList, safeCity), safeCity, {
+    min: 5,
+    max: 7,
+  });
+
+  const tips = buildTravelTips(safeCity, placesForGuide);
+
   /** Restaurants Foursquare (noms exacts + € indicatif palier) si assez de résultats, sinon POI mixtes. */
   const suggestedActivitySource = useFsqRestaurants
     ? restaurantActs
     : otmData.activities.length > 0
       ? otmData.activities
-      : buildSuggestedActivitiesForCity(safeCity);
+      : osmLandmarkNames.length >= 4
+        ? osmLandmarkNames.slice(0, 8).map((title) => ({
+            title,
+            estimatedCostEur: 0,
+            costNote: "",
+            location: safeCity,
+          }))
+        : buildSuggestedActivitiesForCity(safeCity);
   const suggestedActivityMin = useFsqRestaurants
     ? Math.min(6, restaurantActs.length)
     : MIN_SUGGESTED_ACTIVITIES;
@@ -4450,50 +4628,21 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const countryCodeNorm = String(geoPack.countryCode || "")
     .trim()
     .toLowerCase();
-  let situationMap = null;
-  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    let countryMap = null;
-    // Passer les coordonnées pour le reverse geocoding (beaucoup plus fiable)
-    countryMap = await fetchCountryMapData(displayCountry, countryCodeNorm, latitude, longitude);
-    let bbox = null;
-    if (countryMap?.bbox) {
-      bbox = expandBoundingBox(countryMap.bbox);
-      bbox = unionBboxWithPoint(bbox, latitude, longitude);
-    } else {
-      bbox = bboxAroundPoint(latitude, longitude);
-    }
-    const latN = Number(latitude);
-    const lonN = Number(longitude);
-    situationMap = {
-      miniMap: {
-        geojson: countryMap?.geojson || null,
-        viewBbox: bbox,
-      },
-      openMapUrl: `https://www.openstreetmap.org/?mlat=${latN}&mlon=${lonN}#map=7/${latN}/${lonN}`,
-    };
-  }
+  const situationMap =
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? await buildSituationMapForDestination(latitude, longitude, displayCountry, countryCodeNorm)
+      : null;
 
   return {
     city: safeCity,
-    description: groqDesc
-      // Groq : 2 phrases engageantes style magazine (prioritaire)
-      ? groqDesc
-      // Wikivoyage / Wikipedia : tronqués si trop longs
-      : truncateDescription(
-          wikivoyageText ||
-          summaryPack.summaryText ||
-          `${safeCity} est une destination populaire avec une forte identite culturelle, de nombreux quartiers a explorer et une scene locale dynamique.`
-        ),
-    places:
-      places.length > 0
-        ? places
-        // 1) Foursquare — POIs réels triés par popularité (prioritaire)
-        : (otmData.places.length > 0 ? otmData.places : null) ||
-          // 2) Catalogue curé (iconicPlacesData.js) — fallback si Foursquare vide/indisponible
-          getIconicPlacesFallback(safeCity) ||
-          // 3) Texte générique — dernier recours
-          buildExplorationPlacesFallback(safeCity) ||
-          [],
+    description: composeDestinationGuideDescription(
+      groqDesc,
+      wikivoyageText,
+      summaryPack.summaryText,
+      safeCity,
+      { useGenericFallback: true }
+    ),
+    places: placesForGuide,
     suggestedActivities,
     tips,
     imageUrl,
@@ -4583,6 +4732,64 @@ function normalizeSuggestedActivityShape(raw, destinationHint = "") {
 function normalizeSuggestedActivitiesList(list, destinationHint = "") {
   if (!Array.isArray(list)) return [];
   return list.map((x) => normalizeSuggestedActivityShape(x, destinationHint)).filter((x) => x.title);
+}
+
+const SUGGESTED_FILL_KEYS = [
+  "suggestedFillHistoricCenter",
+  "suggestedFillMainMuseum",
+  "suggestedFillLandmark",
+  "suggestedFillLocalMarket",
+  "suggestedFillMainPark",
+  "suggestedFillPicturesqueQuarter",
+];
+
+function translateDestinationField(key, uiLang, vars) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const order = [code, "en", DEFAULT_LOCALE];
+  let template = "";
+  for (const lc of order) {
+    const v = translations[lc]?.destination?.[key];
+    if (typeof v === "string" && v) {
+      template = v;
+      break;
+    }
+  }
+  let s = template || "";
+  if (vars && s) {
+    Object.keys(vars).forEach((k) => {
+      s = s.split(`{{${k}}}`).join(String(vars[k] ?? ""));
+    });
+  }
+  return s;
+}
+
+/** Repli catalogue : titres générés en FR dans `buildSuggestedActivitiesForCity` → alignés sur la langue UI. */
+function localizeGenericSuggestedActivities(rawList, cityHint, uiLang) {
+  if (!Array.isArray(rawList) || rawList.length === 0) return rawList;
+  const city = String(cityHint || "").trim();
+  const label = (city || "la destination").trim();
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const frByKey = Object.fromEntries(
+    SUGGESTED_FILL_KEYS.map((k) => [k, translateDestinationField(k, "fr", { city: label }).trim()])
+  );
+  const frTitles = new Set(Object.values(frByKey));
+  return rawList.map((raw) => {
+    if (raw == null) return raw;
+    if (typeof raw === "string") {
+      const t0 = String(raw || "").trim();
+      if (!frTitles.has(t0)) return raw;
+      const hit = SUGGESTED_FILL_KEYS.find((k) => frByKey[k] === t0);
+      return hit ? translateDestinationField(hit, code, { city: label }) : raw;
+    }
+    if (typeof raw === "object") {
+      const title = String(raw.title ?? raw.name ?? raw.label ?? "").trim();
+      if (!frTitles.has(title)) return raw;
+      const hit = SUGGESTED_FILL_KEYS.find((k) => frByKey[k] === title);
+      if (!hit) return raw;
+      return { ...raw, title: translateDestinationField(hit, code, { city: label }) };
+    }
+    return raw;
+  });
 }
 
 const MIN_SUGGESTED_ACTIVITIES = 6;
@@ -5748,7 +5955,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
           src={displaySrc}
           alt={`${safeTitle} — vue aérienne drone, photo de voyage`}
           title={dronePromptFr}
-          className="h-full w-full object-cover object-[center_45%] sm:object-[center_40%]"
+          className={`h-full w-full object-cover ${destinationGuideHeroObjectPositionClass(safeTitle)}`}
           referrerPolicy="no-referrer"
           loading="eager"
           decoding="async"
@@ -5917,6 +6124,21 @@ function MenuProfileAvatar({ user }) {
   );
 }
 
+function PrivacyPolicyLink({ className, onNavigate }) {
+  const { t } = useI18n();
+  return (
+    <a
+      href={PRIVACY_POLICY_HREF}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className}
+      onClick={() => onNavigate?.()}
+    >
+      {t("common.privacyPolicy")}
+    </a>
+  );
+}
+
 // Modales
 function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, onSwitchTab, onShowTour }) {
   const { t } = useI18n();
@@ -6005,6 +6227,10 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
               <span className="text-base leading-none">🧭</span>
               {t("menu.howItWorks")}
             </button>
+            <PrivacyPolicyLink
+              onNavigate={onClose}
+              className="mt-2 flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-xs font-normal tracking-[0.04em] text-slate-600 transition hover:bg-slate-50"
+            />
           </div>
         </div>
       </aside>
@@ -6423,8 +6649,9 @@ function AuthView() {
                 {t("auth.landingSignIn")}
               </button>
             </div>
-            <div className="mt-6 flex justify-center pb-2 sm:mt-8">
+            <div className="mt-6 flex flex-col items-center gap-3 pb-2 sm:mt-8">
               <LanguageFab placement="authFooter" />
+              <PrivacyPolicyLink className="text-center text-[12px] font-normal text-white/85 underline decoration-white/35 underline-offset-[0.2em] hover:text-white" />
             </div>
           </div>
         </div>
@@ -6581,7 +6808,10 @@ function AuthView() {
           </button>
         ) : null}
         <footer className="mt-6 border-t border-slate-200/60 pt-4">
-          <LanguageFab placement="authFooter" />
+          <div className="flex flex-col items-center gap-3">
+            <LanguageFab placement="authFooter" />
+            <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+          </div>
         </footer>
       </div>
       {invitePromptOpen ? (
@@ -6678,7 +6908,10 @@ function AuthView() {
                 </div>
 
                 <footer className="mt-5 border-t border-slate-100 pt-4">
-                  <LanguageFab placement="authFooter" />
+                  <div className="flex flex-col items-center gap-3">
+                    <LanguageFab placement="authFooter" />
+                    <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+                  </div>
                 </footer>
               </div>
             ) : (
@@ -6727,7 +6960,10 @@ function AuthView() {
                   </button>
                 </div>
                 <footer className="mt-5 border-t border-slate-100 pt-4">
-                  <LanguageFab placement="authFooter" />
+                  <div className="flex flex-col items-center gap-3">
+                    <LanguageFab placement="authFooter" />
+                    <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+                  </div>
                 </footer>
               </div>
             )}
@@ -8892,7 +9128,7 @@ const TRIP_SCHEDULE_TIME_OPTIONS = [
   "21:00",
 ];
 
-/** Repli si l’image ne charge pas : uniquement URLs des 3 couches (pas de photo « générique »). */
+/** Repli si l’image ne charge : mêmes sources que l’affichage (Commons / bundle / miroir / Wiki), même avec clé Unsplash. */
 function pickNextDestinationGuideImgSrc(el, guide) {
   const ctx = [guide?.city, guide?.country, guide?.adminRegion].filter(Boolean).join(", ").trim();
   const city = String(
@@ -8902,16 +9138,15 @@ function pickNextDestinationGuideImgSrc(el, guide) {
   const cur = String(el.src || "").trim();
   if (cur) tried.add(cur);
   const fromGuide = Array.isArray(guide?.heroImageCandidates) ? guide.heroImageCandidates : [];
-  const chain = UNSPLASH_ACCESS_KEY
-    ? dedupeImageUrlChain([...fromGuide, guide?.landscapeImageUrl, guide?.imageUrl])
-    : dedupeImageUrlChain([
-        ...fromGuide,
-        ...getCityHeroImageCandidates(city),
-        getBundledCityHeroPath(city),
-        getStorageMirrorHeroUrl(city),
-        guide?.landscapeImageUrl,
-        guide?.imageUrl,
-      ]);
+  const chain = dedupeImageUrlChain([
+    ...fromGuide,
+    ...getCityHeroImageCandidates(city),
+    getBundledCityHeroPath(city),
+    getStorageMirrorHeroUrl(city),
+    buildCityImageUrl(ctx || city),
+    guide?.landscapeImageUrl,
+    guide?.imageUrl,
+  ]);
   const next = chain.find((u) => u && !tried.has(u));
   if (next) {
     tried.add(next);
@@ -9358,13 +9593,17 @@ function DestinationGuideView({
     const city = String(base.city || "");
     const withActs = {
       ...base,
-      suggestedActivities: ensureMinSuggestedActivities(base.suggestedActivities, city),
+      suggestedActivities: localizeGenericSuggestedActivities(
+        ensureMinSuggestedActivities(base.suggestedActivities, city),
+        city,
+        language
+      ),
     };
     if (geminiLangTips && !GEMINI_DESTINATION_ENRICH) {
       return { ...withActs, tips: geminiLangTips };
     }
     return withActs;
-  }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips]);
+  }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
 
   // Sauvegarder le guide en localStorage dès que les données sont disponibles
   // → permet de restaurer instantanément après veille téléphone / changement d'app
@@ -9497,48 +9736,128 @@ function DestinationGuideView({
     }
     const fastHero = heroFromMemory || heroFromDisk;
 
-    if (UNSPLASH_ACCESS_KEY) {
-      if (fastHero) {
-        setGuide({
-          ...instant,
-          imageUrl: fastHero,
-          landscapeImageUrl: fastHero,
-          heroImageCandidates: dedupeImageUrlChain([fastHero, ...(instant.heroImageCandidates || [])]).map((u) =>
-            upgradeLandscapeImageUrl(String(u || ""))
-          ),
-        });
-      } else {
-        // Pas de cache : afficher tout de suite le héros Commons du catalogue (ex. Mykonos) au lieu d’un bandeau vide.
-        setGuide(instant);
-      }
+    const heroOverlay =
+      fastHero && UNSPLASH_ACCESS_KEY
+        ? {
+            imageUrl: fastHero,
+            landscapeImageUrl: fastHero,
+            heroImageCandidates: dedupeImageUrlChain([fastHero, ...(instant.heroImageCandidates || [])]).map((u) =>
+              upgradeLandscapeImageUrl(String(u || ""))
+            ),
+          }
+        : null;
+
+    const diskRow = _readGuideCache(confirmedDestination, language);
+    const dg = diskRow?.guide;
+    const useDiskGuide =
+      dg &&
+      normalizeTextForSearch(String(dg.city || "")) === normalizeTextForSearch(cityKey) &&
+      String(dg.description || "").trim().length > 0;
+
+    if (useDiskGuide) {
+      setGuide(
+        applyGuideHeroUnsplashOnlyOrEmpty({
+          ...dg,
+          ...(heroOverlay || {}),
+          heroImageCandidates:
+            heroOverlay?.heroImageCandidates || dg.heroImageCandidates || instant.heroImageCandidates,
+        })
+      );
+    } else if (heroOverlay) {
+      setGuide({ ...instant, ...heroOverlay });
     } else {
       setGuide(instant);
     }
     setGuideError("");
 
     let cancelled = false;
+
+    /** Groq + Wikivoyage + Wikipédia en parallèle (sans Foursquare / carte) → description utile tout de suite. */
     (async () => {
       try {
-        const heroUrl = await resolveDestinationHeroFirstPaint(confirmedDestination);
+        const safe = String(instant.city || "");
+        const [summaryPack, wikivoyageText, groqDesc] = await Promise.all([
+          fetchWikiSummaryForLang(safe, language),
+          fetchWikivoyageSummaryText(safe, language),
+          fetchGroqCityDescription(safe, language),
+        ]);
         if (cancelled) return;
-        if (UNSPLASH_ACCESS_KEY || heroUrl) {
+        const desc = composeDestinationGuideDescription(
+          groqDesc,
+          wikivoyageText,
+          summaryPack?.summaryText,
+          safe,
+          { useGenericFallback: false }
+        );
+        if (!String(desc || "").trim()) return;
+        setGuide((prev) => {
+          if (!prev || String(prev.city || "") !== cityKey) return prev;
+          if (String(prev.description || "").trim()) return prev;
+          return { ...prev, description: desc };
+        });
+      } catch (_e) {
+        /* non bloquant */
+      }
+    })();
+
+    (async () => {
+      try {
+        const geo = await fetchNominatimCityGeo(String(instant.city || ""), language);
+        if (cancelled) return;
+        const latN = Number(geo.lat);
+        const lonN = Number(geo.lon);
+        if (!Number.isFinite(latN) || !Number.isFinite(lonN)) return;
+        const cc = String(geo.countryCode || "").trim().toLowerCase();
+        const situationEarly = await buildSituationMapForDestination(
+          latN,
+          lonN,
+          geo.country,
+          cc
+        );
+        if (cancelled) return;
+        setGuide((prev) => {
+          if (!prev || String(prev.city || "") !== cityKey) return prev;
+          if (prev.situationMap?.miniMap?.geojson) return prev;
+          const next = {
+            ...prev,
+            coordinates: { lat: latN, lon: lonN },
+            country: geo.country ? geo.country : prev.country || null,
+            countryCode: cc || prev.countryCode || null,
+            adminRegion: geo.region ? geo.region : prev.adminRegion || null,
+          };
+          if (situationEarly?.miniMap?.geojson) next.situationMap = situationEarly;
+          return next;
+        });
+      } catch (_e) {
+        /* carte : pas bloquant */
+      }
+    })();
+
+    (async () => {
+      try {
+        let guideDone = false;
+        const heroWork = (async () => {
+          const heroUrl = await resolveDestinationHeroFirstPaint(confirmedDestination);
+          if (cancelled || guideDone) return;
+          if (!String(heroUrl || "").trim()) return;
+          const nextHero = String(heroUrl).trim();
           setGuide((prev) => {
             if (!prev || String(prev.city || "") !== cityKey) return prev;
-            const nextHero = heroUrl || prev.imageUrl || prev.landscapeImageUrl;
             return {
               ...prev,
               imageUrl: nextHero,
               landscapeImageUrl: nextHero,
-              heroImageCandidates: nextHero
-                ? dedupeImageUrlChain([nextHero, ...(instant.heroImageCandidates || [])]).map((u) =>
-                    upgradeLandscapeImageUrl(String(u || ""))
-                  )
-                : prev.heroImageCandidates,
+              heroImageCandidates: dedupeImageUrlChain([nextHero, ...(instant.heroImageCandidates || [])]).map((u) =>
+                upgradeLandscapeImageUrl(String(u || ""))
+              ),
             };
           });
-        }
+        })();
+
         const result = await fetchDestinationGuide(confirmedDestination, language);
+        guideDone = true;
         if (!cancelled && result) setGuide(result);
+        await heroWork;
       } catch (_e) {
         if (!cancelled) {
           setGuideError(t("destination.guideLoadError"));
@@ -9918,16 +10237,14 @@ function DestinationGuideView({
                   const primary = String(
                     displayGuide.landscapeImageUrl || displayGuide.imageUrl || ""
                   ).trim();
-                  const heroSrc = primary
-                    ? primary
-                    : UNSPLASH_ACCESS_KEY
-                      ? ""
-                      : String(
-                          resolveCityHeroImageUrl(cityStem) ||
-                            getBundledCityHeroPath(cityStem) ||
-                            getStorageMirrorHeroUrl(cityStem) ||
-                            ""
-                        ).trim();
+                  const syncFallback = String(
+                    resolveCityHeroImageUrl(cityStem) ||
+                      getBundledCityHeroPath(cityStem) ||
+                      getStorageMirrorHeroUrl(cityStem) ||
+                      buildCityImageUrl(heroCtx || displayGuide.city || "") ||
+                      ""
+                  ).trim();
+                  const heroSrc = (primary || syncFallback).trim();
                   if (!heroSrc) return (
                     <div className="flex h-full w-full items-center justify-center">
                       <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
@@ -9938,8 +10255,10 @@ function DestinationGuideView({
                       key={`${cityStem || String(displayGuide.city)}|${heroSrc.slice(0, 48)}`}
                       src={heroSrc}
                       alt={displayCityForLocale(String(displayGuide.city), language)}
-                      className="h-full w-full object-cover object-[center_45%] sm:object-[center_40%]"
+                      className={`h-full w-full object-cover ${destinationGuideHeroObjectPositionClass(cityStem)}`}
                       referrerPolicy="no-referrer"
+                      loading="eager"
+                      decoding="async"
                       fetchPriority="high"
                       onError={(e) => {
                         const el = e.currentTarget;
@@ -10192,17 +10511,18 @@ function DestinationGuideView({
                         href={gygHref}
                         target="_blank"
                         rel="sponsored noopener noreferrer"
-                        className="inline-flex max-w-full items-center rounded-xl border border-indigo-200/80 bg-white px-3 py-2 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+                        className="inline-flex max-w-full items-center justify-center rounded-xl border border-indigo-200/80 bg-white px-4 py-2.5 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
                         aria-label={t("destination.gygLinkAria", { city: displayCityForLocale(cityToken, language) })}
                       >
                         <img
                           src={GYG_LOGO_SRC}
-                          alt=""
-                          className="h-7 w-auto max-w-[min(200px,100%)] object-contain object-left"
+                          alt="GetYourGuide"
+                          className="h-8 w-auto max-w-[min(220px,100%)] object-contain object-center"
                           loading="lazy"
                           decoding="async"
+                          width={160}
+                          height={40}
                         />
-                        <ExternalLink className="ml-2 h-4 w-4 shrink-0 text-slate-400" strokeWidth={2} aria-hidden />
                       </a>
                     </div>
                   );

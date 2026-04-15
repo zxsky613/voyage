@@ -111,7 +111,8 @@ export function I18nProvider({ children }) {
       const pack = translations[language] || translations[DEFAULT_LOCALE];
       const fallback = translations[DEFAULT_LOCALE];
       const enPack = translations.en;
-      let s = deepGet(pack, key) ?? deepGet(fallback, key) ?? deepGet(enPack, key) ?? String(key);
+      let s =
+        deepGet(pack, key) ?? deepGet(enPack, key) ?? deepGet(fallback, key) ?? String(key);
       return interpolate(s, vars);
     },
     [language]

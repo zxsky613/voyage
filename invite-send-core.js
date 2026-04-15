@@ -28,7 +28,7 @@ export async function sendTripInvitesWithResend(opts) {
       ok: false,
       status: 500,
       error:
-        "Clé Resend absente : ajoutez RESEND_API_KEY dans .env.local (dev) ou les variables d’environnement du déploiement (ex. Vercel), puis redémarrez.",
+        "Clé Resend absente : ajoute RESEND_API_KEY dans .env.local (dev) ou les variables d’environnement du déploiement (ex. Vercel), puis redémarre.",
     };
   }
   if (recipients.length === 0) {

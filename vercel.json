@@ -2,7 +2,7 @@
   "framework": "vite",
   "functions": {
     "api/**/*.js": {
-      "includeFiles": "placeGuards.js"
+      "includeFiles": ["placeGuards.js", "api/osm/overpassLandmarks.js"]
     }
   }
 }
