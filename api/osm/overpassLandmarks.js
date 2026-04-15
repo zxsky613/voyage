@@ -14,7 +14,13 @@ function pickLocalizedNameFromOsmTags(tags, preferredLang) {
   const code = String(preferredLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   const tryKeys = [];
   if (code === "fr") {
-    tryKeys.push("name:fr", "name:fr-CH", "name:fr-FR");
+    tryKeys.push("name:fr", "name:fr-CH", "name:fr-FR", "name:fr-BE");
+  } else if (code === "de") {
+    tryKeys.push("name:de", "name:de-DE", "name:de-AT", "name:de-CH");
+  } else if (code === "es") {
+    tryKeys.push("name:es", "name:es-ES", "name:es-MX");
+  } else if (code === "it") {
+    tryKeys.push("name:it", "name:it-IT", "name:it-CH");
   } else {
     tryKeys.push(`name:${code}`);
   }
@@ -29,6 +35,10 @@ function pickLocalizedNameFromOsmTags(tags, preferredLang) {
 
 function scoreOsmTags(tags) {
   if (!tags || typeof tags !== "object") return 0;
+  const amen = String(tags.amenity || "").toLowerCase();
+  if (/^museum$|^arts_centre$|^theatre$|^cinema$/.test(amen)) return 6;
+  if (amen === "place_of_worship") return 4;
+  if (amen === "library") return 3;
   const tour = String(tags.tourism || "").toLowerCase();
   const hist = String(tags.historic || "").toLowerCase();
   const leis = String(tags.leisure || "").toLowerCase();
@@ -64,7 +74,7 @@ export function parseOverpassToRankedNames(elements, preferredLang = "fr") {
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(name);
-    if (out.length >= 14) break;
+    if (out.length >= 28) break;
   }
   return out;
 }
@@ -76,7 +86,7 @@ export function parseOverpassToRankedNames(elements, preferredLang = "fr") {
  */
 export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11000, preferredLang = "fr") {
   const r = Math.min(Math.max(Math.round(Number(radiusMeters) || 11000), 2000), 25000);
-  const query = `[out:json][timeout:25];
+  const query = `[out:json][timeout:35];
 (
   node["name"]["tourism"](around:${r},${lat},${lon});
   way["name"]["tourism"](around:${r},${lat},${lon});
@@ -84,8 +94,16 @@ export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11
   way["name"]["historic"](around:${r},${lat},${lon});
   node["name"]["leisure"="park"](around:${r},${lat},${lon});
   way["name"]["leisure"="park"](around:${r},${lat},${lon});
+  node["name"]["amenity"="museum"](around:${r},${lat},${lon});
+  way["name"]["amenity"="museum"](around:${r},${lat},${lon});
+  node["name"]["amenity"="arts_centre"](around:${r},${lat},${lon});
+  way["name"]["amenity"="arts_centre"](around:${r},${lat},${lon});
+  node["name"]["amenity"="theatre"](around:${r},${lat},${lon});
+  way["name"]["amenity"="theatre"](around:${r},${lat},${lon});
+  node["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
+  way["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
 );
-out center 32;`;
+out center 72;`;
 
   const resp = await fetch(OVERPASS_ENDPOINT, {
     method: "POST",

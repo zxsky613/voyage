@@ -2287,16 +2287,20 @@ function buildActivityImageQuery(activity) {
   ).trim();
 }
 
-function buildTravelTips(city, placesOverride = null) {
+function buildTravelTips(city, placesOverride = null, uiLanguage = "fr") {
   const display = String(city || "").trim() || "la destination";
   const canonical = resolveCanonicalCity(display);
   const key = normalizeTextForSearch(canonical);
   const label = String(canonical || display).trim() || display;
-  const places =
+  const rawPlaces =
     placesOverride != null
       ? placesOverride
       : getIconicPlacesFallback(display) || [];
-  return resolveTravelTips(key, label, places);
+  const places = rawPlaces
+    .map((p) => String(p || "").trim())
+    .filter((p) => p && !isGenericExplorationPlaceName(p));
+  const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  return resolveTravelTips(key, label, places, lang);
 }
 
 function dedupeTipLines(lines) {
@@ -2314,7 +2318,7 @@ function dedupeTipLines(lines) {
 }
 
 /** Fusionne conseils Gemini + base catalogue ; garantit au moins 3 conseils « do » pertinents. */
-function mergeTipsDoFromGemini(baseDo, geminiDo, cityName) {
+function mergeTipsDoFromGemini(baseDo, geminiDo, cityName, uiLanguage = "fr") {
   const g = dedupeTipLines(geminiDo);
   const b = dedupeTipLines(baseDo);
   let merged = dedupeTipLines([...g, ...b]);
@@ -2323,7 +2327,8 @@ function mergeTipsDoFromGemini(baseDo, geminiDo, cityName) {
     const canonical = resolveCanonicalCity(city);
     const key = normalizeTextForSearch(canonical);
     const label = String(canonical || city).trim() || city;
-    const fill = resolveTravelTips(key, label, getIconicPlacesFallback(city) || []).do;
+    const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+    const fill = resolveTravelTips(key, label, getIconicPlacesFallback(city) || [], lang).do;
     merged = dedupeTipLines([...merged, ...fill]);
   }
   return merged.slice(0, 12);
@@ -3259,6 +3264,78 @@ function buildExplorationPlacesFallback(cityLabel) {
   ];
 }
 
+/** Repères « exploration » (repli sans POI réels) — à ne pas utiliser pour enrichir les conseils ni comme premier rendu. */
+function isGenericExplorationPlaceName(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return false;
+  if (s === "Quartiers agréables pour se balader") return true;
+  if (s === "Marchés, cuisine locale & vie de quartier") return true;
+  if (s === "Architecture remarquable & art dans la ville") return true;
+  if (/^Centre historique & cœur de .+/i.test(s)) return true;
+  if (/^Musées, monuments & patrimoine — .+/i.test(s)) return true;
+  if (/^Parcs, jardins & points de vue à .+/i.test(s)) return true;
+  if (/^Excursion ou panorama aux alentours de .+/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Priorité : OSM (name:xx) → titres wiki géolocalisés (langue UI) → Foursquare.
+ * Donne des libellés concrets au lieu de se rabattre sur des « axes » génériques.
+ */
+function mergePlaceCandidates(osmNames, wikiGeoTitles, fsqNames, cap = 22) {
+  const out = [];
+  const seen = new Set();
+  const push = (label) => {
+    const s = String(label || "").trim();
+    if (s.length < 2) return;
+    const k = normalizeTextForSearch(s);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(s);
+  };
+  for (const n of osmNames || []) push(n);
+  for (const n of wikiGeoTitles || []) push(n);
+  for (const n of fsqNames || []) push(n);
+  const n = Math.min(48, Math.max(10, Number(cap) || 22));
+  return out.slice(0, n);
+}
+
+/** Activités dérivées des vrais noms de lieux (évite « Principal musée de X » tant que possible). */
+function buildSuggestedActivitiesFromDistinctPlaces(placeLabels, cityHint) {
+  const c = String(cityHint || "").trim();
+  const out = [];
+  for (const p of placeLabels || []) {
+    const t = String(p || "").trim();
+    if (!t || isGenericExplorationPlaceName(t)) continue;
+    out.push({
+      title: t,
+      estimatedCostEur: clampActivityCostEUR(0),
+      costNote: "",
+      location: c,
+    });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+/** Remplace le titre d’une activité Foursquare par le libellé du guide si même repère (clé normalisée). */
+function applyLocalizedPlaceTitlesToActivities(activities, placesForGuide) {
+  const map = new Map();
+  for (const p of placesForGuide || []) {
+    const s = String(p || "").trim();
+    if (!s) continue;
+    map.set(normalizeTextForSearch(s), s);
+  }
+  if (map.size === 0) return activities;
+  return (activities || []).map((raw) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const t = String(raw.title ?? raw.name ?? "").trim();
+    if (!t) return raw;
+    const repl = map.get(normalizeTextForSearch(t));
+    return repl && repl !== t ? { ...raw, title: repl } : raw;
+  });
+}
+
 /** Repères emblématiques : tout le CITY_CATALOG dans iconicPlacesData.js + repli exploration. */
 function getIconicPlacesFallback(safeCity) {
   const resolved = String(resolveCanonicalCity(safeCity) || "").trim();
@@ -3274,8 +3351,11 @@ function getIconicPlacesFallback(safeCity) {
   return null;
 }
 
-/** Assure entre min et max lieux : complète avec repères emblématiques si besoin. */
-function clampPlacesList(places, cityName, { min = 5, max = 7 } = {}) {
+/**
+ * Entre min et max lieux : catalogue emblématique en secours seulement.
+ * Pas de pastilles « Centre historique & cœur de… » pour gonfler artificiellement la liste.
+ */
+function clampPlacesList(places, cityName, { min = 3, max = 7, padExploration = false } = {}) {
   const out = [];
   const seen = new Set();
   const add = (p) => {
@@ -3287,21 +3367,31 @@ function clampPlacesList(places, cityName, { min = 5, max = 7 } = {}) {
     out.push(s);
   };
   (places || []).forEach(add);
-  const fallback =
-    getIconicPlacesFallback(cityName) || buildExplorationPlacesFallback(cityName) || [];
-  for (const p of fallback) {
+  const iconic = getIconicPlacesFallback(cityName) || [];
+  for (const p of iconic) {
     if (out.length >= min) break;
     add(p);
   }
-  for (const p of fallback) {
+  for (const p of iconic) {
     if (out.length >= max) break;
     add(p);
+  }
+  if (padExploration) {
+    const explore = buildExplorationPlacesFallback(cityName) || [];
+    for (const p of explore) {
+      if (out.length >= min) break;
+      add(p);
+    }
+    for (const p of explore) {
+      if (out.length >= max) break;
+      add(p);
+    }
   }
   return out.slice(0, max);
 }
 
 /** Affichage instantane (sans reseau) le temps que les APIs repondent. */
-function buildInstantDestinationGuide(rawQuery) {
+function buildInstantDestinationGuide(rawQuery, uiLanguage = "fr") {
   const cityStem = extractCityPrompt(rawQuery) || normalizeCityInput(rawQuery);
   if (cityStem.length < 2) return null;
   const safeCity = resolveCanonicalCity(cityStem);
@@ -3314,16 +3404,19 @@ function buildInstantDestinationGuide(rawQuery) {
     getBundledCityHeroPath(heroStem),
     getStorageMirrorHeroUrl(heroStem),
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
+  const iconicOnly = getIconicPlacesFallback(safeCity);
+  const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   return {
     city: safeCity,
     /** Rempli par Wikivoyage / Wikipedia / Groq (fetch rapide) — pas de phrase générique qui clignote avant la vraie description. */
     description: "",
-    places:
-      getIconicPlacesFallback(safeCity) ||
-      buildExplorationPlacesFallback(safeCity) ||
-      [],
-    suggestedActivities: buildSuggestedActivitiesForCity(safeCity),
-    tips: buildTravelTips(safeCity),
+    /** Pas de repères « modèle » avant Foursquare / OSM / clamp : évite le flash Bielefeld-style. */
+    places: iconicOnly || [],
+    suggestedActivities: iconicOnly?.length
+      ? buildSuggestedActivitiesFromDistinctPlaces(iconicOnly, safeCity)
+      : [],
+    /** Conseils de base dans la langue UI dès l’ouverture (écran vide si on attend le fetch). */
+    tips: buildTravelTips(safeCity, iconicOnly && iconicOnly.length >= 2 ? iconicOnly : [], lang),
     imageUrl: img,
     landscapeImageUrl: img,
     heroImageCandidates: instantCandidates,
@@ -3581,6 +3674,84 @@ function framingBboxForMiniMap(geojson, cityLat, cityLon, viewBbox) {
 }
 
 const WIKI_LANG_CODES = { fr: "fr", en: "en", de: "de", es: "es", it: "it", zh: "zh" };
+
+/**
+ * Articles Wikipédia proches des coordonnées — titres déjà dans la langue du wiki (= langue UI).
+ * Enrichit les villes où OSM / Foursquare renvoient peu de noms exploitables.
+ */
+async function fetchWikipediaGeoNearbyPlaceTitles(lat, lon, uiLang, cityHint) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const wikiLang = WIKI_LANG_CODES[code] || "fr";
+  const host = `${wikiLang}.wikipedia.org`;
+  const radius = 9000;
+  const limit = 22;
+  const hintStem = String(extractCityPrompt(cityHint) || cityHint || "")
+    .split(",")[0]
+    .trim();
+  const cityNorm = normalizeTextForSearch(hintStem);
+  try {
+    /** Pas de ggsprimary (param non supporté partout → réponse vide). */
+    const url =
+      `https://${host}/w/api.php?action=query&list=geosearch&ggsnamespace=0` +
+      `&ggsradius=${radius}&ggscoord=${lat}|${lon}&ggslimit=${limit}&format=json&origin=*`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const j = await r.json();
+    const gs = j?.query?.geosearch;
+    if (!Array.isArray(gs)) return [];
+    const out = [];
+    for (const item of gs) {
+      const title = String(item?.title || "").replace(/_/g, " ").trim();
+      if (title.length < 3 || title.length > 105) continue;
+      if (/^(liste des|liste d'|liste de la|liste du|list of|lists of)\b/i.test(title)) continue;
+      const mainPart = title.split("(")[0].trim();
+      if (cityNorm && normalizeTextForSearch(mainPart) === cityNorm) continue;
+      out.push(title);
+    }
+    return out.slice(0, 14);
+  } catch (_e) {
+    return [];
+  }
+}
+
+/** Dernier secours lieux : Nominatim dans une viewbox autour du centre (sans clé). */
+async function fetchNominatimLandmarkHints(safeCity, uiLanguage, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0] || "fr";
+  const city = String(safeCity || "").trim().split(",")[0].trim();
+  const cityNorm = normalizeTextForSearch(city);
+  const d = 0.11;
+  const viewbox = `${lon - d},${lat + d},${lon + d},${lat - d}`;
+  const tryQueries = ["museum", "church", "historic", `monument ${city}`];
+  const seen = new Set();
+  const out = [];
+  try {
+    for (const q of tryQueries) {
+      if (out.length >= 10) break;
+      const url =
+        `https://nominatim.openstreetmap.org/search?format=json&limit=8&addressdetails=0&bounded=1` +
+        `&viewbox=${encodeURIComponent(viewbox)}&accept-language=${encodeURIComponent(lang)}` +
+        `&q=${encodeURIComponent(q)}`;
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const arr = await r.json();
+      if (!Array.isArray(arr)) continue;
+      for (const row of arr) {
+        const name = String(row?.name || row?.display_name || "").split(",")[0].trim();
+        if (name.length < 3 || name.length > 95) continue;
+        const nk = normalizeTextForSearch(name);
+        if (cityNorm && nk === cityNorm) continue;
+        if (seen.has(nk)) continue;
+        seen.add(nk);
+        out.push(name);
+      }
+    }
+    return out.slice(0, 12);
+  } catch (_e) {
+    return [];
+  }
+}
 
 /**
  * Récupère la description de la ville depuis Wikivoyage (guide de voyage).
@@ -4507,14 +4678,23 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   // Wikivoyage si disponible (description voyage > encyclopédie Wikipedia)
   const summaryText = wikivoyageText || summaryPack.summaryText;
 
-  // Foursquare : POIs « incontournables » + file parallèle restaurants (noms réels + palier prix)
-  const [otmData, restaurantActs] = await Promise.all([
+  // Foursquare + OSM en parallèle : OSM fournit name:xx (langue UI) quand le tag existe — complète / corrige les noms Foursquare.
+  const wikiGeoP =
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? fetchWikipediaGeoNearbyPlaceTitles(latitude, longitude, uiLanguage, safeCity)
+      : Promise.resolve([]);
+
+  const [otmData, restaurantActs, osmLandmarkNames, wikiGeoTitles] = await Promise.all([
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchFoursquarePlaces(latitude, longitude, uiLanguage)
       : Promise.resolve({ places: [], activities: [] }),
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchFoursquareRestaurantActivities(latitude, longitude, uiLanguage)
       : Promise.resolve([]),
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? fetchOsmLandmarkNames(latitude, longitude, safeCity, uiLanguage)
+      : Promise.resolve([]),
+    wikiGeoP,
   ]);
   const useFsqRestaurants = restaurantActs.length >= 4;
 
@@ -4582,27 +4762,29 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     ...(cachedUsable && !commonsFirst ? [cachedCityImage] : []),
   ]).map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
-  let osmLandmarkNames = [];
-  if (otmData.places.length === 0 && Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    osmLandmarkNames = await fetchOsmLandmarkNames(latitude, longitude, safeCity, uiLanguage);
+  let mergedFromApis = mergePlaceCandidates(osmLandmarkNames, wikiGeoTitles, otmData.places, 22);
+  if (
+    mergedFromApis.length === 0 &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude)
+  ) {
+    const nomi = await fetchNominatimLandmarkHints(safeCity, uiLanguage, latitude, longitude);
+    mergedFromApis = mergePlaceCandidates(nomi, [], [], 22);
   }
-
+  /** Pas de pastilles « exploration » génériques ; repli = catalogue emblématique ou vide. */
   const rawPlacesList =
-    otmData.places.length > 0
-      ? otmData.places
-      : osmLandmarkNames.length > 0
-        ? osmLandmarkNames
-        : getIconicPlacesFallback(safeCity) || buildExplorationPlacesFallback(safeCity) || [];
+    mergedFromApis.length > 0 ? mergedFromApis : getIconicPlacesFallback(safeCity) || [];
 
   const placesForGuide = clampPlacesList(sanitizeMustSeePlaces(rawPlacesList, safeCity), safeCity, {
-    min: 5,
+    min: 3,
     max: 7,
+    padExploration: false,
   });
 
-  const tips = buildTravelTips(safeCity, placesForGuide);
+  const tips = buildTravelTips(safeCity, placesForGuide, uiLanguage);
 
   /** Restaurants Foursquare (noms exacts + € indicatif palier) si assez de résultats, sinon POI mixtes. */
-  const suggestedActivitySource = useFsqRestaurants
+  const suggestedActivitySourceRaw = useFsqRestaurants
     ? restaurantActs
     : otmData.activities.length > 0
       ? otmData.activities
@@ -4614,13 +4796,18 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
             location: safeCity,
           }))
         : buildSuggestedActivitiesForCity(safeCity);
+  const suggestedActivitySource = applyLocalizedPlaceTitlesToActivities(
+    suggestedActivitySourceRaw,
+    placesForGuide
+  );
   const suggestedActivityMin = useFsqRestaurants
     ? Math.min(6, restaurantActs.length)
     : MIN_SUGGESTED_ACTIVITIES;
   const suggestedActivities = ensureMinSuggestedActivities(
     suggestedActivitySource,
     safeCity,
-    suggestedActivityMin
+    suggestedActivityMin,
+    placesForGuide
   );
 
   const displayCountry = String(geoPack.country || "").trim();
@@ -4794,14 +4981,33 @@ function localizeGenericSuggestedActivities(rawList, cityHint, uiLang) {
 
 const MIN_SUGGESTED_ACTIVITIES = 6;
 
-/** Complète avec le catalogue local pour afficher au moins `min` activités dans la recherche destination. */
-function ensureMinSuggestedActivities(rawList, cityHint, min = MIN_SUGGESTED_ACTIVITIES) {
+/**
+ * Complète jusqu’à `min` activités : d’abord les lieux réels du guide, puis le catalogue par ville, puis le repli générique.
+ */
+function ensureMinSuggestedActivities(
+  rawList,
+  cityHint,
+  min = MIN_SUGGESTED_ACTIVITIES,
+  placeTitlesHint = null
+) {
   const city = String(cityHint || "").trim();
   const normalized = normalizeSuggestedActivitiesList(rawList, city);
   if (normalized.length >= min) return normalized;
-  const fillers = normalizeSuggestedActivitiesList(buildSuggestedActivitiesForCity(city), city);
   const seen = new Set(normalized.map((x) => normalizeTextForSearch(String(x.title || ""))));
   const out = [...normalized];
+  const fromPlaces = normalizeSuggestedActivitiesList(
+    buildSuggestedActivitiesFromDistinctPlaces(placeTitlesHint, city),
+    city
+  );
+  for (const f of fromPlaces) {
+    if (out.length >= min) break;
+    const k = normalizeTextForSearch(String(f.title || ""));
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(f);
+  }
+  if (out.length >= min) return out;
+  const fillers = normalizeSuggestedActivitiesList(buildSuggestedActivitiesForCity(city), city);
   for (const f of fillers) {
     if (out.length >= min) break;
     const k = normalizeTextForSearch(String(f.title || ""));
@@ -4850,14 +5056,19 @@ function normalizeGeminiSuggestedActivitiesPayload(data, destinationHint = "") {
   return normalizeSuggestedActivitiesList(fromActs, destinationHint);
 }
 
-function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
+function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr") {
   if (!baseGuide) return null;
   const city = String(baseGuide.city || "");
   if (!geminiNorm) {
     return {
       ...baseGuide,
       places: clampPlacesList(baseGuide.places, city),
-      suggestedActivities: ensureMinSuggestedActivities(baseGuide.suggestedActivities, city),
+      suggestedActivities: ensureMinSuggestedActivities(
+        baseGuide.suggestedActivities,
+        city,
+        MIN_SUGGESTED_ACTIVITIES,
+        baseGuide.places
+      ),
     };
   }
   const mergedPlaces =
@@ -4868,14 +5079,16 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm) {
     description: baseGuide.description,
     places: clampPlacesList(mergedPlaces, city),
     tips: {
-      do: mergeTipsDoFromGemini(baseGuide.tips?.do, geminiNorm.tips.do, city),
+      do: mergeTipsDoFromGemini(baseGuide.tips?.do, geminiNorm.tips.do, city, uiLanguage),
       dont: geminiNorm.tips.dont.length > 0 ? geminiNorm.tips.dont : baseGuide.tips?.dont || [],
     },
     suggestedActivities: ensureMinSuggestedActivities(
       geminiNorm.suggestedActivities.length > 0
         ? geminiNorm.suggestedActivities
         : baseGuide.suggestedActivities,
-      city
+      city,
+      MIN_SUGGESTED_ACTIVITIES,
+      clampPlacesList(mergedPlaces, city, { min: 3, max: 7, padExploration: false })
     ),
   };
 }
@@ -9157,7 +9370,7 @@ function pickNextDestinationGuideImgSrc(el, guide) {
 }
 
 /* ─── Cache localStorage pour DestinationGuideView ───────────────────────── */
-const _GUIDE_LS_KEY = "tp_guide_cache_v12";
+const _GUIDE_LS_KEY = "tp_guide_cache_v14";
 const _GUIDE_LS_TTL = 24 * 60 * 60 * 1000; // 24h — texte + image moins de rechargements intempestifs
 
 function _readGuideCache(city, lang) {
@@ -9178,6 +9391,11 @@ function _readGuideCache(city, lang) {
 function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, geminiTips) {
   try {
     if (!city || !guide) return;
+    /** Ne pas figer un guide « coquille » (chargement interrompu / cache vide). */
+    const hasDesc = String(guide.description || "").trim().length > 40;
+    const hasPlaces = Array.isArray(guide.places) && guide.places.some((p) => String(p || "").trim());
+    const hasTips = Array.isArray(guide.tips?.do) && guide.tips.do.some((x) => String(x || "").trim());
+    if (!hasDesc && !hasPlaces && !hasTips) return;
     const { countryMap: _cm, ...guideSlim } = guide; // exclure le GeoJSON trop volumineux
     window.localStorage.setItem(_GUIDE_LS_KEY, JSON.stringify({
       city,
@@ -9578,23 +9796,28 @@ function DestinationGuideView({
     if (!guide) return null;
     let base;
     if (GEMINI_DESTINATION_ENRICH) {
-      base = mergeDestinationGuideWithGemini(guide, geminiContent);
+      base = mergeDestinationGuideWithGemini(guide, geminiContent, language);
     } else if (geminiAiSuggestedActivities && geminiAiSuggestedActivities.length > 0) {
       const city = String(guide.city || "");
       base = {
         ...guide,
-        places: clampPlacesList(guide.places, city),
+        places: clampPlacesList(guide.places, city, { min: 3, max: 7, padExploration: false }),
         suggestedActivities: geminiAiSuggestedActivities,
         tips: guide.tips,
       };
     } else {
-      base = mergeDestinationGuideWithGemini(guide, null);
+      base = mergeDestinationGuideWithGemini(guide, null, language);
     }
     const city = String(base.city || "");
     const withActs = {
       ...base,
       suggestedActivities: localizeGenericSuggestedActivities(
-        ensureMinSuggestedActivities(base.suggestedActivities, city),
+        ensureMinSuggestedActivities(
+          base.suggestedActivities,
+          city,
+          MIN_SUGGESTED_ACTIVITIES,
+          base.places
+        ),
         city,
         language
       ),
@@ -9711,7 +9934,7 @@ function DestinationGuideView({
       return;
     }
 
-    const instant = buildInstantDestinationGuide(confirmedDestination);
+    const instant = buildInstantDestinationGuide(confirmedDestination, language);
     if (!instant) {
       setGuide(null);
       setGuideError("");
@@ -10384,36 +10607,63 @@ function DestinationGuideView({
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  {(displayGuide.places || []).map((p, i) => {
-                    const raw = String(p || "").trim();
+                  {(() => {
+                    const rawList = (displayGuide.places || []).map(String).filter(Boolean);
+                    const visible = rawList.filter((p) => !isGenericExplorationPlaceName(p));
+                    const showSkel = visible.length === 0;
                     return (
-                      <button
-                        key={`place-${i}-${raw.slice(0, 24)}`}
-                        type="button"
-                        onClick={() => setMustSeePlaceModalRaw(raw)}
-                        className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
-                      >
-                        {displayActivityTitleForLocale(raw, language)}
-                      </button>
+                      <>
+                        {showSkel ? (
+                          <>
+                            <span className="inline-block h-8 w-[11.5rem] animate-pulse rounded-full bg-slate-200/90" />
+                            <span className="inline-block h-8 w-[10rem] animate-pulse rounded-full bg-slate-200/90" />
+                            <span className="inline-block h-8 w-[13rem] animate-pulse rounded-full bg-slate-200/85" />
+                            <span className="inline-block h-8 w-[9rem] animate-pulse rounded-full bg-slate-200/80" />
+                          </>
+                        ) : null}
+                        {visible.map((p, i) => {
+                          const raw = String(p || "").trim();
+                          return (
+                            <button
+                              key={`place-${i}-${raw.slice(0, 24)}`}
+                              type="button"
+                              onClick={() => setMustSeePlaceModalRaw(raw)}
+                              className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
+                            >
+                              {displayActivityTitleForLocale(raw, language)}
+                            </button>
+                          );
+                        })}
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
               </section>
 
               {(() => {
-                const uiLang = String(language || "fr").toLowerCase().split("-")[0];
-                // Only use Gemini/base tips when they are in the correct language (fr base, or geminiLangTips has overridden them)
-                const doList = (uiLang === "fr" || geminiLangTips != null)
-                  ? (displayGuide.tips?.do || []).map(String).filter(Boolean)
-                  : [];
+                /** Conseils du guide déjà générés dans la langue UI (`buildTravelTips` + `resolveTravelTips`). */
+                const doList = (displayGuide.tips?.do || []).map(String).filter(Boolean);
                 const cityLabel = String(displayGuide.city || "").trim();
                 const canonical = resolveCanonicalCity(cityLabel);
-                const fill = resolveTravelTips(
-                  normalizeTextForSearch(canonical),
-                  String(canonical || cityLabel).trim() || cityLabel,
-                  getIconicPlacesFallback(cityLabel) || [],
-                  language
-                ).do;
+                const loadedPlaces = (displayGuide.places || []).map(String).filter(Boolean);
+                const concretePlaces = loadedPlaces.filter((p) => !isGenericExplorationPlaceName(p));
+                const hasConcretePlaces = concretePlaces.length >= 2;
+                const catalogPlaces = getIconicPlacesFallback(cityLabel) || [];
+                const placesForTips =
+                  hasConcretePlaces
+                    ? concretePlaces
+                    : catalogPlaces.length >= 2
+                      ? catalogPlaces
+                      : [];
+                const fill =
+                  placesForTips.length >= 2
+                    ? resolveTravelTips(
+                        normalizeTextForSearch(canonical),
+                        String(canonical || cityLabel).trim() || cityLabel,
+                        placesForTips,
+                        language
+                      ).do
+                    : [];
                 const expertTips = dedupeTipLines([...doList, ...fill]).slice(0, 3);
                 const threeTips = expertTips;
                 return (
@@ -10436,17 +10686,34 @@ function DestinationGuideView({
                       <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" strokeWidth={2} aria-hidden />
                       <span className="sr-only">{t("destination.tipsSr")}</span>
                     </div>
-                    <ul className="mt-6 space-y-6 text-sm leading-relaxed text-slate-100">
-                      {threeTips.map((tip, i) => (
-                        <li key={`expert-${i}-${String(tip).slice(0, 24)}`} className="flex gap-4">
-                          <span
-                            className="mt-2 h-2 w-2 shrink-0 rounded-full bg-amber-500"
-                            aria-hidden
-                          />
-                          <span>{tip}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    {threeTips.length === 0 ? (
+                      <div className="mt-6 space-y-5" aria-busy="true">
+                        <div className="flex gap-4">
+                          <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-slate-600" aria-hidden />
+                          <div className="h-3.5 flex-1 max-w-xl animate-pulse rounded-full bg-slate-700/55" />
+                        </div>
+                        <div className="flex gap-4">
+                          <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-slate-600" aria-hidden />
+                          <div className="h-3.5 flex-1 max-w-lg animate-pulse rounded-full bg-slate-700/50" />
+                        </div>
+                        <div className="flex gap-4">
+                          <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-slate-600" aria-hidden />
+                          <div className="h-3.5 flex-1 max-w-md animate-pulse rounded-full bg-slate-700/45" />
+                        </div>
+                      </div>
+                    ) : (
+                      <ul className="mt-6 space-y-6 text-sm leading-relaxed text-slate-100">
+                        {threeTips.map((tip, i) => (
+                          <li key={`expert-${i}-${String(tip).slice(0, 24)}`} className="flex gap-4">
+                            <span
+                              className="mt-2 h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                              aria-hidden
+                            />
+                            <span>{tip}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </section>
                 );
               })()}

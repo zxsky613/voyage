@@ -19,7 +19,11 @@ export default async function handler(req, res) {
   }
   const limit = Math.min(Number(body.limit) || 20, 50);
   const localeRaw = String(body.locale || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
-  const acceptLanguage = localeRaw === "zh" ? "zh-CN" : localeRaw;
+  /** Chaîne Accept-Language riche : la langue UI en premier, puis secours (meilleure localisation des noms). */
+  const acceptLanguage =
+    localeRaw === "zh"
+      ? "zh-CN,zh;q=0.95,en;q=0.85"
+      : `${localeRaw},en;q=0.85,de;q=0.4,it;q=0.35,es;q=0.35,fr;q=0.35`;
   const preset = String(body.preset || "poi").toLowerCase();
   const categoriesRaw = String(body.categories || "").trim();
   const categories =
