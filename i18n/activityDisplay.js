@@ -1900,11 +1900,15 @@ export function displayActivityTitleForLocale(raw, language) {
   return trimmed;
 }
 
-/** Si l’utilisateur n’a pas modifié le titre affiché, on garde la valeur stockée (évite d’enregistrer une variante traduite). */
-export function activityTitleSaveValue(rawStored, inputTrimmed, language) {
+/**
+ * Si l’utilisateur n’a pas modifié le titre affiché, on garde la valeur stockée (évite d’enregistrer une variante traduite).
+ * @param {{ displayBaseline?: string }} [opts] — libellé affiché après traduction auto (API), si différent du dictionnaire
+ */
+export function activityTitleSaveValue(rawStored, inputTrimmed, language, opts) {
   const raw = String(rawStored || "").trim();
   const next = String(inputTrimmed || "").trim();
-  const baseline = String(displayActivityTitleForLocale(raw, language) || raw).trim();
-  if (next === baseline) return raw;
+  const dictBaseline = String(displayActivityTitleForLocale(raw, language) || raw).trim();
+  const apiBaseline = String(opts?.displayBaseline || "").trim();
+  if (next === dictBaseline || (apiBaseline && next === apiBaseline)) return raw;
   return next;
 }

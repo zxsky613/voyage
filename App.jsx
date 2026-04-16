@@ -56,6 +56,12 @@ import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale } from "./i18n/cityDisplay.js";
 import { activityTitleSaveValue, displayActivityTitleForLocale } from "./i18n/activityDisplay.js";
+import {
+  UiLocalizedTripTitle,
+  UiTranslatedActivityTitle,
+  useUiTranslatedCityName,
+  useUiTranslatedText,
+} from "./i18n/userContentTranslate.jsx";
 import { translations, DEFAULT_LOCALE } from "./i18n/translations.js";
 import {
   OnboardingTour,
@@ -425,7 +431,10 @@ function getTodayStr() {
 function formatDate(value) {
   const s = String(value || "");
   if (!s) return "-";
-  const d = new Date(s);
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(s.slice(0, 10));
+  const d = ymd
+    ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), 12, 0, 0)
+    : new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleDateString(getAppDateLocale(), { day: "2-digit", month: "short", year: "numeric" });
 }
@@ -8448,7 +8457,7 @@ function TripCard({ trip, onOpen, onShare, onEdit, onDelete, isNow, muted }) {
           <div className="pointer-events-none absolute bottom-4 left-4 right-4 text-white">
             <div className="flex w-full flex-col items-start">
               <h3 className="max-w-full truncate font-display text-[clamp(0.95rem,1.45vw,1.35rem)] font-normal uppercase leading-[1.08] tracking-[0.08em] text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.8),0_2px_14px_rgba(0,0,0,0.5)]">
-                {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
+                <UiLocalizedTripTitle raw={String(trip.title || "")} emptyLabel={t("modals.tripDefault")} />
               </h3>
               <p className="mt-1 w-full truncate text-left text-[clamp(0.56rem,0.78vw,0.68rem)] font-medium tracking-[0.04em] text-white/95">
                 {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
@@ -9410,9 +9419,10 @@ function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, gemini
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
 
-function MustSeePlaceModal({ open, onClose, rawName, displayName, city, language }) {
+function MustSeePlaceModal({ open, onClose, rawName, city, language }) {
   useScrollLock(open);
   const { t } = useI18n();
+  const { text: displayName } = useUiTranslatedText(rawName, language);
   const titleId = useId();
   const [textLoading, setTextLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
@@ -10630,7 +10640,7 @@ function DestinationGuideView({
                               onClick={() => setMustSeePlaceModalRaw(raw)}
                               className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
                             >
-                              {displayActivityTitleForLocale(raw, language)}
+                              <UiTranslatedActivityTitle raw={raw} />
                             </button>
                           );
                         })}
@@ -10746,7 +10756,9 @@ function DestinationGuideView({
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
                         className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-indigo-950 shadow-sm ring-1 ring-white/80"
                       >
-                        <span>{displayActivityTitleForLocale(cell.title, language)}</span>
+                        <span>
+                          <UiTranslatedActivityTitle raw={cell.title} />
+                        </span>
                         {costBadge != null && (
                           <span
                             className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
@@ -11170,7 +11182,6 @@ function DestinationGuideView({
           open
           onClose={() => setMustSeePlaceModalRaw(null)}
           rawName={mustSeePlaceModalRaw}
-          displayName={displayActivityTitleForLocale(mustSeePlaceModalRaw, language)}
           city={String(displayGuide?.city || "").trim() || String(confirmedDestination || "").trim()}
           language={language}
         />
@@ -11220,7 +11231,6 @@ function DestinationGuideView({
                   (displayGuide.suggestedActivities || []).map((a, i) => {
                     const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
                     const rawLabel = cell.title;
-                    const displayLabel = displayActivityTitleForLocale(rawLabel, language);
                     const checked = pickedActivityIndices.has(i);
                     const isFreeNote = /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || ""));
                     const costBadge =
@@ -11258,7 +11268,7 @@ function DestinationGuideView({
                           className="h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                         />
                         <span className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
-                          {displayLabel}
+                          <UiTranslatedActivityTitle raw={rawLabel} />
                         </span>
                         {costBadge != null ? (
                           <span
@@ -11311,7 +11321,6 @@ function DestinationGuideView({
                         const rawPick = String(
                           pickedActivityLabelsRef.current.get(actIndex) || cell.title || ""
                         );
-                        const label = displayActivityTitleForLocale(rawPick, language);
                         const defDate =
                           tripDatesForModal[j % tripDatesForModal.length] || startDate;
                         const defTime =
@@ -11322,12 +11331,12 @@ function DestinationGuideView({
                         const timeVal = normalizeActivityTimeHHMM(sched.time) || defTime;
                         return (
                           <li
-                            key={`sched-${actIndex}-${label.slice(0, 24)}`}
+                            key={`sched-${actIndex}-${rawPick.slice(0, 24)}`}
                             className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
                               <span className="min-w-0 flex-1 text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
-                                {label}
+                                <UiTranslatedActivityTitle raw={rawPick} />
                               </span>
                               {cell.cost > 0 ? (
                                 <span className="shrink-0 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-600 ring-1 ring-indigo-200">
@@ -11778,6 +11787,40 @@ function PlannerView({
   const [activityFormError, setActivityFormError] = useState("");
   const selectedDateKey = toYMD(selectedDate, "");
 
+  const editingRawForI18n = editingActivity
+    ? String(editingActivity?.title || editingActivity?.name || "")
+    : "";
+  const { text: plannerEditTitleBaseline } = useUiTranslatedText(editingRawForI18n, language);
+
+  const viewRawTitle =
+    activityDetailsOpen && viewingActivity
+      ? String(viewingActivity?.title || viewingActivity?.name || "")
+      : "";
+  const { text: viewDetailTitleTr } = useUiTranslatedText(viewRawTitle, language);
+  const viewRawLoc =
+    activityDetailsOpen && viewingActivity ? String(viewingActivity?.location || "").trim() : "";
+  const { text: viewDetailLocTr } = useUiTranslatedText(viewRawLoc, language);
+  const viewRawDesc =
+    activityDetailsOpen && viewingActivity ? String(viewingActivity?.description || "").trim() : "";
+  const { text: viewDetailDescTr } = useUiTranslatedText(viewRawDesc, language);
+
+  const deleteRawTitle = activityToDelete
+    ? String(activityToDelete?.title || activityToDelete?.name || "")
+    : "";
+  const { text: deleteActivityTitleTr } = useUiTranslatedText(deleteRawTitle, language);
+
+  useEffect(() => {
+    if (!editActivityModalOpen || !editingActivity) return;
+    const raw = String(editingActivity?.title || editingActivity?.name || "").trim();
+    if (!raw) return;
+    setTitle((prev) => {
+      const dict = displayActivityTitleForLocale(raw, language);
+      const baseline = String(plannerEditTitleBaseline || "").trim();
+      if (prev === raw || prev === dict || prev === baseline) return baseline || prev;
+      return prev;
+    });
+  }, [editActivityModalOpen, editingActivity?.id, language, plannerEditTitleBaseline]);
+
   const days = useMemo(() => {
     const y = monthCursor.getFullYear();
     const m = monthCursor.getMonth();
@@ -11928,9 +11971,11 @@ function PlannerView({
                       {String(a.time || "--:--")}
                     </p>
                     <p className="truncate font-medium text-slate-900">
-                      {String(a?.title || a?.name || "").trim()
-                        ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
-                        : t("planner.activityNamePlaceholder")}
+                      <UiTranslatedActivityTitle
+                        raw={String(a?.title || a?.name || "")}
+                        emptyFallback={t("planner.activityNamePlaceholder")}
+                        className="truncate"
+                      />
                     </p>
                   </div>
                 </div>
@@ -12114,10 +12159,7 @@ function PlannerView({
               </p>
               <p className="mt-1 text-lg font-normal leading-snug tracking-[0.02em] text-slate-900">
                 {String(viewingActivity?.title || viewingActivity?.name || "").trim()
-                  ? displayActivityTitleForLocale(
-                      String(viewingActivity?.title || viewingActivity?.name || ""),
-                      language
-                    )
+                  ? viewDetailTitleTr
                   : t("planner.activityNamePlaceholder")}
               </p>
             </div>
@@ -12151,7 +12193,7 @@ function PlannerView({
                 {t("planner.locationField")}
                 </p>
                 <p className="mt-1 break-words text-sm font-normal tracking-[0.02em] text-slate-900">
-                  {String(viewingActivity?.location || "-")}
+                  {viewRawLoc ? viewDetailLocTr : "-"}
                 </p>
               </div>
               <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-3 sm:col-span-2 sm:px-4">
@@ -12159,7 +12201,7 @@ function PlannerView({
                 {t("planner.descriptionField")}
                 </p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm font-normal tracking-[0.02em] text-slate-700">
-                  {String(viewingActivity?.description || "").trim() || t("planner.noDescriptionYet")}
+                  {viewRawDesc ? viewDetailDescTr : t("planner.noDescriptionYet")}
                 </p>
               </div>
             </div>
@@ -12230,8 +12272,9 @@ function PlannerView({
                 onClick={() => {
                   const rawStored = String(editingActivity?.title || editingActivity?.name || "");
                   const titleOut =
-                    activityTitleSaveValue(rawStored, title, language) ||
-                    t("planner.activityNamePlaceholder");
+                    activityTitleSaveValue(rawStored, title, language, {
+                      displayBaseline: plannerEditTitleBaseline,
+                    }) || t("planner.activityNamePlaceholder");
                   onUpdateActivity({
                     ...editingActivity,
                     title: titleOut,
@@ -12265,10 +12308,7 @@ function PlannerView({
             <p className="mb-6 break-words text-sm font-normal tracking-[0.02em] text-slate-700">
               {t("planner.deleteActivityQuestion", {
                 name: String(activityToDelete?.title || activityToDelete?.name || "").trim()
-                  ? displayActivityTitleForLocale(
-                      String(activityToDelete?.title || activityToDelete?.name || ""),
-                      language
-                    )
+                  ? deleteActivityTitleTr
                   : t("planner.activityNamePlaceholder"),
               })}
             </p>
@@ -12490,11 +12530,12 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
   const totalPlanner = acts.reduce((s, a) => s + Number(a.cost || 0), 0);
   const totalGroup = exps.reduce((s, e) => s + Number(e.amount || 0), 0);
   const rawLabel = String(trip?.destination || trip?.title || "").trim();
-  const label = rawLabel ? displayCityForLocale(rawLabel, language) : t("modals.tripDefault");
+  const { text: labelI18n } = useUiTranslatedCityName(rawLabel, language);
+  const label = rawLabel ? labelI18n : t("modals.tripDefault");
   const imageTitle = String(trip?.destination || trip?.title || "voyage");
   const dr =
     trip?.start_date && trip?.end_date
-      ? `${String(trip.start_date)} — ${String(trip.end_date)}`
+      ? `${formatDate(trip.start_date)} — ${formatDate(trip.end_date)}`
       : "";
 
   return (
@@ -12573,6 +12614,13 @@ function isBudgetSheetMobileDrag() {
 
 function BudgetTripDetailShell({ trip, onClose, children }) {
   const { t, language } = useI18n();
+  const rawLabel = String(trip?.destination || trip?.title || "").trim();
+  const { text: budgetShellCityLabel } = useUiTranslatedCityName(rawLabel, language);
+  const label = rawLabel ? budgetShellCityLabel : t("modals.tripDefault");
+  const dr =
+    trip?.start_date && trip?.end_date
+      ? `${formatDate(trip.start_date)} — ${formatDate(trip.end_date)}`
+      : "";
   const [sheetDragY, setSheetDragY] = useState(0);
   const [sheetDragging, setSheetDragging] = useState(false);
   const sheetTouchStartY = useRef(0);
@@ -12614,12 +12662,6 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
   }, [onClose]);
 
   if (!trip) return null;
-  const rawLabel = String(trip?.destination || trip?.title || "").trim();
-  const label = rawLabel ? displayCityForLocale(rawLabel, language) : t("modals.tripDefault");
-  const dr =
-    trip?.start_date && trip?.end_date
-      ? `${String(trip.start_date)} — ${String(trip.end_date)}`
-      : "";
   return (
     <div
       className="fixed -inset-1 z-[45] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
@@ -12706,6 +12748,23 @@ function TripExpenseDetail({
   const [groupModal, setGroupModal] = useState(null);
   const [groupSaving, setGroupSaving] = useState(false);
 
+  const budgetEditRawTitle = editingActivity
+    ? String(editingActivity?.title || editingActivity?.name || "")
+    : "";
+  const { text: budgetEditingTitleBaseline } = useUiTranslatedText(budgetEditRawTitle, language);
+
+  useEffect(() => {
+    if (!editingActivity) return;
+    const raw = String(editingActivity?.title || editingActivity?.name || "").trim();
+    if (!raw) return;
+    setEditTitle((prev) => {
+      const dict = displayActivityTitleForLocale(raw, language);
+      const baseline = String(budgetEditingTitleBaseline || "").trim();
+      if (prev === raw || prev === dict || prev === baseline) return baseline || prev;
+      return prev;
+    });
+  }, [editingActivity?.id, language, budgetEditingTitleBaseline]);
+
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
   const participants = canonicalParticipants(
@@ -12725,7 +12784,8 @@ function TripExpenseDetail({
   const balanceEntries = useMemo(() => Object.entries(balances).sort((a, b) => a[0].localeCompare(b[0])), [balances]);
 
   const tripLabelRaw = String(trip?.destination || trip?.title || "").trim();
-  const tripLabel = tripLabelRaw ? displayCityForLocale(tripLabelRaw, language) : t("modals.tripDefault");
+  const { text: tripLabelI18n } = useUiTranslatedCityName(tripLabelRaw, language);
+  const tripLabel = tripLabelRaw ? tripLabelI18n : t("modals.tripDefault");
   const dateRange =
     trip?.start_date && trip?.end_date
       ? `${String(trip.start_date)} → ${String(trip.end_date)}`
@@ -12982,9 +13042,10 @@ function TripExpenseDetail({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="font-normal tracking-[0.02em] text-slate-900">
-                      {String(a?.title || a?.name || "").trim()
-                        ? displayActivityTitleForLocale(String(a?.title || a?.name || ""), language)
-                        : t("planner.activityNamePlaceholder")}
+                      <UiTranslatedActivityTitle
+                        raw={String(a?.title || a?.name || "")}
+                        emptyFallback={t("planner.activityNamePlaceholder")}
+                      />
                     </p>
                     <p className="mt-0.5 truncate text-xs font-normal tracking-[0.02em] text-slate-500">
                       {String(a?.location || t("budget.locationUnknown"))}
@@ -13131,8 +13192,9 @@ function TripExpenseDetail({
                 onClick={async () => {
                   const rawStored = String(editingActivity?.title || editingActivity?.name || "");
                   const titleOut =
-                    activityTitleSaveValue(rawStored, editTitle, language) ||
-                    t("planner.activityNamePlaceholder");
+                    activityTitleSaveValue(rawStored, editTitle, language, {
+                      displayBaseline: budgetEditingTitleBaseline,
+                    }) || t("planner.activityNamePlaceholder");
                   await onUpdateActivity({
                     ...editingActivity,
                     title: titleOut,
@@ -13258,7 +13320,7 @@ function ChatHubView({
                       }}
                     >
                       <p className="text-base font-normal tracking-[0.05em]">
-                        {displayCityForLocale(String(trip.title || ""), language) || t("modals.tripDefault")}
+                        <UiLocalizedTripTitle raw={String(trip.title || "")} emptyLabel={t("modals.tripDefault")} />
                       </p>
                       <p className="text-xs text-white/92">
                         {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
@@ -13306,7 +13368,10 @@ function ChatHubView({
                   id="tp-chat-hub-title"
                   className="break-words text-base font-normal leading-snug tracking-[0.04em] text-slate-900 sm:text-lg"
                 >
-                  {displayCityForLocale(String(activeTrip.title || ""), language) || t("modals.tripDefault")}
+                  <UiLocalizedTripTitle
+                    raw={String(activeTrip.title || "")}
+                    emptyLabel={t("modals.tripDefault")}
+                  />
                 </h2>
                 <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                   {formatDate(activeTrip.start_date)} — {formatDate(activeTrip.end_date)}
@@ -13481,12 +13546,10 @@ function ChatHubView({
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <p className="break-words text-sm font-semibold text-slate-900">
-                                    {String(activity?.title || activity?.name || "").trim()
-                                      ? displayActivityTitleForLocale(
-                                          String(activity?.title || activity?.name || ""),
-                                          language
-                                        )
-                                      : t("planner.activityNamePlaceholder")}
+                                    <UiTranslatedActivityTitle
+                                      raw={String(activity?.title || activity?.name || "")}
+                                      emptyFallback={t("planner.activityNamePlaceholder")}
+                                    />
                                   </p>
                                   <p className="text-xs text-slate-500">
                                     {String(activity?.date || "")} {String(activity?.time || "")}
@@ -15595,9 +15658,10 @@ export default function App() {
                         </span>
                       </div>
                       <h3 className="mt-2 break-words font-display text-xl font-normal uppercase leading-tight tracking-[0.08em] text-white drop-shadow-sm sm:text-2xl sm:leading-none">
-                        {selectedTrip.title
-                          ? displayCityForLocale(String(selectedTrip.title), language)
-                          : t("modals.tripDefault")}
+                        <UiLocalizedTripTitle
+                          raw={String(selectedTrip?.destination || selectedTrip?.title || "")}
+                          emptyLabel={t("modals.tripDefault")}
+                        />
                       </h3>
                       <p className="mt-1 break-all text-xs text-white/85">
                         {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
@@ -15976,10 +16040,10 @@ export default function App() {
               {tripDateConflictTrips.map((tripRow) => (
                 <li key={String(tripRow.id)}>
                   <span className="font-medium">
-                    {displayCityForLocale(
-                      tripDestinationDisplayName(tripRow) || t("modals.tripDefault"),
-                      language
-                    )}
+                    <UiLocalizedTripTitle
+                      raw={String(tripDestinationDisplayName(tripRow) || "")}
+                      emptyLabel={t("modals.tripDefault")}
+                    />
                   </span>
                   <span className="text-slate-600">
                     {" "}

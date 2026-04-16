@@ -80,6 +80,15 @@ const NAMES = {
   "sao paulo": { fr: "São Paulo", en: "São Paulo", de: "São Paulo", es: "São Paulo", it: "San Paolo", zh: "圣保罗" },
   phuket: { fr: "Phuket", en: "Phuket", de: "Phuket", es: "Phuket", it: "Phuket", zh: "普吉岛" },
   mykonos: { fr: "Mykonos", en: "Mykonos", de: "Mykonos", es: "Mykonos", it: "Mykonos", zh: "米科诺斯" },
+  stockholm: {
+    fr: "Stockholm",
+    en: "Stockholm",
+    de: "Stockholm",
+    es: "Estocolmo",
+    it: "Stoccolma",
+    zh: "斯德哥尔摩",
+  },
+  malta: { fr: "Malte", en: "Malta", de: "Malta", es: "Malta", it: "Malta", zh: "马耳他" },
 };
 
 /** Variantes de saisie / stockage → clé dans NAMES. */
@@ -101,6 +110,9 @@ const KEY_ALIASES = {
   algiers: "alger",
   marrakesh: "marrakech",
   myconos: "mykonos",
+  malte: "malta",
+  valetta: "malta",
+  "la valette": "malta",
 };
 
 /** Libellé catalogue App.jsx / CITY_CATALOG (une entrée par clé NAMES). */
@@ -164,10 +176,20 @@ const KEY_TO_CATALOG_CITY = {
   "sao paulo": "Sao Paulo",
   phuket: "Phuket",
   mykonos: "Mykonos",
+  stockholm: "Stockholm",
+  malta: "Malta",
 };
 
 function normalizeLocalSearchQuery(s) {
   return String(s || "").trim().toLowerCase();
+}
+
+/** Libellé catalogue canonique (ex. "New York") → clé NAMES (ex. "new york"). */
+const CATALOG_TO_NAME_KEY = new Map();
+for (const nk of Object.keys(NAMES)) {
+  const cat = KEY_TO_CATALOG_CITY[nk];
+  if (!cat) continue;
+  CATALOG_TO_NAME_KEY.set(normalizeLocalSearchQuery(cat), nk);
 }
 
 /** Libellé localisé → libellés catalogue (plusieurs si collision rare). */
@@ -221,6 +243,23 @@ function resolveNameKey(raw) {
   return k;
 }
 
+/**
+ * Résout une ligne NAMES à partir du titre stocké (y compris libellé localisé seul, ex. 纽约).
+ */
+function resolveCityRow(trimmed) {
+  const t = String(trimmed || "").trim();
+  if (!t) return null;
+  const k = resolveNameKey(t);
+  if (NAMES[k]) return NAMES[k];
+  const q = normalizeLocalSearchQuery(t);
+  const hits = LOCALIZED_LABEL_TO_CATALOG.get(q);
+  if (!hits || hits.size !== 1) return null;
+  const catalog = [...hits][0];
+  const nk = CATALOG_TO_NAME_KEY.get(normalizeLocalSearchQuery(catalog));
+  if (!nk || !NAMES[nk]) return null;
+  return NAMES[nk];
+}
+
 function titleCaseForLocale(raw, lang) {
   const tag = LANG_TAG[lang] || LANG_TAG.en;
   const s = String(raw || "")
@@ -245,10 +284,15 @@ function titleCaseForLocale(raw, lang) {
  * @param {string} language — code app : fr | en | de | es | it | zh
  */
 export function displayCityForLocale(raw, language) {
-  const code = String(language || "fr").toLowerCase();
-  const k = resolveNameKey(raw);
-  const row = NAMES[k];
+  const code = String(language || "fr").toLowerCase().split("-")[0].slice(0, 2);
+  const trimmed = String(raw || "").trim();
+  const row = resolveCityRow(trimmed);
   if (row && row[code]) return row[code];
-  if (row) return row.en || row.fr || titleCaseForLocale(raw, code);
-  return titleCaseForLocale(raw, code);
+  if (row) return row.en || row.fr || titleCaseForLocale(trimmed, code);
+  return titleCaseForLocale(trimmed, code);
+}
+
+/** True si le nom est couvert par le catalogue (pas besoin de traduction API). */
+export function cityHasCatalogEntry(raw) {
+  return Boolean(resolveCityRow(String(raw || "").trim()));
 }

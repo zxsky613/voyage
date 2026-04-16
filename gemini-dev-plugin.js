@@ -5,6 +5,7 @@
  * - POST /api/gemini/itinerary — programme sur demande (dates début / fin)
  * Lit GEMINI_API_KEY depuis .env.local (sans préfixe VITE_).
  * - POST /api/send-invite — invitations e-mail (RESEND_API_KEY dans .env.local).
+ * - POST /api/ui-translate — traduction des libellés utilisateur (GROQ_API_KEY ou GEMINI_API_KEY).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -143,6 +144,62 @@ async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2, model
   const json = await resp.json();
   const text = String(json?.choices?.[0]?.message?.content || "").trim();
   return parseGeminiJsonLenient(text, "Groq");
+}
+
+const UI_TRANSLATE_TARGET_NAMES = {
+  fr: "French",
+  en: "English",
+  de: "German",
+  es: "Spanish",
+  it: "Italian",
+  zh: "Simplified Chinese",
+};
+
+async function translateUiStringsWithGroq(groqKey, texts, targetLang) {
+  const langName = UI_TRANSLATE_TARGET_NAMES[targetLang] || "French";
+  const payload = { items: texts };
+  const prompt =
+    `You translate short traveler-facing strings for a trip planner app.\n` +
+    `Target language: ${langName}.\n` +
+    `Input JSON: ${JSON.stringify(payload)}\n` +
+    `Rules:\n` +
+    `- Output ONLY valid JSON: {"t":["...", ...]} — array "t" MUST have the same length and order as "items".\n` +
+    `- Natural phrasing for activity titles (visits, tours, meals, concerts).\n` +
+    `- Preserve well-known place names when there is no common translated form; otherwise use the usual target-language name.\n` +
+    `- If a string is already in ${langName}, copy it unchanged.\n` +
+    `- No notes or prefixes; each array element is only the translated string.\n`;
+  const systemPrompt =
+    'Reply with a single JSON object with key "t" (array of strings, same length as input items).';
+  const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.12 });
+  const arr = data?.t;
+  if (!Array.isArray(arr) || arr.length !== texts.length) {
+    throw new Error('Groq translate: réponse "t" invalide');
+  }
+  return arr.map((x, i) => String(x ?? texts[i]).trim() || texts[i]);
+}
+
+async function translateUiStringsWithGemini(key, modelId, texts, targetLang) {
+  const langName = UI_TRANSLATE_TARGET_NAMES[targetLang] || "French";
+  const payload = { items: texts };
+  const prompt =
+    `Translate travel-activity UI strings to ${langName}.\n` +
+    `Input: ${JSON.stringify(payload)}\n` +
+    `Output ONLY JSON: {"t":["...", ...]} with the SAME number of strings as "items", same order.\n` +
+    `Keep proper names sensible; if already in ${langName}, unchanged.\n`;
+  const systemInstruction =
+    'JSON only: one object with key "t" (string array, same length as input items).';
+  const data = await runGeminiJson({
+    key,
+    modelId,
+    prompt,
+    systemInstruction,
+    generationConfigExtra: { temperature: 0.12, topP: 0.85, maxOutputTokens: 2048 },
+  });
+  const arr = data?.t;
+  if (!Array.isArray(arr) || arr.length !== texts.length) {
+    throw new Error('Gemini translate: réponse "t" invalide');
+  }
+  return arr.map((x, i) => String(x ?? texts[i]).trim() || texts[i]);
 }
 
 /**
@@ -390,11 +447,64 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isGroqDescription = pathname === "/api/groq/description";
     const isGroqSuggestions = pathname === "/api/groq/suggestions";
     const isGroqSuggestedActivities = pathname === "/api/groq/suggested-activities";
+    const isUiTranslate = pathname === "/api/ui-translate";
     if (
       !isSuggestions && !isSuggestedActivities && !isItinerary &&
       !isFoursquare && !isOsmLandmarks && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
-      !isGroqSuggestions && !isGroqSuggestedActivities
+      !isGroqSuggestions && !isGroqSuggestedActivities && !isUiTranslate
     ) return next();
+
+    // ── Traduction UI (titres d’activités saisis / générés hors dictionnaire) ─
+    if (isUiTranslate) {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      const targetLang = resolveGeminiUiLanguage(body);
+      const texts = Array.isArray(body.texts)
+        ? body.texts.map((x) => String(x ?? "").trim().slice(0, 400)).slice(0, 24)
+        : [];
+      const unique = [];
+      const seen = new Set();
+      for (const t of texts) {
+        if (!t) continue;
+        if (seen.has(t)) continue;
+        seen.add(t);
+        unique.push(t);
+      }
+      if (unique.length === 0) {
+        sendJson(res, 200, { ok: true, translations: texts.map(() => "") });
+        return;
+      }
+      try {
+        const groqKey = readGroqKey(envDir);
+        let translatedUnique;
+        if (groqKey) {
+          translatedUnique = await translateUiStringsWithGroq(groqKey, unique, targetLang);
+        } else {
+          const { key, env } = resolveGeminiApiKey(mode, envDir);
+          if (!key) {
+            sendJson(res, 503, {
+              ok: false,
+              error:
+                "Traduction indisponible : ajoute GROQ_API_KEY ou GEMINI_API_KEY dans .env.local, puis redémarre npm run dev.",
+            });
+            return;
+          }
+          const modelId = String(env.GEMINI_MODEL || "gemini-2.5-flash").trim();
+          translatedUnique = await translateUiStringsWithGemini(key, modelId, unique, targetLang);
+        }
+        const map = new Map();
+        unique.forEach((s, i) => map.set(s, translatedUnique[i] ?? s));
+        const translations = texts.map((s) => (s ? (map.get(s) ?? s) : ""));
+        sendJson(res, 200, { ok: true, translations });
+      } catch (e) {
+        sendJson(res, 502, { ok: false, error: formatError(e) });
+      }
+      return;
+    }
 
     // ── Route OSM / Overpass (lieux nommés sans clé API) ─────────────────────
     if (isOsmLandmarks) {
