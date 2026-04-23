@@ -1580,7 +1580,8 @@ function authHasInviteLink() {
   }
 }
 const TEXT = "#0B1220";
-const ACCENT = "#0F172A";
+/** Bleu logo Justtrip (aligné sur le fond du PNG). */
+const ACCENT = "#002B4F";
 const slots = ["09:30", "14:00", "18:30", "21:00"];
 
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
@@ -1593,10 +1594,10 @@ const TRIPS_SELECT_ATTEMPTS = [
 ];
 
 const GLASS_BUTTON_CLASS =
-  "font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(15,23,42,0.3)] transition hover:brightness-110";
+  "font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(0,43,79,0.32)] transition hover:brightness-110";
 const GLASS_ACCENT_STYLE = {
   background:
-    "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.92) 55%, rgba(15,23,42,0.96) 100%)",
+    "linear-gradient(135deg, rgba(0,43,79,0.96) 0%, rgba(0,31,59,0.92) 55%, rgba(0,43,79,0.96) 100%)",
 };
 
 /** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
@@ -6267,7 +6268,7 @@ function JusttripBrand({ size = "md", className = "" }) {
     <img
       src="/logo-justtrip.png"
       alt={t("auth.logoAlt")}
-      className={`inline-block w-auto object-contain object-center ${h} ${className}`.trim()}
+      className={`inline-block w-auto rounded-2xl object-contain object-center sm:rounded-[1.35rem] ${h} ${className}`.trim()}
     />
   );
 }
@@ -6292,7 +6293,7 @@ function TopNav({ onMenu, onAdd, title }) {
           type="button"
           onClick={onAdd}
           data-tour-id="plus-button"
-          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(15,23,42,0.14)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
+          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(0,43,79,0.22)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
           style={{ backgroundColor: ACCENT }}
         >
           <Plus size={20} className="shrink-0" aria-hidden />
@@ -6759,26 +6760,26 @@ function AuthView() {
               <div className="flex shrink-0 flex-col items-center gap-0 leading-none">
                 <div className="relative z-[2] flex shrink-0 justify-center pb-1 sm:pb-2">
                   <div
-                    className="pointer-events-none absolute left-1/2 top-[45%] z-0 h-[min(72vw,14rem)] w-[min(72vw,14rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30 blur-3xl sm:h-[17rem] sm:w-[17rem]"
+                    className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[min(48vw,9.5rem)] w-[min(48vw,9.5rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/28 blur-3xl sm:h-[11rem] sm:w-[11rem]"
                     aria-hidden
                   />
                   <img
                     src="/logo-justtrip.png"
                     alt={t("auth.logoAlt")}
-                    width={320}
-                    height={320}
+                    width={200}
+                    height={200}
                     decoding="async"
-                    className="relative z-[1] block h-auto max-h-[min(52vh,15.5rem)] w-auto max-w-[min(92vw,20rem)] object-contain object-center align-top [filter:drop-shadow(0_0_14px_rgba(255,255,255,0.95))_drop-shadow(0_0_36px_rgba(255,255,255,0.55))_drop-shadow(0_2px_12px_rgba(0,0,0,0.35))] sm:max-h-[17.5rem] sm:max-w-[21rem] sm:[filter:drop-shadow(0_0_16px_rgba(255,255,255,0.98))_drop-shadow(0_0_44px_rgba(255,255,255,0.5))_drop-shadow(0_3px_14px_rgba(0,0,0,0.3))]"
+                    className="relative z-[1] block h-auto max-h-[min(26vh,9rem)] w-auto max-w-[min(72vw,12rem)] rounded-[2.35rem] object-contain object-center align-top [filter:drop-shadow(0_0_12px_rgba(255,255,255,0.85))_drop-shadow(0_0_28px_rgba(255,255,255,0.45))_drop-shadow(0_2px_10px_rgba(0,0,0,0.32))] sm:max-h-[10rem] sm:max-w-[13rem] sm:rounded-[3rem] sm:[filter:drop-shadow(0_0_14px_rgba(255,255,255,0.9))_drop-shadow(0_0_32px_rgba(255,255,255,0.42))_drop-shadow(0_3px_12px_rgba(0,0,0,0.28))]"
                   />
                 </div>
               </div>
-              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-7 sm:flex-none sm:justify-start sm:pt-0">
-                <p className="max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
+              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-5 sm:flex-none sm:justify-start sm:pt-1">
+                <p className="max-w-[22rem] text-center text-[0.9375rem] leading-relaxed text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-6 sm:text-base">
                   {t("auth.landingTagline")}
                 </p>
               </div>
             </div>
-            <div className="mx-auto mt-6 w-full max-w-[17rem] shrink-0 space-y-2 sm:mt-10 sm:max-w-sm sm:space-y-3">
+            <div className="mx-auto mt-5 w-full max-w-[20rem] shrink-0 space-y-3 sm:mt-8 sm:max-w-[22rem]">
               <button
                 type="button"
                 onClick={() => {
@@ -6786,7 +6787,7 @@ function AuthView() {
                   setMode("signup");
                   setMsg("");
                 }}
-                className={`w-full rounded-full px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:py-4 ${GLASS_BUTTON_CLASS}`}
+                className={`flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-6 py-3.5 text-center text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_12px_28px_rgba(0,43,79,0.32)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3.5rem] sm:py-4 sm:text-base ${GLASS_BUTTON_CLASS}`}
                 style={GLASS_ACCENT_STYLE}
               >
                 {t("auth.landingSignUp")}
@@ -6798,7 +6799,8 @@ function AuthView() {
                   setMode("signin");
                   setMsg("");
                 }}
-                className="w-full rounded-full bg-white px-6 py-3 text-center text-base font-normal tracking-[0.03em] text-slate-900 shadow-lg transition hover:bg-white/95 active:scale-[0.99] sm:py-4"
+                className="flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-white/35 bg-white px-6 py-3.5 text-center text-[15px] font-semibold leading-tight tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition hover:bg-white/95 active:scale-[0.99] sm:min-h-[3.5rem] sm:py-4 sm:text-base"
+                style={{ color: ACCENT }}
               >
                 {t("auth.landingSignIn")}
               </button>
@@ -6810,8 +6812,8 @@ function AuthView() {
           </div>
         </div>
       ) : (
-    <div className="min-h-screen overflow-x-hidden px-4 py-8 sm:px-5" style={{ background: BG, color: TEXT }}>
-      <div className="relative mx-auto mt-10 min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2.5rem] bg-white/80 p-4 pb-6 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:rounded-[4.5rem] sm:p-8 sm:pb-8">
+    <div className="min-h-screen overflow-x-hidden px-4 py-6 sm:px-5 sm:py-10" style={{ background: BG, color: TEXT }}>
+      <div className="relative mx-auto mt-6 min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2.5rem] bg-white/80 p-5 pb-7 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:mt-10 sm:rounded-[4.5rem] sm:p-8 sm:pb-8">
         {!invitePromptOpen ? (
           <button
             type="button"
@@ -6826,10 +6828,10 @@ function AuthView() {
           </button>
         ) : null}
         <h1 className="mb-2 flex justify-center"><JusttripBrand size="sm" /></h1>
-        <p className="mb-6 text-center font-display text-lg font-normal tracking-[0.04em]">
+        <p className="mb-5 text-center font-display text-base font-normal tracking-[0.04em] text-slate-700 sm:mb-6 sm:text-lg">
           {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
         </p>
-        <div className="space-y-3">
+        <div className="space-y-2.5 sm:space-y-3">
           {mode === "signup" ? (
             <>
               <input
@@ -6837,14 +6839,14 @@ function AuthView() {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder={t("auth.firstName")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
               />
               <input
                 type="text"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder={t("auth.lastName")}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
               />
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("auth.profilePhotoOptional")}</p>
@@ -6886,20 +6888,20 @@ function AuthView() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={t("auth.email")}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
           />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("auth.password")}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
           />
           <button
             type="button"
             onClick={submit}
             disabled={loading}
-            className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
+            className={`mt-1 flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-5 py-3.5 text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_10px_26px_rgba(0,43,79,0.22)] transition hover:brightness-105 active:scale-[0.99] disabled:opacity-60 sm:min-h-[3.5rem] sm:text-base ${GLASS_BUTTON_CLASS}`}
             style={GLASS_ACCENT_STYLE}
           >
             {loading
@@ -6928,7 +6930,7 @@ function AuthView() {
               return next;
             })
           }
-          className="mt-4 w-full text-sm text-slate-600 underline"
+          className="mt-4 w-full py-2.5 text-center text-sm font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-900"
         >
           {invitePromptOpen
             ? t("auth.inviteFlowNote")
@@ -6941,7 +6943,7 @@ function AuthView() {
             type="button"
             onClick={forgotPassword}
             disabled={loading}
-            className="mt-2 w-full text-sm text-slate-600 underline disabled:opacity-60"
+            className="mt-1 w-full py-2 text-center text-sm font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-800 disabled:opacity-60"
           >
             {t("auth.forgotPassword")}
           </button>
@@ -6956,7 +6958,7 @@ function AuthView() {
             type="button"
             onClick={resendConfirmationEmail}
             disabled={resendLoading || loading}
-            className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+            className="mt-3 flex min-h-[3.25rem] w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
           >
             {resendLoading ? t("auth.loading") : t("auth.confirmEmailResend")}
           </button>

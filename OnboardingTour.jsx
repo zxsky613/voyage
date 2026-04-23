@@ -11,9 +11,9 @@ import { createPortal } from "react-dom";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-/** Bleu marine du logo Justtrip (fond marque) */
-const BRAND_NAVY = "#0B2447";
-const BRAND_NAVY_MID = "#102A44";
+/** Bleu logo Justtrip (#002B4F) et nuance plus foncée pour les dégradés */
+const BRAND_NAVY = "#002B4F";
+const BRAND_NAVY_MID = "#001F3B";
 
 /* ─── Storage helpers ──────────────────────────────────────────────────── */
 function storageKeyForUser(userId) {
@@ -346,7 +346,7 @@ function SpotlightOverlay({ rect, tourId }) {
           strokeWidth="2.25"
           style={{
             filter:
-              "drop-shadow(0 0 6px rgba(11,36,71,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
+              "drop-shadow(0 0 6px rgba(0,43,79,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
           }}
         >
           <animate attributeName="stroke-opacity" values="0.9;0.5;0.9" dur="1.8s" repeatCount="indefinite" />
@@ -559,8 +559,8 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
           <img
             src={`${import.meta.env.BASE_URL}logo-justtrip.png`}
             alt={t("auth.logoAlt")}
-            className="h-[4.75rem] w-auto max-w-[7.25rem] shrink-0 rounded-3xl object-contain shadow-xl"
-            style={{ boxShadow: "0 16px 40px rgba(11, 36, 71, 0.38)" }}
+            className="h-[4.75rem] w-auto max-w-[7.25rem] shrink-0 rounded-[1.35rem] object-contain shadow-xl sm:rounded-[1.5rem]"
+            style={{ boxShadow: "0 16px 40px rgba(0, 43, 79, 0.38)" }}
             width={220}
             height={140}
             decoding="async"
@@ -581,7 +581,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
             className="w-full rounded-2xl py-3 text-sm font-semibold text-white transition-transform active:scale-95"
             style={{
               background: `linear-gradient(135deg, ${BRAND_NAVY_MID} 0%, ${BRAND_NAVY} 100%)`,
-              boxShadow: "0 10px 28px rgba(11, 36, 71, 0.35)",
+              boxShadow: "0 10px 28px rgba(0, 85, 164, 0.35)",
             }}
           >
             {t("onboarding.welcome.cta")} →
@@ -652,7 +652,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
                 className="flex shrink-0 items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-transform active:scale-95"
                 style={{
                   background: `linear-gradient(135deg, ${BRAND_NAVY_MID}, ${BRAND_NAVY})`,
-                  boxShadow: "0 6px 16px rgba(11, 36, 71, 0.3)",
+                  boxShadow: "0 6px 16px rgba(0, 43, 79, 0.3)",
                 }}
               >
                 {isLast ? (

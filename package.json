@@ -14,7 +14,8 @@
     "upload:destinations": "node scripts/upload-destinations-to-supabase.mjs",
     "verify:city-heroes": "node scripts/verify-city-heroes.mjs",
     "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
-    "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs"
+    "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
+    "fix:logo": "node scripts/fix-logo-white-dot.mjs"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",
@@ -31,6 +32,7 @@
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.3",
     "probe-image-size": "^7.2.3",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.17",
     "vite": "^5.4.19"
   }

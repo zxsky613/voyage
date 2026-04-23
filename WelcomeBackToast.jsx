@@ -70,8 +70,8 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
             aria-live="polite"
             className="tp-card-pulse rounded-[28px] px-8 py-5 flex items-center gap-4"
             style={{
-              background: "linear-gradient(135deg, #0ea5e9 0%, #6366f1 52%, #a855f7 100%)",
-              boxShadow: "0 24px 64px rgba(99,102,241,0.4), 0 6px 20px rgba(14,165,233,0.25), inset 0 1px 0 rgba(255,255,255,0.2)",
+              background: "linear-gradient(135deg, #001F3B 0%, #002B4F 48%, #003A62 100%)",
+              boxShadow: "0 24px 64px rgba(0,43,79,0.38), 0 6px 20px rgba(0,31,59,0.28), inset 0 1px 0 rgba(255,255,255,0.2)",
             }}
           >
             <span style={{ fontSize: "2.2rem", lineHeight: 1, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}>🌍</span>
