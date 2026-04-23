@@ -40,7 +40,7 @@ import {
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
 } from "./geminiClient.js";
-import { sanitizeMustSeePlaces } from "./placeGuards.js";
+import { sanitizeMustSeePlaces, pickPlacesListAfterScriptFilter } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 import {
@@ -3402,6 +3402,31 @@ function clampPlacesList(places, cityName, { min = 3, max = 7, padExploration = 
   return out.slice(0, max);
 }
 
+/**
+ * Pipeline unique pour les pastilles « lieux incontournables » : sanitize → script UI → catalogue emblématique.
+ * À utiliser pour toute entrée (API, cache, Gemini) afin d’éviter thaï/lao quand l’UI n’est pas th/lo.
+ */
+function finalizeMustSeePlacesListForUi(rawPlaces, cityName, uiLanguage, clampOptions = {}) {
+  const city = String(cityName || "");
+  const sanitized = sanitizeMustSeePlaces(rawPlaces, city);
+  const filtered = pickPlacesListAfterScriptFilter(sanitized, uiLanguage);
+  return clampPlacesList(filtered, city, {
+    min: 3,
+    max: 7,
+    padExploration: false,
+    ...clampOptions,
+  });
+}
+
+function withGuidePlacesSanitizedForUiLang(guide, uiLanguage) {
+  if (!guide || typeof guide !== "object") return guide;
+  const city = String(guide.city || "");
+  return {
+    ...guide,
+    places: finalizeMustSeePlacesListForUi(guide.places, city, uiLanguage),
+  };
+}
+
 /** Affichage instantane (sans reseau) le temps que les APIs repondent. */
 function buildInstantDestinationGuide(rawQuery, uiLanguage = "fr") {
   const cityStem = extractCityPrompt(rawQuery) || normalizeCityInput(rawQuery);
@@ -4787,11 +4812,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const rawPlacesList =
     mergedFromApis.length > 0 ? mergedFromApis : getIconicPlacesFallback(safeCity) || [];
 
-  const placesForGuide = clampPlacesList(sanitizeMustSeePlaces(rawPlacesList, safeCity), safeCity, {
-    min: 3,
-    max: 7,
-    padExploration: false,
-  });
+  const placesForGuide = finalizeMustSeePlacesListForUi(rawPlacesList, safeCity, uiLanguage);
 
   const tips = buildTravelTips(safeCity, placesForGuide, uiLanguage);
 
@@ -5030,12 +5051,13 @@ function ensureMinSuggestedActivities(
   return out;
 }
 
-function normalizeGeminiGuidePayload(data, destinationHint = "") {
+function normalizeGeminiGuidePayload(data, destinationHint = "", uiLanguage = "fr") {
   if (!data || typeof data !== "object") return null;
   const rawPlaces = Array.isArray(data.places)
     ? data.places.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  const places = sanitizeMustSeePlaces(rawPlaces, destinationHint);
+  const sanitized = sanitizeMustSeePlaces(rawPlaces, destinationHint);
+  const placesFinal = pickPlacesListAfterScriptFilter(sanitized, uiLanguage);
   const fromActs = Array.isArray(data.suggestedActivities)
     ? data.suggestedActivities
     : Array.isArray(data.activities)
@@ -5051,7 +5073,7 @@ function normalizeGeminiGuidePayload(data, destinationHint = "") {
     : [];
   return {
     summary: String(data.summary || "").trim(),
-    places,
+    places: placesFinal,
     tips: { do: tipsDo, dont: tipsDont },
     suggestedActivities,
   };
@@ -5071,25 +5093,28 @@ function normalizeGeminiSuggestedActivitiesPayload(data, destinationHint = "") {
 function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr") {
   if (!baseGuide) return null;
   const city = String(baseGuide.city || "");
+  const clampPlacesForLang = (raw) => finalizeMustSeePlacesListForUi(raw, city, uiLanguage);
   if (!geminiNorm) {
+    const pc = clampPlacesForLang(baseGuide.places);
     return {
       ...baseGuide,
-      places: clampPlacesList(baseGuide.places, city),
+      places: pc,
       suggestedActivities: ensureMinSuggestedActivities(
         baseGuide.suggestedActivities,
         city,
         MIN_SUGGESTED_ACTIVITIES,
-        baseGuide.places
+        pc
       ),
     };
   }
   const mergedPlaces =
     geminiNorm.places.length > 0 ? geminiNorm.places : baseGuide.places;
+  const mergedClamped = clampPlacesForLang(mergedPlaces);
   return {
     ...baseGuide,
     // Description = Wikipédia / repli local uniquement (pas de résumé Gemini : économie de tokens).
     description: baseGuide.description,
-    places: clampPlacesList(mergedPlaces, city),
+    places: mergedClamped,
     tips: {
       do: mergeTipsDoFromGemini(baseGuide.tips?.do, geminiNorm.tips.do, city, uiLanguage),
       dont: geminiNorm.tips.dont.length > 0 ? geminiNorm.tips.dont : baseGuide.tips?.dont || [],
@@ -5100,7 +5125,7 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr
         : baseGuide.suggestedActivities,
       city,
       MIN_SUGGESTED_ACTIVITIES,
-      clampPlacesList(mergedPlaces, city, { min: 3, max: 7, padExploration: false })
+      mergedClamped
     ),
   };
 }
@@ -9785,7 +9810,7 @@ function DestinationGuideView({
       const city = String(guide.city || "");
       base = {
         ...guide,
-        places: clampPlacesList(guide.places, city, { min: 3, max: 7, padExploration: false }),
+        places: finalizeMustSeePlacesListForUi(guide.places, city, language),
         suggestedActivities: geminiAiSuggestedActivities,
         tips: guide.tips,
       };
@@ -9793,14 +9818,16 @@ function DestinationGuideView({
       base = mergeDestinationGuideWithGemini(guide, null, language);
     }
     const city = String(base.city || "");
+    const placesForUi = finalizeMustSeePlacesListForUi(base.places, city, language);
     const withActs = {
       ...base,
+      places: placesForUi,
       suggestedActivities: localizeGenericSuggestedActivities(
         ensureMinSuggestedActivities(
           base.suggestedActivities,
           city,
           MIN_SUGGESTED_ACTIVITIES,
-          base.places
+          placesForUi
         ),
         city,
         language
@@ -9964,7 +9991,7 @@ function DestinationGuideView({
     if (useDiskGuide) {
       setGuide(
         applyGuideHeroUnsplashOnlyOrEmpty({
-          ...dg,
+          ...withGuidePlacesSanitizedForUiLang(dg, language),
           ...(heroOverlay || {}),
           heroImageCandidates:
             heroOverlay?.heroImageCandidates || dg.heroImageCandidates || instant.heroImageCandidates,
@@ -10097,7 +10124,7 @@ function DestinationGuideView({
         .then((res) => {
           if (cancelled) return;
           if (res?.ok && res.data) {
-            const norm = normalizeGeminiGuidePayload(res.data, dest);
+            const norm = normalizeGeminiGuidePayload(res.data, dest, language);
             if (norm && (Array.isArray(norm.places) && norm.places.length > 0)) {
               setGeminiContent(norm);
               setGeminiError("");
@@ -10109,7 +10136,7 @@ function DestinationGuideView({
         .then((res) => {
           if (cancelled || !res) return;
           if (res?.ok && res.data) {
-            const norm = normalizeGeminiGuidePayload(res.data, dest);
+            const norm = normalizeGeminiGuidePayload(res.data, dest, language);
             setGeminiContent(norm);
             setGeminiError("");
           } else {
@@ -10196,7 +10223,7 @@ function DestinationGuideView({
       .then((res) => {
         if (cancelled || !res) return;
         if (res?.ok && res.data) {
-          const norm = normalizeGeminiGuidePayload(res.data, dest);
+          const norm = normalizeGeminiGuidePayload(res.data, dest, language);
           if (norm?.tips && (norm.tips.do?.length > 0 || norm.tips.dont?.length > 0)) {
             setGeminiLangTips(norm.tips);
           }

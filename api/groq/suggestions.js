@@ -2,7 +2,7 @@ import {
   handleCors, sendJson, parseBody, getGroqKey,
   runGroqJson, resolveUiLanguage, langRuleParagraph, formatError,
 } from "../_helpers.js";
-import { sanitizeMustSeePlaces } from "../../placeGuards.js";
+import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -41,7 +41,8 @@ export default async function handler(req, res) {
   try {
     const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
     if (data && typeof data === "object" && Array.isArray(data.places)) {
-      data.places = sanitizeMustSeePlaces(data.places, destination);
+      const cleaned = sanitizeMustSeePlaces(data.places, destination);
+      data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
     }
     sendJson(res, 200, { ok: true, data });
   } catch (e) {

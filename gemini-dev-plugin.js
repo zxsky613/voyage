@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadEnv } from "vite";
-import { sanitizeMustSeePlaces } from "./placeGuards.js";
+import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
 import { buildItineraryEnrichmentBlock } from "./api/_helpers.js";
 import { fetchLandmarkNamesFromOverpass } from "./api/osm/overpassLandmarks.js";
@@ -522,9 +522,11 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       }
       const radius = Math.min(Math.max(Number(body.radius) || 11000, 2000), 25000);
       const hint = String(body.cityHint || body.destination || "").trim();
+      const locale = String(body.locale || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
       try {
-        const raw = await fetchLandmarkNamesFromOverpass(lat, lon, radius);
-        const names = sanitizeMustSeePlaces(raw, hint || "destination");
+        const raw = await fetchLandmarkNamesFromOverpass(lat, lon, radius, locale);
+        const cleaned = sanitizeMustSeePlaces(raw, hint || "destination");
+        const names = pickPlacesListAfterScriptFilter(cleaned, locale);
         sendJson(res, 200, { ok: true, names, count: names.length });
       } catch (e) {
         sendJson(res, 502, { ok: false, error: String(e?.message || e), names: [] });
@@ -754,7 +756,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         try {
           const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
           if (data && typeof data === "object" && Array.isArray(data.places)) {
-            data.places = sanitizeMustSeePlaces(data.places, destination);
+            const cleaned = sanitizeMustSeePlaces(data.places, destination);
+            data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
           }
           sendJson(res, 200, { ok: true, data });
         } catch (e) {
@@ -1013,7 +1016,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         },
       });
       if (data && typeof data === "object" && Array.isArray(data.places)) {
-        data.places = sanitizeMustSeePlaces(data.places, destination);
+        const cleaned = sanitizeMustSeePlaces(data.places, destination);
+        data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
       }
       sendJson(res, 200, { ok: true, data });
     } catch (e) {

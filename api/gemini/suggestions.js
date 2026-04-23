@@ -2,7 +2,7 @@ import {
   handleCors, sendJson, parseBody, getGeminiKey, getGeminiModel,
   runGeminiJson, resolveUiLanguage, langRuleParagraph, formatError,
 } from "../_helpers.js";
-import { sanitizeMustSeePlaces } from "../../placeGuards.js";
+import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -45,7 +45,8 @@ export default async function handler(req, res) {
       generationConfigExtra: { temperature: 0.2, topP: 0.8, maxOutputTokens: 4096 },
     });
     if (data && typeof data === "object" && Array.isArray(data.places)) {
-      data.places = sanitizeMustSeePlaces(data.places, destination);
+      const cleaned = sanitizeMustSeePlaces(data.places, destination);
+      data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
     }
     sendJson(res, 200, { ok: true, data });
   } catch (e) {

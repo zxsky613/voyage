@@ -1,3 +1,44 @@
+/** Thaï + lao (alphasyllabaires) : titres OSM/WP souvent dans la langue locale alors que l’UI est FR/EN… */
+const THAI_LAO_SCRIPT_RE = /[\u0E00-\u0EFF]/;
+
+/**
+ * Retire les noms de lieux uniquement / principalement en thaï ou lao lorsque la langue UI n’est pas th ou lo,
+ * afin que clampPlacesList puisse compléter avec le catalogue (ex. iconicPlacesData en français).
+ * @param {unknown[]} places
+ * @param {string} [uiLanguage] code ISO 2 lettres (fr, en, th…)
+ */
+export function dropPlacesWrongScriptForUiLang(places, uiLanguage = "fr") {
+  if (!Array.isArray(places)) return [];
+  const lang = String(uiLanguage || "fr")
+    .toLowerCase()
+    .split("-")[0]
+    .slice(0, 2);
+  if (lang === "th" || lang === "lo") {
+    return places.map((p) => String(p || "").trim()).filter(Boolean);
+  }
+  return places
+    .map((p) => String(p || "").trim())
+    .filter((s) => s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s));
+}
+
+/**
+ * Après `sanitizeMustSeePlaces` : liste prête pour `clampPlacesList`.
+ * Si tout est en thaï/lao alors que l’UI est FR/EN/…, retourne [] pour forcer le catalogue emblématique au lieu de réafficher le thaï.
+ */
+export function pickPlacesListAfterScriptFilter(sanitized, uiLanguage = "fr") {
+  if (!Array.isArray(sanitized)) return [];
+  const ok = dropPlacesWrongScriptForUiLang(sanitized, uiLanguage);
+  if (ok.length > 0) return ok;
+  const lang = String(uiLanguage || "fr")
+    .toLowerCase()
+    .split("-")[0]
+    .slice(0, 2);
+  if (lang === "th" || lang === "lo") {
+    return sanitized.map((p) => String(p || "").trim()).filter((s) => s.length >= 2);
+  }
+  return [];
+}
+
 /** Chaîne normalisée pour dédoublonnage / tests (minuscules, sans accents). */
 function fold(s) {
   return String(s || "")

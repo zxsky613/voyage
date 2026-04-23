@@ -1,6 +1,6 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
 import { fetchLandmarkNamesFromOverpass } from "./overpassLandmarks.js";
-import { sanitizeMustSeePlaces } from "../../placeGuards.js";
+import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -17,7 +17,8 @@ export default async function handler(req, res) {
     const locale = String(body.locale || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
     const raw = await fetchLandmarkNamesFromOverpass(lat, lon, radius, locale);
     const hint = String(body.cityHint || body.destination || "").trim();
-    const names = sanitizeMustSeePlaces(raw, hint || "destination");
+    const cleaned = sanitizeMustSeePlaces(raw, hint || "destination");
+    const names = pickPlacesListAfterScriptFilter(cleaned, locale);
     sendJson(res, 200, { ok: true, names, count: names.length });
   } catch (e) {
     sendJson(res, 502, { ok: false, error: String(e?.message || e), names: [] });
