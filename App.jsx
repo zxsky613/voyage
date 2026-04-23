@@ -40,7 +40,11 @@ import {
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
 } from "./geminiClient.js";
-import { sanitizeMustSeePlaces, pickPlacesListAfterScriptFilter } from "./placeGuards.js";
+import {
+  sanitizeMustSeePlaces,
+  pickPlacesListAfterScriptFilter,
+  filterTipLinesForUiLang,
+} from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 import {
@@ -2331,7 +2335,7 @@ function dedupeTipLines(lines) {
 
 /** Fusionne conseils Gemini + base catalogue ; garantit au moins 3 conseils « do » pertinents. */
 function mergeTipsDoFromGemini(baseDo, geminiDo, cityName, uiLanguage = "fr") {
-  const g = dedupeTipLines(geminiDo);
+  const g = dedupeTipLines(filterTipLinesForUiLang(geminiDo, uiLanguage));
   const b = dedupeTipLines(baseDo);
   let merged = dedupeTipLines([...g, ...b]);
   if (merged.length < 3) {
@@ -2344,6 +2348,27 @@ function mergeTipsDoFromGemini(baseDo, geminiDo, cityName, uiLanguage = "fr") {
     merged = dedupeTipLines([...merged, ...fill]);
   }
   return merged.slice(0, 12);
+}
+
+/** Dernière barrière : pas de thaï/lao dans les conseils si l’UI n’est pas th/lo ; complète depuis le catalogue. */
+function finalizeTravelTipsForUi(tips, cityName, uiLanguage) {
+  const city = String(cityName || "").trim();
+  const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const canonical = resolveCanonicalCity(city);
+  const key = normalizeTextForSearch(canonical);
+  const label = String(canonical || city).trim() || city;
+  const fallback = resolveTravelTips(key, label, getIconicPlacesFallback(city) || [], lang);
+  let doLines = filterTipLinesForUiLang(dedupeTipLines(tips?.do), lang);
+  let dontLines = filterTipLinesForUiLang(dedupeTipLines(tips?.dont), lang);
+  if (doLines.length < 3) {
+    doLines = dedupeTipLines([...doLines, ...fallback.do]);
+    doLines = filterTipLinesForUiLang(doLines, lang);
+  }
+  if (dontLines.length < 3) {
+    dontLines = dedupeTipLines([...dontLines, ...fallback.dont]);
+    dontLines = filterTipLinesForUiLang(dontLines, lang);
+  }
+  return { do: doLines.slice(0, 12), dont: dontLines.slice(0, 12) };
 }
 
 const COASTAL_CITIES = new Set([
@@ -5065,12 +5090,14 @@ function normalizeGeminiGuidePayload(data, destinationHint = "", uiLanguage = "f
       : [];
   const suggestedActivities = normalizeSuggestedActivitiesList(fromActs, destinationHint);
   const tipsRaw = data.tips && typeof data.tips === "object" ? data.tips : {};
-  const tipsDo = Array.isArray(tipsRaw.do)
-    ? tipsRaw.do.map((x) => String(x || "").trim()).filter(Boolean)
-    : [];
-  const tipsDont = Array.isArray(tipsRaw.dont)
-    ? tipsRaw.dont.map((x) => String(x || "").trim()).filter(Boolean)
-    : [];
+  const tipsDo = filterTipLinesForUiLang(
+    Array.isArray(tipsRaw.do) ? tipsRaw.do.map((x) => String(x || "").trim()).filter(Boolean) : [],
+    uiLanguage
+  );
+  const tipsDont = filterTipLinesForUiLang(
+    Array.isArray(tipsRaw.dont) ? tipsRaw.dont.map((x) => String(x || "").trim()).filter(Boolean) : [],
+    uiLanguage
+  );
   return {
     summary: String(data.summary || "").trim(),
     places: placesFinal,
@@ -5117,7 +5144,10 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr
     places: mergedClamped,
     tips: {
       do: mergeTipsDoFromGemini(baseGuide.tips?.do, geminiNorm.tips.do, city, uiLanguage),
-      dont: geminiNorm.tips.dont.length > 0 ? geminiNorm.tips.dont : baseGuide.tips?.dont || [],
+      dont: dedupeTipLines([
+        ...filterTipLinesForUiLang(geminiNorm.tips.dont, uiLanguage),
+        ...dedupeTipLines(baseGuide.tips?.dont || []),
+      ]).slice(0, 12),
     },
     suggestedActivities: ensureMinSuggestedActivities(
       geminiNorm.suggestedActivities.length > 0
@@ -9833,10 +9863,12 @@ function DestinationGuideView({
         language
       ),
     };
-    if (geminiLangTips && !GEMINI_DESTINATION_ENRICH) {
-      return { ...withActs, tips: geminiLangTips };
-    }
-    return withActs;
+    const tipsSource =
+      geminiLangTips && !GEMINI_DESTINATION_ENRICH ? geminiLangTips : withActs.tips;
+    return {
+      ...withActs,
+      tips: finalizeTravelTipsForUi(tipsSource, city, language),
+    };
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
 
   // Sauvegarder le guide en localStorage dès que les données sont disponibles

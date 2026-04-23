@@ -39,6 +39,26 @@ export function pickPlacesListAfterScriptFilter(sanitized, uiLanguage = "fr") {
   return [];
 }
 
+/**
+ * Phrases de conseils (tips.do / tips.dont) : retire les lignes contenant du thaï/lao si l’UI n’est pas th/lo
+ * (l’IA ou des données locales mélangent souvent ces scripts avec le français).
+ * @param {unknown[]} lines
+ * @param {string} [uiLanguage]
+ */
+export function filterTipLinesForUiLang(lines, uiLanguage = "fr") {
+  if (!Array.isArray(lines)) return [];
+  const lang = String(uiLanguage || "fr")
+    .toLowerCase()
+    .split("-")[0]
+    .slice(0, 2);
+  if (lang === "th" || lang === "lo") {
+    return lines.map((x) => String(x || "").trim()).filter((s) => s.length >= 2);
+  }
+  return lines
+    .map((x) => String(x || "").trim())
+    .filter((s) => s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s));
+}
+
 /** Chaîne normalisée pour dédoublonnage / tests (minuscules, sans accents). */
 function fold(s) {
   return String(s || "")
