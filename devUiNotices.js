@@ -84,7 +84,7 @@ export function formatNoticeForEndUser(session, raw, t) {
   if (!messageLooksTechnicalOrLeak(s)) return String(raw ?? "");
 
   try {
-    console.warn("[Avolo] Notice masquée pour l’utilisateur (détail technique) :", s);
+    console.warn("[Justtrip] Notice masquée pour l’utilisateur (détail technique) :", s);
   } catch (_e) {
     /* ignore */
   }

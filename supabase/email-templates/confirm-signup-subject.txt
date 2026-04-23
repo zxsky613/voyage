@@ -1,1 +1,1 @@
-{{$l:=index .Data "locale"}}{{if eq $l "en"}}Confirm — AVOLO{{else if eq $l "de"}}Bestätigen — AVOLO{{else if eq $l "es"}}Confirma — AVOLO{{else if eq $l "it"}}Conferma — AVOLO{{else if eq $l "zh"}}确认 — AVOLO{{else}}Confirme — AVOLO{{end}}
+{{$l:=index .Data "locale"}}{{if eq $l "en"}}Confirm — Justtrip{{else if eq $l "de"}}Bestätigen — Justtrip{{else if eq $l "es"}}Confirma — Justtrip{{else if eq $l "it"}}Conferma — Justtrip{{else if eq $l "zh"}}确认 — Justtrip{{else}}Confirme — Justtrip{{end}}

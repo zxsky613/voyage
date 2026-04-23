@@ -1,6 +1,6 @@
 {
-  "appId": "com.avolo.app",
-  "appName": "AVOLO",
+  "appId": "com.justtrip.app",
+  "appName": "Justtrip",
   "webDir": "dist",
   "ios": {
     "contentInset": "automatic"

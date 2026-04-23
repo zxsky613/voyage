@@ -6254,21 +6254,21 @@ function TripLiquidGlassShell({
   );
 }
 
-function AvoloBrand({ size = "md", className = "", light = false }) {
-  const config = {
-    xs:  { cls: "text-[10px]",  ls: "0.32em" },
-    sm:  { cls: "text-xs",      ls: "0.28em" },
-    md:  { cls: "text-[1.75rem] sm:text-4xl", ls: "0.22em" },
-    lg:  { cls: "text-4xl sm:text-5xl",       ls: "0.22em" },
-  };
-  const { cls, ls } = config[size] || config.md;
+function JusttripBrand({ size = "md", className = "" }) {
+  const { t } = useI18n();
+  const h =
+    {
+      xs: "h-5 max-h-5",
+      sm: "h-9 max-h-9 sm:h-10 sm:max-h-10",
+      md: "h-11 max-h-11 sm:h-14 sm:max-h-14",
+      lg: "h-14 max-h-14 sm:h-16 sm:max-h-16",
+    }[size] || "h-11 max-h-11 sm:h-14 sm:max-h-14";
   return (
-    <span
-      className={`inline-block font-extrabold uppercase ${cls} ${light ? "text-white" : "text-slate-500"} ${className}`.trim()}
-      style={{ fontFamily: "'Yeseva One', serif", letterSpacing: ls, paddingLeft: ls }}
-    >
-      AVOLO
-    </span>
+    <img
+      src="/logo-justtrip.png"
+      alt={t("auth.logoAlt")}
+      className={`inline-block w-auto object-contain object-center ${h} ${className}`.trim()}
+    />
   );
 }
 
@@ -6461,74 +6461,6 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
 }
 
 /** Erreur GoTrue / Supabase : inscription avec un e-mail déjà enregistré. */
-/**
- * Retire le fond blanc du PNG logo sur l’écran d’accueil auth (canvas, même origine).
- * Seuil souple pour l’anti-crénelage ; l’oiseau bleu foncé reste opaque.
- */
-function AuthLandingLogoImg({ src, alt, className }) {
-  const [dataUrl, setDataUrl] = useState(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      try {
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-        if (!w || !h) return;
-        const c = document.createElement("canvas");
-        c.width = w;
-        c.height = h;
-        const ctx = c.getContext("2d", { willReadFrequently: true });
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, w, h);
-        const d = imageData.data;
-        const minBright = 242;
-        const maxChroma = 14;
-        for (let i = 0; i < d.length; i += 4) {
-          const r = d[i];
-          const g = d[i + 1];
-          const b = d[i + 2];
-          const mx = Math.max(r, g, b);
-          const mn = Math.min(r, g, b);
-          if (mx >= minBright && mx - mn <= maxChroma) {
-            d[i + 3] = 0;
-          }
-        }
-        ctx.putImageData(imageData, 0, 0);
-        const out = c.toDataURL("image/png");
-        if (!cancelled) {
-          setDataUrl(out);
-          setReady(true);
-        }
-      } catch (_e) {
-        if (!cancelled) setReady(true);
-      }
-    };
-    img.onerror = () => {
-      if (!cancelled) setReady(true);
-    };
-    img.src = src;
-    return () => {
-      cancelled = true;
-    };
-  }, [src]);
-
-  return (
-    <img
-      src={dataUrl || src}
-      alt={alt}
-      className={`${className} transition-opacity duration-300 ${ready ? "opacity-100" : "opacity-0"}`.trim()}
-      width={280}
-      height={280}
-      decoding="async"
-    />
-  );
-}
-
 function isAuthSignupDuplicateEmailError(err) {
   const m = String(err?.message || "").toLowerCase();
   const code = String(err?.code || "").toLowerCase().replace(/_/g, "");
@@ -6825,20 +6757,20 @@ function AuthView() {
           >
             <div className="flex min-h-0 flex-1 flex-col items-center pt-6 sm:pt-10">
               <div className="flex shrink-0 flex-col items-center gap-0 leading-none">
-                <div className="relative z-[2] -mb-[5.25rem] flex shrink-0 justify-center sm:-mb-[6.5rem]">
+                <div className="relative z-[2] flex shrink-0 justify-center pb-1 sm:pb-2">
                   <div
-                    className="pointer-events-none absolute left-1/2 top-[38%] z-0 h-[min(72vw,14rem)] w-[min(72vw,14rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30 blur-3xl sm:h-[17rem] sm:w-[17rem]"
+                    className="pointer-events-none absolute left-1/2 top-[45%] z-0 h-[min(72vw,14rem)] w-[min(72vw,14rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30 blur-3xl sm:h-[17rem] sm:w-[17rem]"
                     aria-hidden
                   />
-                  <AuthLandingLogoImg
-                    src="/LogoAvolo.png"
+                  <img
+                    src="/logo-justtrip.png"
                     alt={t("auth.logoAlt")}
-                    className="relative z-[1] block h-[13.5rem] w-[13.5rem] max-w-[min(96vw,14rem)] object-contain object-top align-top [filter:drop-shadow(0_0_14px_rgba(255,255,255,0.95))_drop-shadow(0_0_36px_rgba(255,255,255,0.55))_drop-shadow(0_2px_12px_rgba(0,0,0,0.35))_brightness(1.14)_contrast(1.08)] sm:h-[17.5rem] sm:w-[17.5rem] sm:max-w-[18rem] sm:[filter:drop-shadow(0_0_16px_rgba(255,255,255,0.98))_drop-shadow(0_0_44px_rgba(255,255,255,0.5))_drop-shadow(0_3px_14px_rgba(0,0,0,0.3))_brightness(1.14)_contrast(1.08)]"
+                    width={320}
+                    height={320}
+                    decoding="async"
+                    className="relative z-[1] block h-auto max-h-[min(52vh,15.5rem)] w-auto max-w-[min(92vw,20rem)] object-contain object-center align-top [filter:drop-shadow(0_0_14px_rgba(255,255,255,0.95))_drop-shadow(0_0_36px_rgba(255,255,255,0.55))_drop-shadow(0_2px_12px_rgba(0,0,0,0.35))] sm:max-h-[17.5rem] sm:max-w-[21rem] sm:[filter:drop-shadow(0_0_16px_rgba(255,255,255,0.98))_drop-shadow(0_0_44px_rgba(255,255,255,0.5))_drop-shadow(0_3px_14px_rgba(0,0,0,0.3))]"
                   />
                 </div>
-                <h1 className="relative z-[1] text-center leading-none drop-shadow-[0_2px_12px_rgba(0,0,0,0.4)]">
-                  <AvoloBrand size="md" light />
-                </h1>
               </div>
               <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-7 sm:flex-none sm:justify-start sm:pt-0">
                 <p className="max-w-[22rem] text-center text-[0.95rem] leading-snug text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-10 sm:text-base">
@@ -6893,7 +6825,7 @@ function AuthView() {
             {t("auth.backToWelcome")}
           </button>
         ) : null}
-        <h1 className="mb-2 text-center"><AvoloBrand size="sm" /></h1>
+        <h1 className="mb-2 flex justify-center"><JusttripBrand size="sm" /></h1>
         <p className="mb-6 text-center font-display text-lg font-normal tracking-[0.04em]">
           {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
         </p>

@@ -9,7 +9,11 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "./i18n/I18nContext.jsx";
-import { Plane, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+/** Bleu marine du logo Justtrip (fond marque) */
+const BRAND_NAVY = "#0B2447";
+const BRAND_NAVY_MID = "#102A44";
 
 /* ─── Storage helpers ──────────────────────────────────────────────────── */
 function storageKeyForUser(userId) {
@@ -342,7 +346,7 @@ function SpotlightOverlay({ rect, tourId }) {
           strokeWidth="2.25"
           style={{
             filter:
-              "drop-shadow(0 0 6px rgba(99,102,241,0.4)) drop-shadow(0 0 14px rgba(255,255,255,0.18))",
+              "drop-shadow(0 0 6px rgba(11,36,71,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
           }}
         >
           <animate attributeName="stroke-opacity" values="0.9;0.5;0.9" dur="1.8s" repeatCount="indefinite" />
@@ -363,8 +367,9 @@ function TourDots({ step, total, goTo }) {
           onClick={() => goTo(i)}
           aria-label={`Step ${i + 1}`}
           className={`rounded-full transition-all duration-300 ${
-            i === step ? "h-2 w-5 bg-indigo-500" : "h-2 w-2 bg-slate-200 hover:bg-slate-300"
+            i === step ? "h-2 w-5" : "h-2 w-2 bg-slate-200 hover:bg-slate-300"
           }`}
+          style={i === step ? { backgroundColor: BRAND_NAVY } : undefined}
         />
       ))}
     </div>
@@ -551,14 +556,15 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
         style={{ maxWidth: CARD_W + 32, touchAction: "manipulation" }}
       >
         <div className="flex flex-col items-center gap-5 px-8 pb-8 pt-10 text-center">
-          <div className="relative">
-            <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-xl shadow-indigo-200">
-              <Plane className="h-9 w-9 text-white" strokeWidth={1.5} />
-            </div>
-            <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 shadow-md">
-              <Sparkles className="h-3.5 w-3.5 text-white" strokeWidth={2} />
-            </div>
-          </div>
+          <img
+            src={`${import.meta.env.BASE_URL}logo-justtrip.png`}
+            alt={t("auth.logoAlt")}
+            className="h-[4.75rem] w-auto max-w-[7.25rem] shrink-0 rounded-3xl object-contain shadow-xl"
+            style={{ boxShadow: "0 16px 40px rgba(11, 36, 71, 0.38)" }}
+            width={220}
+            height={140}
+            decoding="async"
+          />
 
           <div>
             <h2 className="font-display text-xl font-normal tracking-[0.02em] text-slate-900">{t("onboarding.welcome.title")}</h2>
@@ -572,7 +578,11 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
           <button
             type="button"
             onClick={() => goTo(1)}
-            className="w-full rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-600 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition-transform active:scale-95"
+            className="w-full rounded-2xl py-3 text-sm font-semibold text-white transition-transform active:scale-95"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND_NAVY_MID} 0%, ${BRAND_NAVY} 100%)`,
+              boxShadow: "0 10px 28px rgba(11, 36, 71, 0.35)",
+            }}
           >
             {t("onboarding.welcome.cta")} →
           </button>
@@ -640,7 +650,10 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
                 type="button"
                 onClick={() => (isLast ? dismissTour(true) : goTo(step + 1))}
                 className="flex shrink-0 items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-transform active:scale-95"
-                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}
+                style={{
+                  background: `linear-gradient(135deg, ${BRAND_NAVY_MID}, ${BRAND_NAVY})`,
+                  boxShadow: "0 6px 16px rgba(11, 36, 71, 0.3)",
+                }}
               >
                 {isLast ? (
                   t("onboarding.finish")
