@@ -16,7 +16,7 @@
         --text: #0f172a;
         --muted: #475569;
         --border: #e2e8f0;
-        --accent: #4f46e5;
+        --accent: #002b4f;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -25,7 +25,7 @@
           --text: #f1f5f9;
           --muted: #94a3b8;
           --border: #334155;
-          --accent: #818cf8;
+          --accent: #3d7ab8;
         }
       }
       * {
@@ -101,13 +101,28 @@
         font-style: normal;
         font-size: 0.95rem;
       }
+      .doc-nav {
+        margin-top: 2rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.875rem;
+        color: var(--muted);
+      }
+      .doc-nav ul {
+        list-style: none;
+        padding: 0;
+        margin: 0.5rem 0 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1.25rem;
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
       <header>
         <h1>Politique de confidentialité</h1>
-        <p class="meta">Application <strong>Justtrip</strong> (justtrip.fr) — Dernière mise à jour : 15 avril 2026</p>
+        <p class="meta">Application <strong>Justtrip</strong> (justtrip.fr) — Dernière mise à jour : 23 avril 2026</p>
       </header>
       <article>
         <p>
@@ -330,8 +345,16 @@
         <h2>14. Contact</h2>
         <p>
           Pour toute question relative à cette politique ou à vos données personnelles, écrivez-nous à l’adresse
-          <a href="mailto:privacy@example.com">[À compléter — e-mail]</a>.
+          <a href="mailto:privacy@justtrip.fr">privacy@justtrip.fr</a>.
         </p>
+
+        <div class="doc-nav" role="navigation" aria-label="Autres documents">
+          <p>Autres documents :</p>
+          <ul>
+            <li><a href="./mentions-legales.html">Mentions légales</a></li>
+            <li><a href="./conditions-generales-utilisation.html">Conditions générales d’utilisation</a></li>
+          </ul>
+        </div>
       </article>
     </div>
   </body>

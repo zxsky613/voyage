@@ -15,6 +15,9 @@ export const translations = {
       confirmation: "Confirmation",
       imageLoading: "Chargement de l'image\u2026",
       privacyPolicy: "Politique de confidentialité",
+      legalNotice: "Mentions légales",
+      termsOfService: "Conditions générales",
+      legalNavAria: "Documents légaux et confidentialité",
     },
     menu: {
       title: "Menu",
@@ -525,6 +528,9 @@ export const translations = {
       confirmation: "Confirmation",
       imageLoading: "Loading image\u2026",
       privacyPolicy: "Privacy policy",
+      legalNotice: "Legal notice",
+      termsOfService: "Terms of use",
+      legalNavAria: "Legal documents and privacy",
     },
     menu: {
       title: "Menu",
@@ -1025,6 +1031,9 @@ export const translations = {
       confirmation: "Bestätigung",
       imageLoading: "Bild wird geladen\u2026",
       privacyPolicy: "Datenschutzerklärung",
+      legalNotice: "Impressum",
+      termsOfService: "Nutzungsbedingungen",
+      legalNavAria: "Rechtliche Hinweise und Datenschutz",
     },
     menu: {
       title: "Menü",
@@ -1534,6 +1543,9 @@ export const translations = {
       confirmation: "Confirmación",
       imageLoading: "Cargando imagen\u2026",
       privacyPolicy: "Política de privacidad",
+      legalNotice: "Aviso legal",
+      termsOfService: "Términos de uso",
+      legalNavAria: "Documentos legales y privacidad",
     },
     menu: {
       title: "Menú",
@@ -2042,6 +2054,9 @@ export const translations = {
       confirmation: "Conferma",
       imageLoading: "Caricamento immagine\u2026",
       privacyPolicy: "Informativa sulla privacy",
+      legalNotice: "Note legali",
+      termsOfService: "Condizioni d'uso",
+      legalNavAria: "Documenti legali e privacy",
     },
     menu: {
       title: "Menu",
@@ -2550,6 +2565,9 @@ export const translations = {
       confirmation: "确认",
       imageLoading: "加载图片中\u2026",
       privacyPolicy: "隐私政策",
+      legalNotice: "法律声明",
+      termsOfService: "使用条款",
+      legalNavAria: "法律文件与隐私",
     },
     menu: {
       title: "菜单",

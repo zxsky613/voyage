@@ -137,8 +137,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
 
-/** Page statique (`public/`) — politique de confidentialité (App Store, mentions légales, lien in-app). */
+/** Pages légales statiques (`public/`). */
 const PRIVACY_POLICY_HREF = `${import.meta.env.BASE_URL}politique-confidentialite.html`;
+const LEGAL_NOTICES_HREF = `${import.meta.env.BASE_URL}mentions-legales.html`;
+const TERMS_OF_SERVICE_HREF = `${import.meta.env.BASE_URL}conditions-generales-utilisation.html`;
 
 /**
  * Pénalités légende Unsplash : éviter les résultats géographiquement incohérents (pont de Brooklyn pour San Francisco, etc.).
@@ -6347,18 +6349,59 @@ function MenuProfileAvatar({ user }) {
   );
 }
 
-function PrivacyPolicyLink({ className, onNavigate }) {
+/** Liens juridiques : menu (boutons pleine largeur) ou pied de page auth (lignes séparées par des points). */
+function LegalDocFooterLinks({ tone = "onLight", onNavigate }) {
   const { t } = useI18n();
+  const nav = () => onNavigate?.();
+  const sep =
+    tone === "onDark" ? (
+      <span className="text-white/35" aria-hidden>
+        ·
+      </span>
+    ) : (
+      <span className="text-slate-300" aria-hidden>
+        ·
+      </span>
+    );
+
+  if (tone === "menu") {
+    const c =
+      "flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-xs font-normal tracking-[0.04em] text-slate-600 transition hover:bg-slate-50";
+    return (
+      <div className="mt-2 flex flex-col gap-2">
+        <a href={PRIVACY_POLICY_HREF} target="_blank" rel="noopener noreferrer" className={c} onClick={nav}>
+          {t("common.privacyPolicy")}
+        </a>
+        <a href={LEGAL_NOTICES_HREF} target="_blank" rel="noopener noreferrer" className={c} onClick={nav}>
+          {t("common.legalNotice")}
+        </a>
+        <a href={TERMS_OF_SERVICE_HREF} target="_blank" rel="noopener noreferrer" className={c} onClick={nav}>
+          {t("common.termsOfService")}
+        </a>
+      </div>
+    );
+  }
+
+  const linkOnDark =
+    "text-[12px] font-normal text-white/85 underline decoration-white/35 underline-offset-[0.2em] hover:text-white";
+  const linkOnLight =
+    "text-[12px] font-normal text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700";
+  const aClass = tone === "onDark" ? linkOnDark : linkOnLight;
+
   return (
-    <a
-      href={PRIVACY_POLICY_HREF}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={className}
-      onClick={() => onNavigate?.()}
-    >
-      {t("common.privacyPolicy")}
-    </a>
+    <nav className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1" aria-label={t("common.legalNavAria")}>
+      <a href={PRIVACY_POLICY_HREF} target="_blank" rel="noopener noreferrer" className={aClass} onClick={nav}>
+        {t("common.privacyPolicy")}
+      </a>
+      {sep}
+      <a href={LEGAL_NOTICES_HREF} target="_blank" rel="noopener noreferrer" className={aClass} onClick={nav}>
+        {t("common.legalNotice")}
+      </a>
+      {sep}
+      <a href={TERMS_OF_SERVICE_HREF} target="_blank" rel="noopener noreferrer" className={aClass} onClick={nav}>
+        {t("common.termsOfService")}
+      </a>
+    </nav>
   );
 }
 
@@ -6450,10 +6493,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
               <span className="text-base leading-none">🧭</span>
               {t("menu.howItWorks")}
             </button>
-            <PrivacyPolicyLink
-              onNavigate={onClose}
-              className="mt-2 flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-xs font-normal tracking-[0.04em] text-slate-600 transition hover:bg-slate-50"
-            />
+            <LegalDocFooterLinks tone="menu" onNavigate={onClose} />
           </div>
         </div>
       </aside>
@@ -6807,7 +6847,7 @@ function AuthView() {
             </div>
             <div className="mt-6 flex flex-col items-center gap-3 pb-2 sm:mt-8">
               <LanguageFab placement="authFooter" />
-              <PrivacyPolicyLink className="text-center text-[12px] font-normal text-white/85 underline decoration-white/35 underline-offset-[0.2em] hover:text-white" />
+              <LegalDocFooterLinks tone="onDark" />
             </div>
           </div>
         </div>
@@ -6966,7 +7006,7 @@ function AuthView() {
         <footer className="mt-6 border-t border-slate-200/60 pt-4">
           <div className="flex flex-col items-center gap-3">
             <LanguageFab placement="authFooter" />
-            <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+            <LegalDocFooterLinks tone="onLight" />
           </div>
         </footer>
       </div>
@@ -7066,7 +7106,7 @@ function AuthView() {
                 <footer className="mt-5 border-t border-slate-100 pt-4">
                   <div className="flex flex-col items-center gap-3">
                     <LanguageFab placement="authFooter" />
-                    <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+                    <LegalDocFooterLinks tone="onLight" />
                   </div>
                 </footer>
               </div>
@@ -7118,7 +7158,7 @@ function AuthView() {
                 <footer className="mt-5 border-t border-slate-100 pt-4">
                   <div className="flex flex-col items-center gap-3">
                     <LanguageFab placement="authFooter" />
-                    <PrivacyPolicyLink className="text-center text-[12px] text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700" />
+                    <LegalDocFooterLinks tone="onLight" />
                   </div>
                 </footer>
               </div>
