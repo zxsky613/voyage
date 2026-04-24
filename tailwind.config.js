@@ -1,6 +1,12 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./index.html", "./*.{js,jsx,ts,tsx}"],
+  /* Tout le code source, y compris i18n/ (sinon classes absentes en prod) */
+  content: [
+    "./index.html",
+    "./**/*.{js,jsx,ts,tsx}",
+    "!./node_modules/**",
+    "!./dist/**",
+  ],
   theme: {
     extend: {
       // Avenir (Linotype) : pas de fichier web inclus — s’appuie sur les polices système + repli.

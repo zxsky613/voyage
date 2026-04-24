@@ -170,28 +170,28 @@ function getSpotlightTargetByTourId(tourId) {
 }
 
 /**
- * Repère du calque spotlight = visual viewport (Safari / Chrome mobile) : mêmes dimensions
- * et origine (offsetLeft/offsetTop) que la zone visible, pour coller à `position:fixed` (onglets, +).
- * Fallback : fenêtre (layout) si l’API manque.
+ * Calque d’assombrissement : même repère que `getBoundingClientRect()` (origine haut-gauche du
+ * layout viewport, dimensions client/inner proches de la fenêtre), sans décaler avec
+ * `visualViewport.offsetTop/offsetLeft` — sur mobile (Safari, Chrome) ce décalage + onglets
+ * `position:fixed` en bas provoquait un trou déplacé par rapport aux vrais onglets.
+ * On élargit légèrement w/h (max) pour ne pas rogner le masque quand la barre d’adresse anime.
  */
 function getSpotlightLayoutMetrics() {
   if (typeof window === "undefined") {
     return { vw: 0, vh: 0, vx: 0, vy: 0, safeTop: 0, safeBottom: 0 };
   }
   const vv = window.visualViewport;
-  if (vv && Number(vv.width) > 0 && Number(vv.height) > 0) {
-    return {
-      vw: vv.width,
-      vh: vv.height,
-      vx: Number(vv.offsetLeft) || 0,
-      vy: Number(vv.offsetTop) || 0,
-      safeTop: readSafeAreaInsetTopPx(),
-      safeBottom: readSafeAreaInsetBottomPx(),
-    };
-  }
+  const innerW = window.innerWidth || 0;
+  const innerH = window.innerHeight || 0;
+  const clientW = document.documentElement?.clientWidth || 0;
+  const clientH = document.documentElement?.clientHeight || 0;
+  const visW = vv && Number(vv.width) > 0 ? Number(vv.width) : 0;
+  const visH = vv && Number(vv.height) > 0 ? Number(vv.height) : 0;
+  const vw = Math.max(innerW, clientW, visW) || innerW || 320;
+  const vh = Math.max(innerH, clientH, visH) || innerH || 480;
   return {
-    vw: window.innerWidth,
-    vh: window.innerHeight,
+    vw,
+    vh,
     vx: 0,
     vy: 0,
     safeTop: readSafeAreaInsetTopPx(),
@@ -200,16 +200,15 @@ function getSpotlightLayoutMetrics() {
 }
 
 /**
- * Passe de getBoundingClientRect (origine haut-gauche du layout viewport) au repère du calque
- * aligné sur visualViewport (coin haut-gauche du SVG = vx,vy).
+ * Même repère que getBoundingClientRect (pas de conversion visualViewport) — @see getSpotlightLayoutMetrics.
  */
-function toSpotlightSpaceRect(r, m) {
-  if (!r || !m) return null;
+function toSpotlightSpaceRect(r) {
+  if (!r) return null;
   return {
-    top: r.top - m.vy,
-    left: r.left - m.vx,
-    right: r.right - m.vx,
-    bottom: r.bottom - m.vy,
+    top: r.top,
+    left: r.left,
+    right: r.right,
+    bottom: r.bottom,
     width: r.width,
     height: r.height,
   };
@@ -326,7 +325,7 @@ function spotlightMinPillAspectForTour(tourId, metrics) {
 function SpotlightOverlay({ rawRect, tourId }) {
   const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
   const metrics = getSpotlightLayoutMetrics();
-  const rect = rawRect && toSpotlightSpaceRect(rawRect, metrics);
+  const rect = rawRect && toSpotlightSpaceRect(rawRect);
   if (!rect) return null;
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
   const isTab = String(tourId || "").startsWith("tab-");
@@ -339,7 +338,7 @@ function SpotlightOverlay({ rawRect, tourId }) {
   const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
   const useNativeChromeOnly = isTab || tourId === "plus-button";
-  const { vw, vh, vx, vy } = metrics;
+  const { vw, vh } = metrics;
 
   return (
     <svg
@@ -350,8 +349,8 @@ function SpotlightOverlay({ rawRect, tourId }) {
       viewBox={`0 0 ${vw} ${vh}`}
       style={{
         position: "fixed",
-        left: vx,
-        top: vy,
+        left: 0,
+        top: 0,
         width: vw,
         height: vh,
         pointerEvents: "none",

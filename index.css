@@ -16,6 +16,32 @@ body,
   overflow-x: clip;
 }
 
+/* Fondation responsive : hauteur utile (barre d’adresse mobile), pas d’agrandissement touch involontaire */
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  #root {
+    min-height: 100dvh;
+    min-width: 0;
+    width: 100%;
+    /* réplique sûr si 100dvh non supporté */
+    min-height: 100%;
+  }
+  body {
+    overflow-wrap: anywhere;
+    word-wrap: break-word;
+  }
+  img,
+  video,
+  embed,
+  canvas,
+  object {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
 html,
 body {
   background: #e8eff6;
@@ -25,6 +51,16 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Cibles cliquables : moins de délai 300ms sur le web sans bloquer le pinch / cartes (évite touch-action sur body) */
+@layer base {
+  button,
+  [type="button"],
+  [type="submit"],
+  [role="button"] {
+    touch-action: manipulation;
+  }
 }
 
 /* Champs date dans modales : le natif WebKit dessine un rectangle à droite ; on neutralise l’apparence

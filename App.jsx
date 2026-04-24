@@ -7294,7 +7294,10 @@ function AuthView() {
           <LanguageFab placement="authLandingTop" />
         </div>
       ) : (
-    <div className="min-h-screen overflow-x-hidden px-4 py-6 sm:px-5 sm:py-10" style={{ background: BG, color: TEXT }}>
+    <div
+      className="min-h-screen min-h-[100dvh] w-full max-w-[100vw] overflow-x-hidden px-4 py-6 sm:px-5 sm:py-10"
+      style={{ background: BG, color: TEXT }}
+    >
       <div className="relative mx-auto mt-6 min-w-0 w-full max-w-lg overflow-x-clip overflow-y-visible rounded-[2.5rem] bg-white/80 p-5 pb-7 shadow-2xl backdrop-blur-xl ring-1 ring-slate-200/50 sm:mt-10 sm:rounded-[4.5rem] sm:p-8 sm:pb-8">
         {!invitePromptOpen ? (
           <button
@@ -16379,7 +16382,10 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen grid place-items-center" style={{ background: BG, color: TEXT }}>
+      <div
+        className="grid min-h-screen min-h-[100dvh] w-full max-w-[100vw] place-items-center overflow-x-clip"
+        style={{ background: BG, color: TEXT }}
+      >
         <div className="rounded-[3.5rem] bg-white/80 px-6 py-4 shadow-2xl backdrop-blur-xl">
           {t("app.loading")}
         </div>
@@ -16393,7 +16399,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen max-w-[100vw] overflow-x-clip pb-[calc(8.25rem+env(safe-area-inset-bottom,0px))]"
+      className="min-h-screen min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip pb-[calc(8.25rem+env(safe-area-inset-bottom,0px))]"
       style={{
         color: TEXT,
         background:
