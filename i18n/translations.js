@@ -111,8 +111,8 @@ export const translations = {
     auth: {
       brand: "Justtrip",
       landingTagline: "Crée, planifie et suis tes voyages en un clic.",
-      landingSignUp: "C'EST PARTI !",
-      landingSignIn: "J'AI DEJA UN COMPTE",
+      landingSignUp: "C'est parti !",
+      landingSignIn: "J'ai déjà un compte",
       backToWelcome: "Retour",
       logoAlt: "Logo Justtrip",
       signIn: "Se connecter",
@@ -624,8 +624,8 @@ export const translations = {
     auth: {
       brand: "Justtrip",
       landingTagline: "Create, plan, and track your trips in one click.",
-      landingSignUp: "Sign up",
-      landingSignIn: "Log in",
+      landingSignUp: "Let's go!",
+      landingSignIn: "I already have an account",
       backToWelcome: "Back",
       logoAlt: "Justtrip logo",
       signIn: "Sign in",

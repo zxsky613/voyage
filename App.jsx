@@ -1576,6 +1576,8 @@ async function resolveValidatedDestination(raw, uiLanguage = "fr") {
 const BG = "#eef3f8";
 /** Fond écran d’accueil connexion (paysage large, même scène que l’ancien portrait — `bg-cover` web / mobile). */
 const AUTH_LANDING_BG = "/auth-landing-bg-wide.jpg";
+/** Bleu foncé bouton principal landing (lisibilité sur photo). */
+const AUTH_LANDING_PRIMARY = "#1B2A4A";
 
 function authHasInviteLink() {
   try {
@@ -6410,7 +6412,7 @@ function LegalDocFooterLinks({ tone = "onLight", onNavigate }) {
   const nav = () => onNavigate?.();
   const sep =
     tone === "onDark" ? (
-      <span className="text-white/35" aria-hidden>
+      <span className="mx-1.5 text-white/50" aria-hidden>
         ·
       </span>
     ) : (
@@ -6438,13 +6440,16 @@ function LegalDocFooterLinks({ tone = "onLight", onNavigate }) {
   }
 
   const linkOnDark =
-    "text-[12px] font-normal text-white/85 underline decoration-white/35 underline-offset-[0.2em] hover:text-white";
+    "text-[12px] font-normal text-white/70 underline decoration-white/30 underline-offset-[0.2em] hover:text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.45)]";
   const linkOnLight =
     "text-[12px] font-normal text-slate-500 underline decoration-slate-300 underline-offset-[0.2em] hover:text-slate-700";
   const aClass = tone === "onDark" ? linkOnDark : linkOnLight;
 
   return (
-    <nav className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1" aria-label={t("common.legalNavAria")}>
+    <nav
+      className={`flex flex-wrap items-center justify-center gap-y-1 ${tone === "onDark" ? "" : "gap-x-1.5"}`}
+      aria-label={t("common.legalNavAria")}
+    >
       <a href={PRIVACY_POLICY_HREF} target="_blank" rel="noopener noreferrer" className={aClass} onClick={nav}>
         {t("common.privacyPolicy")}
       </a>
@@ -6847,64 +6852,81 @@ function AuthView() {
             role="presentation"
             aria-hidden
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-900/45 to-slate-950/88" aria-hidden />
+          {/* Overlays lisibilité : assombrissement haut + bas vers le centre transparent */}
           <div
-            className="relative z-10 flex min-h-[100dvh] flex-col px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))]"
-          >
-            <div className="flex min-h-0 flex-1 flex-col items-center pt-6 sm:pt-10">
+            className="pointer-events-none absolute inset-0 z-[1]"
+            style={{
+              background: [
+                "linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 50%)",
+                "linear-gradient(0deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 50%)",
+              ].join(", "),
+            }}
+            aria-hidden
+          />
+          <div className="relative z-10 flex min-h-[100dvh] w-full min-w-0 flex-col px-5">
+            {/* Haut (~30 % visuel maquette) : marge depuis le haut + logo + accroche */}
+            <div className="flex shrink-0 flex-col items-center pt-[max(env(safe-area-inset-top,0px),min(12vh,4.5rem))]">
               <div className="flex shrink-0 flex-col items-center gap-0 leading-none">
-                <div className="relative z-[2] flex shrink-0 justify-center pb-1 sm:pb-2">
+                <div className="relative z-[2] flex min-w-0 shrink-0 justify-center pb-1 sm:pb-2">
                   <div
-                    className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[min(48vw,9.5rem)] w-[min(48vw,9.5rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/28 blur-3xl sm:h-[11rem] sm:w-[11rem]"
+                    className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[min(42vw,20vmin,7rem)] w-[min(42vw,20vmin,7rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/28 blur-3xl sm:h-[min(36vw,18vmin,7.5rem)] sm:w-[min(36vw,18vmin,7.5rem)]"
                     aria-hidden
                   />
                   <img
                     src="/logo-justtrip.png"
                     alt={t("auth.logoAlt")}
-                    width={200}
-                    height={200}
+                    width={160}
+                    height={160}
                     decoding="async"
-                    className="relative z-[1] block h-auto max-h-[min(26vh,9rem)] w-auto max-w-[min(72vw,12rem)] rounded-[2.35rem] object-contain object-center align-top [filter:drop-shadow(0_0_12px_rgba(255,255,255,0.85))_drop-shadow(0_0_28px_rgba(255,255,255,0.45))_drop-shadow(0_2px_10px_rgba(0,0,0,0.32))] sm:max-h-[10rem] sm:max-w-[13rem] sm:rounded-[3rem] sm:[filter:drop-shadow(0_0_14px_rgba(255,255,255,0.9))_drop-shadow(0_0_32px_rgba(255,255,255,0.42))_drop-shadow(0_3px_12px_rgba(0,0,0,0.28))]"
+                    className="relative z-[1] block h-auto w-auto max-h-[min(16vh,20vmin,4.5rem)] max-w-[min(52vw,28vmin,6rem)] rounded-[1.35rem] object-contain object-center align-top [filter:drop-shadow(0_0_10px_rgba(255,255,255,0.8))_drop-shadow(0_0_22px_rgba(255,255,255,0.4))_drop-shadow(0_2px_8px_rgba(0,0,0,0.28))] sm:max-h-[min(18vh,18vmin,5.25rem)] sm:max-w-[min(44vw,24vmin,6.75rem)] sm:rounded-[1.65rem] sm:[filter:drop-shadow(0_0_12px_rgba(255,255,255,0.85))_drop-shadow(0_0_26px_rgba(255,255,255,0.38))_drop-shadow(0_2px_10px_rgba(0,0,0,0.26))] md:max-h-[min(18vh,5.75rem)] md:max-w-[min(36vw,7.25rem)] md:rounded-[1.85rem]"
                   />
                 </div>
               </div>
-              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-start pt-5 sm:flex-none sm:justify-start sm:pt-1">
-                <p className="max-w-[22rem] text-center text-[0.9375rem] leading-relaxed text-white/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.55)] sm:mt-6 sm:text-base">
-                  {t("auth.landingTagline")}
-                </p>
+              <p
+                className="mt-5 max-w-[85%] text-center text-lg font-normal leading-relaxed text-white sm:mt-6"
+                style={{
+                  textShadow: "0 1px 4px rgba(0,0,0,0.5)",
+                }}
+              >
+                {t("auth.landingTagline")}
+              </p>
+            </div>
+            {/* Milieu : espace souple (~40 % maquette) entre accroche et CTA */}
+            <div className="min-h-0 w-full min-w-0 flex-1" aria-hidden />
+            {/* Bas (~30 % maquette) : boutons + mentions près du bord inférieur */}
+            <div className="flex w-full min-w-0 shrink-0 flex-col items-center pb-[max(12px,env(safe-area-inset-bottom))] pt-2">
+              <div className="flex w-full min-w-0 max-w-md flex-col items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAuthLanding(false);
+                    setMode("signup");
+                    setMsg("");
+                  }}
+                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl px-5 py-3 text-center text-[17px] font-semibold leading-tight text-white shadow-[0_12px_28px_rgba(0,0,0,0.25)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3rem]"
+                  style={{ backgroundColor: AUTH_LANDING_PRIMARY }}
+                >
+                  {t("auth.landingSignUp")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAuthLanding(false);
+                    setMode("signin");
+                    setMsg("");
+                  }}
+                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl border border-black/10 bg-white/[0.95] px-5 py-3 text-center text-base font-medium leading-tight shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition hover:bg-white active:scale-[0.99] sm:min-h-[3rem]"
+                  style={{ color: AUTH_LANDING_PRIMARY }}
+                >
+                  {t("auth.landingSignIn")}
+                </button>
+              </div>
+              <div className="mt-5 flex w-full justify-center px-1 sm:mt-6">
+                <LegalDocFooterLinks tone="onDark" />
               </div>
             </div>
-            <div className="mx-auto mt-5 w-full max-w-[20rem] shrink-0 space-y-3 sm:mt-8 sm:max-w-[22rem]">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAuthLanding(false);
-                  setMode("signup");
-                  setMsg("");
-                }}
-                className={`flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-6 py-3.5 text-center text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_12px_28px_rgba(0,43,79,0.32)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3.5rem] sm:py-4 sm:text-base ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
-              >
-                {t("auth.landingSignUp")}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAuthLanding(false);
-                  setMode("signin");
-                  setMsg("");
-                }}
-                className="flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-white/35 bg-white px-6 py-3.5 text-center text-[15px] font-semibold leading-tight tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition hover:bg-white/95 active:scale-[0.99] sm:min-h-[3.5rem] sm:py-4 sm:text-base"
-                style={{ color: ACCENT }}
-              >
-                {t("auth.landingSignIn")}
-              </button>
-            </div>
-            <div className="mt-6 flex flex-col items-center gap-3 pb-2 sm:mt-8">
-              <LanguageFab placement="authFooter" />
-              <LegalDocFooterLinks tone="onDark" />
-            </div>
           </div>
+          <LanguageFab placement="authLandingTop" />
         </div>
       ) : (
     <div className="min-h-screen overflow-x-hidden px-4 py-6 sm:px-5 sm:py-10" style={{ background: BG, color: TEXT }}>

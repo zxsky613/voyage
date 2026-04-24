@@ -37,7 +37,7 @@ function LocaleFlagImg({ flagCode, title }) {
       alt=""
       role="presentation"
       draggable={false}
-      className="box-border h-full w-full min-h-0 min-w-0 object-cover object-center"
+      className="pointer-events-none box-border h-full w-full min-h-0 min-w-0 object-cover object-center"
       loading="lazy"
       decoding="async"
       title={title}
@@ -210,9 +210,21 @@ function computeMenuFixedBox(btnEl, toward) {
   return openLeft();
 }
 
+/** Menu drapeaux ancré sous le bouton (écran auth landing haut-droite), aligné à droite. */
+function computeMenuFixedBoxBelowBtn(btnEl) {
+  if (typeof window === "undefined" || !btnEl) return null;
+  const r = btnEl.getBoundingClientRect();
+  const pad = MENU_GAP_PX;
+  return {
+    top: r.bottom + pad,
+    right: Math.max(MENU_EDGE_SAFE_PX, window.innerWidth - r.right),
+  };
+}
+
 /**
- * @param {{ placement?: "authFooter" | "viewport" }} props
+ * @param {{ placement?: "authFooter" | "viewport" | "authLandingTop" }} props
  * — `authFooter` : flux normal sous le formulaire (l’extension reste en portail pour ne pas être coupée).
+ * — `authLandingTop` : fixe en haut à droite (safe area + 12px).
  */
 export function LanguageFab({ placement = "authFooter" }) {
   const { language, setLanguage, t, locales } = useI18n();
@@ -226,13 +238,19 @@ export function LanguageFab({ placement = "authFooter" }) {
   const current = locales.find((l) => l.code === language) || locales[0];
 
   const expandToward = placement === "authFooter" ? "expandLeftFirst" : "expandRightFirst";
+  const isAuthLandingTop = placement === "authLandingTop";
 
   const updateMenuPlacement = useCallback(() => {
     const btn = btnRef.current;
     if (!btn) return;
+    if (isAuthLandingTop) {
+      const box = computeMenuFixedBoxBelowBtn(btn);
+      if (box) setMenuBox(box);
+      return;
+    }
     const box = computeMenuFixedBox(btn, expandToward);
     if (box) setMenuBox(box);
-  }, [expandToward]);
+  }, [expandToward, isAuthLandingTop]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -253,6 +271,13 @@ export function LanguageFab({ placement = "authFooter" }) {
       window.removeEventListener("scroll", updateMenuPlacement, true);
     };
   }, [open, updateMenuPlacement]);
+
+  useEffect(() => {
+    if (!isAuthLandingTop || !open) return;
+    const onScroll = () => updateMenuPlacement();
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [isAuthLandingTop, open, updateMenuPlacement]);
 
   useEffect(() => {
     if (!open) return;
@@ -276,29 +301,54 @@ export function LanguageFab({ placement = "authFooter" }) {
   const positionClass =
     placement === "viewport"
       ? "fixed bottom-6 left-5 z-[90] sm:bottom-8 sm:left-6"
-      : "relative z-10 w-full";
+      : isAuthLandingTop
+        ? "fixed right-4 z-[60] w-auto max-w-none"
+        : "relative z-10 w-full";
 
-  const menuFallbackBox =
-    expandToward === "expandLeftFirst"
+  const menuFallbackBox = isAuthLandingTop
+    ? { top: 52, right: 16, maxWidth: 280 }
+    : expandToward === "expandLeftFirst"
       ? { side: "left", right: 120, bottom: 72, maxWidth: 320 }
       : { side: "right", left: 180, bottom: 72, maxWidth: 320 };
   const box = menuBox || menuFallbackBox;
+
+  /** compact = barre horizontale (h-9) ; sinon menu vertical auth landing = même taille que le drapeau du bouton (h-7). */
+  const menuItemBtnClass = (selected, compact) =>
+    `box-border flex shrink-0 items-center justify-center overflow-hidden rounded-full border p-0 leading-none transition focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1 ${
+      compact ? "h-9 w-9" : "h-7 w-7"
+    } ${selected ? "border-slate-600 ring-1 ring-slate-400" : "border-slate-200/90 hover:border-slate-300"}`;
 
   const menuPanel = open ? (
     <div
       ref={menuRef}
       role="menu"
       aria-label={groupLabel}
-      style={{
-        position: "fixed",
-        bottom: box.bottom,
-        maxWidth: box.maxWidth,
-        zIndex: 200,
-        ...(box.side === "right"
-          ? { left: box.left, right: "auto" }
-          : { right: box.right, left: "auto" }),
-      }}
-      className="box-border flex h-9 max-h-9 flex-row flex-nowrap items-center gap-1 overflow-x-auto overscroll-contain rounded-full border border-slate-200/90 bg-white/98 px-1.5 leading-none shadow-lg backdrop-blur-md [scrollbar-width:thin]"
+      style={
+        Number.isFinite(box.top)
+          ? {
+              position: "fixed",
+              top: box.top,
+              right: box.right,
+              left: "auto",
+              bottom: "auto",
+              zIndex: 200,
+              ...(isAuthLandingTop ? { width: "auto" } : { maxWidth: box.maxWidth }),
+            }
+          : {
+              position: "fixed",
+              bottom: box.bottom,
+              maxWidth: box.maxWidth,
+              zIndex: 200,
+              ...(box.side === "right"
+                ? { left: box.left, right: "auto" }
+                : { right: box.right, left: "auto" }),
+            }
+      }
+      className={
+        isAuthLandingTop
+          ? "box-border flex max-h-[min(70vh,22rem)] w-auto flex-col items-center gap-1.5 overflow-y-auto overscroll-contain rounded-2xl border border-slate-200/90 bg-white/98 px-1.5 py-1.5 shadow-lg backdrop-blur-md [scrollbar-width:thin]"
+          : "box-border flex h-9 max-h-9 flex-row flex-nowrap items-center gap-1 overflow-x-auto overscroll-contain rounded-full border border-slate-200/90 bg-white/98 px-1.5 leading-none shadow-lg backdrop-blur-md [scrollbar-width:thin]"
+      }
     >
       {locales.map((l) => {
         const selected = language === l.code;
@@ -313,11 +363,7 @@ export function LanguageFab({ placement = "authFooter" }) {
             }}
             title={l.nativeLabel}
             aria-label={l.nativeLabel}
-            className={`box-border flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border p-0 leading-none transition focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1 ${
-              selected
-                ? "border-slate-600 ring-1 ring-slate-400"
-                : "border-slate-200/90 hover:border-slate-300"
-            }`}
+            className={menuItemBtnClass(selected, !isAuthLandingTop)}
           >
             <LocaleFlagImg flagCode={l.flagCode} title={l.nativeLabel} />
           </button>
@@ -327,9 +373,23 @@ export function LanguageFab({ placement = "authFooter" }) {
   ) : null;
 
   return (
-    <div ref={rootRef} className={`pointer-events-auto flex min-h-9 items-center ${positionClass}`}>
+    <div
+      ref={rootRef}
+      className={`pointer-events-auto flex min-h-9 items-center ${positionClass}`}
+      style={
+        isAuthLandingTop
+          ? { top: "calc(12px + env(safe-area-inset-top, 0px))" }
+          : undefined
+      }
+    >
       <div
-        className={`relative flex min-h-9 w-full items-center ${placement === "authFooter" ? "justify-end" : "justify-start"}`}
+        className={`relative flex min-h-9 items-center ${
+          isAuthLandingTop
+            ? "w-auto justify-end"
+            : placement === "authFooter"
+              ? "w-full justify-end"
+              : "w-full justify-start"
+        }`}
       >
         {typeof document !== "undefined" && menuPanel ? createPortal(menuPanel, document.body) : null}
         <button
@@ -340,9 +400,21 @@ export function LanguageFab({ placement = "authFooter" }) {
           aria-haspopup="menu"
           aria-label={`${groupLabel} — ${current.nativeLabel}`}
           title={current.nativeLabel}
-          className="relative z-10 box-border flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200/90 bg-white/95 p-0 leading-none shadow-md backdrop-blur-md transition hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1"
+          className={
+            isAuthLandingTop
+              ? "relative z-10 box-border flex shrink-0 cursor-pointer select-none items-center justify-center rounded-full border border-white/25 bg-white/[0.15] p-1 leading-none transition hover:bg-white/25 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+              : "relative z-10 box-border flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-slate-200/90 bg-white/95 p-0 leading-none shadow-md backdrop-blur-md transition hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1"
+          }
         >
-          <LocaleFlagImg flagCode={current.flagCode} title={current.nativeLabel} />
+          <span
+            className={`box-border shrink-0 overflow-hidden ${
+              isAuthLandingTop
+                ? "flex h-7 w-7 items-center justify-center rounded-full border border-white/40 ring-1 ring-white/20"
+                : "h-full w-full rounded-sm"
+            }`}
+          >
+            <LocaleFlagImg flagCode={current.flagCode} title={current.nativeLabel} />
+          </span>
         </button>
       </div>
     </div>
