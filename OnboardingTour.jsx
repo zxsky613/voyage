@@ -170,21 +170,48 @@ function getSpotlightTargetByTourId(tourId) {
 }
 
 /**
- * Dimensions pour le masque SVG (fixed + 100%) : mêmes repères que getBoundingClientRect()
- * (layout viewport). Ne pas utiliser visualViewport.width/height seuls — sur iOS Safari ils
- * divergent souvent du layout et le « cadre » lumineux ne recouvre plus l’onglet / le +.
+ * Repère du calque spotlight = visual viewport (Safari / Chrome mobile) : mêmes dimensions
+ * et origine (offsetLeft/offsetTop) que la zone visible, pour coller à `position:fixed` (onglets, +).
+ * Fallback : fenêtre (layout) si l’API manque.
  */
 function getSpotlightLayoutMetrics() {
   if (typeof window === "undefined") {
-    return { vw: 0, vh: 0, safeTop: 0, safeBottom: 0 };
+    return { vw: 0, vh: 0, vx: 0, vy: 0, safeTop: 0, safeBottom: 0 };
   }
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vv = window.visualViewport;
+  if (vv && Number(vv.width) > 0 && Number(vv.height) > 0) {
+    return {
+      vw: vv.width,
+      vh: vv.height,
+      vx: Number(vv.offsetLeft) || 0,
+      vy: Number(vv.offsetTop) || 0,
+      safeTop: readSafeAreaInsetTopPx(),
+      safeBottom: readSafeAreaInsetBottomPx(),
+    };
+  }
   return {
-    vw,
-    vh,
+    vw: window.innerWidth,
+    vh: window.innerHeight,
+    vx: 0,
+    vy: 0,
     safeTop: readSafeAreaInsetTopPx(),
     safeBottom: readSafeAreaInsetBottomPx(),
+  };
+}
+
+/**
+ * Passe de getBoundingClientRect (origine haut-gauche du layout viewport) au repère du calque
+ * aligné sur visualViewport (coin haut-gauche du SVG = vx,vy).
+ */
+function toSpotlightSpaceRect(r, m) {
+  if (!r || !m) return null;
+  return {
+    top: r.top - m.vy,
+    left: r.left - m.vx,
+    right: r.right - m.vx,
+    bottom: r.bottom - m.vy,
+    width: r.width,
+    height: r.height,
   };
 }
 
@@ -296,10 +323,11 @@ function spotlightMinPillAspectForTour(tourId, metrics) {
   return 1.08;
 }
 
-function SpotlightOverlay({ rect, tourId }) {
+function SpotlightOverlay({ rawRect, tourId }) {
   const maskId = `tp-tour-mask-${useId().replace(/:/g, "")}`;
-  if (!rect) return null;
   const metrics = getSpotlightLayoutMetrics();
+  const rect = rawRect && toSpotlightSpaceRect(rawRect, metrics);
+  if (!rect) return null;
   const { pad, glowBleed: GLOW } = spotlightPadAndGlow(metrics);
   const isTab = String(tourId || "").startsWith("tab-");
   const isPlus = tourId === "plus-button";
@@ -311,16 +339,21 @@ function SpotlightOverlay({ rect, tourId }) {
   const { cx, cy, cw, ch } = pill;
   const r = spotlightCornerRadius(cw, ch);
   const useNativeChromeOnly = isTab || tourId === "plus-button";
+  const { vw, vh, vx, vy } = metrics;
 
   return (
     <svg
       aria-hidden="true"
       overflow="visible"
+      width={vw}
+      height={vh}
+      viewBox={`0 0 ${vw} ${vh}`}
       style={{
         position: "fixed",
-        inset: 0,
-        width: "100%",
-        height: "100%",
+        left: vx,
+        top: vy,
+        width: vw,
+        height: vh,
         pointerEvents: "none",
         zIndex: 9998,
         overflow: "visible",
@@ -328,11 +361,11 @@ function SpotlightOverlay({ rect, tourId }) {
     >
       <defs>
         <mask id={maskId}>
-          <rect width="100%" height="100%" fill="white" />
+          <rect x={0} y={0} width={vw} height={vh} fill="white" />
           <rect x={cx} y={cy} width={cw} height={ch} rx={r} fill="black" />
         </mask>
       </defs>
-      <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
+      <rect x={0} y={0} width={vw} height={vh} fill="rgba(2, 6, 23, 0.72)" mask={`url(#${maskId})`} />
       {/* Onglets + bouton + : un seul cadre visuel (celui du bouton réel). Pas de contour SVG par-dessus. */}
       {useNativeChromeOnly ? null : (
         <rect
@@ -424,6 +457,8 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
   const { t } = useI18n();
   const [step, setStep] = useState(0);
   const [targetRect, setTargetRect] = useState(null);
+  /** Invalide le rendu quand seul visualViewport change (même cible, nouvelles vx/vy — sans ça, pas de re-paint du SVG). */
+  const [, setSpotlightLayoutEpoch] = useState(0);
   const [visible, setVisible] = useState(false);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
@@ -457,6 +492,11 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
       setTargetRect(snapshotDomRect(el));
     };
 
+    const onVisualViewportChange = () => {
+      setSpotlightLayoutEpoch((k) => k + 1);
+      measure();
+    };
+
     measure();
 
     let raf1 = 0;
@@ -464,25 +504,35 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
     let raf3 = 0;
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        raf3 = requestAnimationFrame(measure);
+        raf3 = requestAnimationFrame(onVisualViewportChange);
       });
     });
 
-    const delays = [40, 120, 280, 550];
-    const timers = delays.map((ms) => setTimeout(measure, ms));
+    const delays = [40, 120, 280, 550, 900, 1500, 2400];
+    const timers = delays.map((ms) => setTimeout(onVisualViewportChange, ms));
 
-    window.addEventListener("resize", measure);
+    const onWindowResize = () => {
+      onVisualViewportChange();
+    };
+    window.addEventListener("resize", onWindowResize);
     window.addEventListener("scroll", measure, true);
 
+    const onOrientation = () => {
+      onVisualViewportChange();
+      setTimeout(onVisualViewportChange, 200);
+      setTimeout(onVisualViewportChange, 500);
+    };
+    window.addEventListener("orientationchange", onOrientation);
+
     const vv = window.visualViewport;
-    vv?.addEventListener("resize", measure);
-    vv?.addEventListener("scroll", measure);
+    vv?.addEventListener("resize", onVisualViewportChange);
+    vv?.addEventListener("scroll", onVisualViewportChange);
 
     let fontsCancel = false;
     const fr = document.fonts?.ready;
     if (fr && typeof fr.then === "function") {
       fr.then(() => {
-        if (!fontsCancel) measure();
+        if (!fontsCancel) onVisualViewportChange();
       });
     }
 
@@ -492,10 +542,11 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
       cancelAnimationFrame(raf2);
       cancelAnimationFrame(raf3);
       timers.forEach(clearTimeout);
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", onWindowResize);
       window.removeEventListener("scroll", measure, true);
-      vv?.removeEventListener("resize", measure);
-      vv?.removeEventListener("scroll", measure);
+      window.removeEventListener("orientationchange", onOrientation);
+      vv?.removeEventListener("resize", onVisualViewportChange);
+      vv?.removeEventListener("scroll", onVisualViewportChange);
     };
   }, [step, isWelcome, currentStep.tourId, currentStep.navigateTab]);
 
@@ -601,7 +652,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
 
   const spotlightLayer = (
     <>
-      <SpotlightOverlay rect={targetRect} tourId={currentStep.tourId} />
+      <SpotlightOverlay rawRect={targetRect} tourId={currentStep.tourId} />
 
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center p-4"

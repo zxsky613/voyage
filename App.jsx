@@ -733,7 +733,11 @@ function invitedEmailsForAvatarStrip(trip) {
   const all = Array.isArray(trip?.invited_emails)
     ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  const joined = trip?.invited_joined_emails;
+  let joined = trip?.invited_joined_emails;
+  // `[]` à la création (ancien code) n’est pas le même cas qu’un « 0 inscrit » voulu : comme NULL, afficher les invités.
+  if (Array.isArray(joined) && joined.length === 0) {
+    joined = null;
+  }
   if (joined == null) {
     return all.filter((e) => isValidEmail(String(e).trim()));
   }
@@ -748,7 +752,10 @@ function invitedEmailsForAvatarStrip(trip) {
  */
 function participantsForAvatarRow(trip) {
   const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
-  const joined = trip?.invited_joined_emails;
+  let joined = trip?.invited_joined_emails;
+  if (Array.isArray(joined) && joined.length === 0) {
+    joined = null;
+  }
   if (joined == null) {
     return parts;
   }
@@ -769,12 +776,12 @@ function participantsForAvatarRow(trip) {
 }
 
 /** N’afficher qu’une pastille « moi » (évite Moi + même e-mail en doublon). */
-function dedupeCurrentUserInAvatarRow(list, session) {
+function dedupeCurrentUserInAvatarRow(list, session, trip) {
   if (!session?.user) return list;
   const out = [];
   let haveMe = false;
   for (const p of list || []) {
-    if (isParticipantRawCurrentUser(p, session)) {
+    if (isParticipantRawCurrentUser(p, session, trip)) {
       if (haveMe) continue;
       haveMe = true;
       out.push(p);
@@ -789,19 +796,23 @@ function dedupeCurrentUserInAvatarRow(list, session) {
  * Pile d’avatars (calendrier, chat) : le dernier élément a le z-index le plus haut.
  * Avec ["Moi", "autre@…"], l’autre recouvrait « Moi » — on met l’utilisateur connecté en dernier pour le voir au premier plan.
  */
-function sortAvatarRowForStackOverlays(list, session) {
+function sortAvatarRowForStackOverlays(list, session, trip) {
   if (!session?.user) return list;
   const me = [];
   const others = [];
   for (const p of list || []) {
-    if (isParticipantRawCurrentUser(p, session)) me.push(p);
+    if (isParticipantRawCurrentUser(p, session, trip)) me.push(p);
     else others.push(p);
   }
   return [...others, ...me];
 }
 
 function stackOrderedAvatarRaws(trip, session) {
-  return sortAvatarRowForStackOverlays(dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session), session);
+  return sortAvatarRowForStackOverlays(
+    dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session, trip),
+    session,
+    trip
+  );
 }
 
 /**
@@ -816,7 +827,7 @@ function participantsForExpenseSplit(trip, session) {
   );
   const joined = trip?.invited_joined_emails;
   if (joined == null) {
-    return dedupeCurrentUserInAvatarRow(full, session);
+    return dedupeCurrentUserInAvatarRow(full, session, trip);
   }
   const jset = new Set(
     (Array.isArray(joined) ? joined : [])
@@ -824,7 +835,7 @@ function participantsForExpenseSplit(trip, session) {
       .filter(Boolean)
   );
   if (jset.size === 0) {
-    return dedupeCurrentUserInAvatarRow(["Moi"], session);
+    return dedupeCurrentUserInAvatarRow(["Moi"], session, trip);
   }
   const filtered = full.filter((p) => {
     const s = String(p || "").trim();
@@ -832,7 +843,7 @@ function participantsForExpenseSplit(trip, session) {
     if (!isValidEmail(s)) return true;
     return jset.has(s.toLowerCase());
   });
-  return dedupeCurrentUserInAvatarRow(filtered, session);
+  return dedupeCurrentUserInAvatarRow(filtered, session, trip);
 }
 
 async function tryMarkInviteeJoinedTrips(supabaseClient) {
@@ -1006,12 +1017,36 @@ function textColorOnInitialsBg(bgHex) {
   return luminanceOfHex(bgHex) > 0.55 ? "#0f172a" : "#ffffff";
 }
 
+/** Le compte actuel est le propriétaire de ce voyage (a créé le trip). */
+function isCurrentUserTripOwner(session, trip) {
+  const oid = String(trip?.owner_id || "").trim();
+  if (!oid) return true;
+  return String(session?.user?.id || "").trim() === oid;
+}
+
+/**
+ * Coordonne « Moi » dans les données avec l’utilisateur : pour le propriétaire c’est le viewer ;
+ * pour un invité, « Moi » désigne l’organisateur, pas l’utilisateur actuel.
+ * @param {object} [trip] — si absent, « Moi » = viewer (héritage).
+ */
+function isParticipantRawCurrentUser(raw, session, trip) {
+  const r = String(raw || "").trim().toLowerCase();
+  if (r === "moi") {
+    if (trip && String(trip.owner_id || "").trim()) {
+      return isCurrentUserTripOwner(session, trip);
+    }
+    return true;
+  }
+  const em = String(session?.user?.email || "").trim().toLowerCase();
+  return Boolean(em && r === em);
+}
+
 /**
  * Couleur de fond pour initiales : compte connecté = métadonnée (assignée à l’inscription),
  * autres pastilles = couleur stable dérivée de l’e-mail / libellé (invités sans profil partagé).
  */
-function initialsAvatarBgForParticipant(raw, session) {
-  if (isParticipantRawCurrentUser(raw, session)) {
+function initialsAvatarBgForParticipant(raw, session, trip) {
+  if (isParticipantRawCurrentUser(raw, session, trip)) {
     const stored = String(session?.user?.user_metadata?.initials_avatar_bg || "").trim();
     if (/^#[0-9A-Fa-f]{6}$/i.test(stored)) return stored;
     const uid = String(session?.user?.id || session?.user?.email || "me").trim();
@@ -1021,24 +1056,31 @@ function initialsAvatarBgForParticipant(raw, session) {
   return initialsBgFromSeed(key || "?");
 }
 
-/** « Moi » ou e-mail identique au compte connecté. */
-function isParticipantRawCurrentUser(raw, session) {
-  const r = String(raw || "").trim().toLowerCase();
-  if (r === "moi") return true;
-  const em = String(session?.user?.email || "").trim().toLowerCase();
-  return Boolean(em && r === em);
-}
-
 /**
- * Profil public d’un autre membre (invité ayant rejoint) — alimenté par get_invitee_public_profiles_for_trip.
+ * Profil public d’un autre membre (RPC) — e-mails + rôle « Moi » côté invité = organisateur.
  * @param {Record<string, { avatarUrl?: string, firstName?: string, lastName?: string, initialsBg?: string }>} map
+ * @param {object} [ownerForTrip] — profil (photo, noms) du propriétaire pour le voyage (depuis is_trip_owner côté RPC)
  */
-function pickServerPeerProfile(map, raw) {
+function pickServerPeerProfile(map, raw, session, trip, ownerForTrip) {
   const s = String(raw || "").trim().toLowerCase();
-  if (!s || s === "moi" || !isValidEmail(s)) return null;
-  const p = map && map[s];
-  if (!p || typeof p !== "object") return null;
-  return p;
+  if (!s) return null;
+  if (isValidEmail(s)) {
+    const p = map && map[s];
+    if (!p || typeof p !== "object") return null;
+    return p;
+  }
+  if (s === "moi" && trip?.id) {
+    if (isCurrentUserTripOwner(session, trip)) return null;
+    if (ownerForTrip && typeof ownerForTrip === "object") {
+      return {
+        avatarUrl: String(ownerForTrip.avatarUrl || "").trim(),
+        firstName: String(ownerForTrip.firstName || "").trim(),
+        lastName: String(ownerForTrip.lastName || "").trim(),
+        initialsBg: String(ownerForTrip.initialsBg || "").trim(),
+      };
+    }
+  }
+  return null;
 }
 
 function currentUserProfileAvatarUrl(session) {
@@ -1053,12 +1095,14 @@ function currentUserProfileAvatarUrl(session) {
 function ParticipantCircleAvatar({
   raw,
   session,
+  /** @type {object|undefined} */
+  trip,
   displayLabel,
   className,
   initialsFill = "palette",
   serverPeerProfile = null,
 }) {
-  const isMe = isParticipantRawCurrentUser(raw, session);
+  const isMe = isParticipantRawCurrentUser(raw, session, trip);
   const peer = !isMe && serverPeerProfile ? serverPeerProfile : null;
   const photoUrl = isMe ? currentUserProfileAvatarUrl(session) : String(peer?.avatarUrl || "").trim();
   const [imgBroken, setImgBroken] = useState(false);
@@ -1083,7 +1127,7 @@ function ParticipantCircleAvatar({
   const paletteBg = (() => {
     if (showImg || initialsFill !== "palette") return null;
     if (peerHex) return peerHex;
-    return initialsAvatarBgForParticipant(raw, session);
+    return initialsAvatarBgForParticipant(raw, session, trip);
   })();
   const initialsInk = paletteBg ? textColorOnInitialsBg(paletteBg) : undefined;
   return (
@@ -1144,6 +1188,30 @@ function participantDisplayFromRaw(value, currentUserDisplayName) {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
   return pretty || raw;
+}
+
+/**
+ * Libellé « Moi » : pour l’organisateur c’est le prénom du viewer ; pour un invité, « Moi » = l’hôte.
+ */
+function participantDisplayFromRawForTrip(value, session, trip, ownerPeer) {
+  const raw = String(value || "").trim();
+  if (
+    raw.toLowerCase() === "moi" &&
+    trip &&
+    String(trip.owner_id || "").trim() &&
+    String(session?.user?.id || "") !== String(trip.owner_id)
+  ) {
+    if (ownerPeer && typeof ownerPeer === "object") {
+      const f = String(ownerPeer.firstName || "").trim();
+      const l = String(ownerPeer.lastName || "").trim();
+      const full = `${f} ${l}`.trim();
+      if (full) return full;
+      const em = String(ownerPeer.email || "").trim();
+      if (em) return participantDisplayFromRaw(em, getCurrentUserDisplayName(session));
+    }
+    return "Organisateur";
+  }
+  return participantDisplayFromRaw(value, getCurrentUserDisplayName(session));
 }
 
 function resolveVoterLabel(vote, session) {
@@ -6894,23 +6962,41 @@ function AuthView() {
   const [resendLoading, setResendLoading] = useState(false);
 
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const invite = params.get("invite");
-      const invitedEmail = String(params.get("email") || "").trim();
-      const invitedTrip = String(params.get("trip") || "").trim();
-      if (invite !== "1" || !invitedEmail) return;
-      setInviteEmail(invitedEmail);
-      setInviteTripName(invitedTrip);
-      setInviteFromName(String(params.get("from") || "").trim());
-      setInviteStartDate(String(params.get("start") || "").trim());
-      setInviteEndDate(String(params.get("end") || "").trim());
-      setInviteAccepted(false);
-      setMode("signup");
-      setInvitePromptOpen(true);
-    } catch (_e) {
-      // ignore malformed URL params
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        const invite = params.get("invite");
+        const invitedEmail = String(params.get("email") || "").trim();
+        const invitedTrip = String(params.get("trip") || "").trim();
+        if (invite !== "1" || !invitedEmail) return;
+        if (cancelled) return;
+        setInviteEmail(invitedEmail);
+        setEmail(invitedEmail);
+        setInviteTripName(invitedTrip);
+        setInviteFromName(String(params.get("from") || "").trim());
+        setInviteStartDate(String(params.get("start") || "").trim());
+        setInviteEndDate(String(params.get("end") || "").trim());
+        setInviteAccepted(false);
+        setInvitePromptOpen(true);
+        let hasAccount = false;
+        try {
+          const { data, error } = await supabase.rpc("auth_email_has_account", {
+            p_email: invitedEmail,
+          });
+          if (!error && data === true) hasAccount = true;
+        } catch (_e) {
+          /* RPC absente ou erreur réseau : défaut nouveau compte */
+        }
+        if (cancelled) return;
+        setMode(hasAccount ? "signin" : "signup");
+      } catch (_e) {
+        // ignore malformed URL params
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const clearInviteParams = () => {
@@ -7311,7 +7397,20 @@ function AuthView() {
           type="button"
           onClick={() =>
             setMode((m) => {
-              if (invitePromptOpen) return "signup";
+              if (invitePromptOpen) {
+                const next = m === "signin" ? "signup" : "signin";
+                if (next === "signup") {
+                  setAwaitingEmailConfirm(false);
+                  setConfirmationEmail("");
+                }
+                if (next === "signin") {
+                  setFirstName("");
+                  setLastName("");
+                  setProfilePhotoFile(null);
+                  setProfilePhotoPreview("");
+                }
+                return next;
+              }
               const next = m === "signin" ? "signup" : "signin";
               if (next === "signup") {
                 setAwaitingEmailConfirm(false);
@@ -7329,7 +7428,9 @@ function AuthView() {
           className="mt-4 w-full py-2.5 text-center text-sm font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-900"
         >
           {invitePromptOpen
-            ? t("auth.inviteFlowNote")
+            ? mode === "signin"
+              ? t("auth.inviteFlowNoteSignIn")
+              : t("auth.inviteFlowNote")
             : mode === "signin"
               ? t("auth.toggleSignUp")
               : t("auth.toggleSignIn")}
@@ -7452,12 +7553,21 @@ function AuthView() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setInviteAccepted(true)}
+                    onClick={() => {
+                      if (mode === "signin") {
+                        setInvitePromptOpen(false);
+                        setInviteAccepted(false);
+                        clearInviteParams();
+                        setMsg(t("auth.inviteConnectHint"));
+                        return;
+                      }
+                      setInviteAccepted(true);
+                    }}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
                     style={{ background: `linear-gradient(90deg, ${ACCENT} 0%, ${ACCENT_MID} 100%)` }}
                   >
-                    <span>🎉</span>
-                    {t("auth.inviteAccept")}
+                    {mode === "signin" ? null : <span>🎉</span>}
+                    {mode === "signin" ? t("auth.inviteAcceptSignIn") : t("auth.inviteAccept")}
                   </button>
                 </div>
 
@@ -8382,12 +8492,15 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
 }
 
 /** Liste lecture seule des participants (planning) — ouverte depuis la pile d’avatars sur la carte « Voyage actif ». */
-function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfileByEmail = {} }) {
+function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfileByEmail = {}, ownerPeer = null }) {
   useScrollLock(open);
   const { t } = useI18n();
   if (!open || !trip) return null;
-  const rawList = dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session);
-  const display = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+  const guestHere =
+    Boolean(trip?.owner_id) &&
+    String(session?.user?.id || "") !== String(trip.owner_id);
+  const rawList = dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session, trip);
+  const display = (p) => participantDisplayFromRawForTrip(p, session, trip, ownerPeer);
   return (
     <div
       className="fixed -inset-1 z-[55] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
@@ -8430,7 +8543,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfil
             const emailLine = isValidEmail(rawStr)
               ? rawStr
               : rawStr.toLowerCase() === "moi"
-                ? String(session?.user?.email || "").trim()
+                ? String(guestHere ? ownerPeer?.email || "" : session?.user?.email || "").trim()
                 : "";
             return (
               <li
@@ -8441,7 +8554,14 @@ function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfil
                   <ParticipantCircleAvatar
                     raw={raw}
                     session={session}
-                    serverPeerProfile={pickServerPeerProfile(peerProfileByEmail, rawStr)}
+                    trip={trip}
+                    serverPeerProfile={pickServerPeerProfile(
+                      peerProfileByEmail,
+                      rawStr,
+                      session,
+                      trip,
+                      ownerPeer
+                    )}
                     displayLabel={label}
                     className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-xs font-normal"
                   />
@@ -13565,11 +13685,11 @@ function ChatHubView({
   votes,
   onVote,
   peerProfileByEmail = {},
+  peerOwnerByTripId = {},
   unreadByTrip = {},
   onMarkThreadRead,
 }) {
   const { t, language } = useI18n();
-  const currentUserDisplayName = getCurrentUserDisplayName(session);
   const messagesContainerRef = useRef(null);
   const sortedTrips = useMemo(() => {
     return [...(trips || [])].sort((a, b) => {
@@ -13636,9 +13756,10 @@ function ChatHubView({
             sortedTrips.map((trip) => {
               const active = String(chatTripId) === String(trip.id);
               const tripUnread = Math.max(0, Number(unreadByTrip?.[String(trip.id)] || 0) || 0);
+              const ownerP = peerOwnerByTripId[String(trip.id)] || null;
               const participantsRaw = stackOrderedAvatarRaws(trip, session);
               const participantLabels = participantsRaw.map((p) =>
-                String(p).toLowerCase() === "moi" ? currentUserDisplayName : String(p)
+                participantDisplayFromRawForTrip(p, session, trip, ownerP)
               );
               return (
                 <button
@@ -13687,9 +13808,13 @@ function ChatHubView({
                               key={`${String(trip.id)}-${String(rawParticipant)}`}
                               raw={rawParticipant}
                               session={session}
+                              trip={trip}
                               serverPeerProfile={pickServerPeerProfile(
                                 peerProfileByEmail,
-                                String(rawParticipant)
+                                String(rawParticipant),
+                                session,
+                                trip,
+                                ownerP
                               )}
                               displayLabel={label}
                               className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-white/45"
@@ -13800,19 +13925,29 @@ function ChatHubView({
                     {t("chat.messagesHeading")}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {stackOrderedAvatarRaws(activeTrip, session).map((p) => {
-                      const label = participantDisplayFromRaw(p, currentUserDisplayName);
+                    {(() => {
+                      const activeOwnerP = peerOwnerByTripId[String(activeTrip.id)] || null;
+                      return stackOrderedAvatarRaws(activeTrip, session).map((p) => {
+                      const label = participantDisplayFromRawForTrip(p, session, activeTrip, activeOwnerP);
                       return (
                         <ParticipantCircleAvatar
                           key={`active-${String(p)}`}
                           raw={p}
                           session={session}
-                          serverPeerProfile={pickServerPeerProfile(peerProfileByEmail, String(p))}
+                          trip={activeTrip}
+                          serverPeerProfile={pickServerPeerProfile(
+                            peerProfileByEmail,
+                            String(p),
+                            session,
+                            activeTrip,
+                            activeOwnerP
+                          )}
                           displayLabel={label}
                           className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-slate-200/70"
                         />
                       );
-                    })}
+                    });
+                    })()}
                   </div>
                     <div
                       ref={messagesContainerRef}
@@ -14138,6 +14273,10 @@ export default function App() {
   const [inviteeProfileByEmail, setInviteeProfileByEmail] = useState(
     /** @type {Record<string, { avatarUrl: string, firstName: string, lastName: string, initialsBg: string }>} */ ({})
   );
+  /** Propriétaire du voyage (profil public pour l’affichage « Moi » côté invité) : tripId -> { email, avatarUrl, … } */
+  const [peerOwnerProfileByTripId, setPeerOwnerProfileByTripId] = useState(
+    /** @type {Record<string, { email: string, avatarUrl: string, firstName: string, lastName: string, initialsBg: string }>} */ ({})
+  );
   const [activities, setActivities] = useState([]);
   const [chatActivities, setChatActivities] = useState([]);
   const [selectedTripId, setSelectedTripId] = useState(() => readStoredSelectedTripId());
@@ -14169,6 +14308,7 @@ export default function App() {
         .map((t) => {
           const id = String(t?.id || "");
           const j = t?.invited_joined_emails;
+          const oid = String(t?.owner_id || "").trim();
           let key;
           if (j == null) {
             const inv = Array.isArray(t?.invited_emails) ? t.invited_emails : [];
@@ -14178,7 +14318,7 @@ export default function App() {
           } else {
             key = "invalid";
           }
-          return `${id}:${key}`;
+          return `${id}:${key}:o${oid}`;
         })
         .sort()
         .join("|"),
@@ -14188,29 +14328,36 @@ export default function App() {
   useEffect(() => {
     if (authLoading || !session?.user) {
       setInviteeProfileByEmail({});
+      setPeerOwnerProfileByTripId({});
       return undefined;
     }
+    const myId = String(session.user.id);
     const targets = (trips || []).filter((t) => {
       if (!t?.id) return false;
+      const isGuest = Boolean(t?.owner_id && myId && String(t.owner_id) !== myId);
       const j = t?.invited_joined_emails;
-      if (j == null) {
-        return (
-          Array.isArray(t?.invited_emails) && t.invited_emails.some((e) => isValidEmail(String(e || "").trim()))
-        );
-      }
-      return Array.isArray(j) && j.length > 0;
+      const hasInvitedFetch =
+        j == null
+          ? Array.isArray(t?.invited_emails) && t.invited_emails.some((e) => isValidEmail(String(e || "").trim()))
+          : Array.isArray(j) && j.length > 0;
+      return isGuest || hasInvitedFetch;
     });
     if (targets.length === 0) {
       setInviteeProfileByEmail({});
+      setPeerOwnerProfileByTripId({});
       return undefined;
     }
     let cancelled = false;
     (async () => {
       const next = {};
+      const ownerByTid = {};
       const results = await Promise.all(
         targets.map((trip) => supabase.rpc("get_invitee_public_profiles_for_trip", { p_trip_id: trip.id }))
       );
-      for (const { data, error } of results) {
+      for (let i = 0; i < results.length; i++) {
+        const { data, error } = results[i];
+        const trip = targets[i];
+        const tid = String(trip?.id || "");
         if (error) continue;
         for (const row of data || []) {
           if (!row || typeof row !== "object") continue;
@@ -14219,6 +14366,16 @@ export default function App() {
             .trim()
             .toLowerCase();
           if (!k) continue;
+          const isOwner = r.is_trip_owner === true;
+          if (isOwner && tid) {
+            ownerByTid[tid] = {
+              email: k,
+              avatarUrl: String(r.avatar_url || "").trim(),
+              firstName: String(r.first_name || "").trim(),
+              lastName: String(r.last_name || "").trim(),
+              initialsBg: String(r.initials_avatar_bg || "").trim(),
+            };
+          }
           const incoming = {
             avatarUrl: String(r.avatar_url || "").trim(),
             firstName: String(r.first_name || "").trim(),
@@ -14238,7 +14395,18 @@ export default function App() {
           }
         }
       }
-      if (!cancelled) setInviteeProfileByEmail(next);
+      if (!cancelled) {
+        setInviteeProfileByEmail(next);
+        setPeerOwnerProfileByTripId((prev) => {
+          const n = { ...prev };
+          for (const t of targets) {
+            const id = String(t.id);
+            if (Object.prototype.hasOwnProperty.call(ownerByTid, id)) n[id] = ownerByTid[id];
+            else if (n[id]) delete n[id];
+          }
+          return n;
+        });
+      }
     })();
     return () => {
       cancelled = true;
@@ -15395,7 +15563,8 @@ export default function App() {
           Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
             ? payload.invited_emails
             : [],
-        invited_joined_emails: [],
+        // NULL = legacy « tous les invités » en pastille ; un tableau [] excluait toute adresse côté UI.
+        invited_joined_emails: null,
         title: safeTitle,
         name: safeTitle,
         destination: formatCityName(payload?.destination || payload?.title || safeTitle),
@@ -16345,9 +16514,11 @@ export default function App() {
                     </div>
                     <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
                       {(() => {
+                        const ownerP =
+                          peerOwnerProfileByTripId[String(selectedTrip?.id || "")] || null;
                         const rawList = stackOrderedAvatarRaws(selectedTrip, session);
                         const displayNameFn = (p) =>
-                          participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+                          participantDisplayFromRawForTrip(p, session, selectedTrip, ownerP);
                         const maxStack = 5;
                         const visible = rawList.slice(0, maxStack);
                         const extra = Math.max(0, rawList.length - visible.length);
@@ -16371,7 +16542,14 @@ export default function App() {
                                   <ParticipantCircleAvatar
                                     raw={raw}
                                     session={session}
-                                    serverPeerProfile={pickServerPeerProfile(inviteeProfileByEmail, String(raw))}
+                                    trip={selectedTrip}
+                                    serverPeerProfile={pickServerPeerProfile(
+                                      inviteeProfileByEmail,
+                                      String(raw),
+                                      session,
+                                      selectedTrip,
+                                      ownerP
+                                    )}
                                     displayLabel={displayNameFn(raw)}
                                     className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
                                   />
@@ -16532,6 +16710,7 @@ export default function App() {
             votes={activityVotes}
             onVote={voteActivity}
             peerProfileByEmail={inviteeProfileByEmail}
+            peerOwnerByTripId={peerOwnerProfileByTripId}
             unreadByTrip={chatUnreadByTrip}
             onMarkThreadRead={markChatThreadRead}
           />
@@ -16631,6 +16810,7 @@ export default function App() {
         trip={selectedTrip}
         session={session}
         peerProfileByEmail={inviteeProfileByEmail}
+        ownerPeer={peerOwnerProfileByTripId[String(selectedTrip?.id || "")] || null}
       />
       <InviteEmailsModal
         open={plannerInviteOpen && !!selectedTrip}

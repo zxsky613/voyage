@@ -42,7 +42,8 @@ RETURNS TABLE (
   avatar_url text,
   first_name text,
   last_name text,
-  initials_avatar_bg text
+  initials_avatar_bg text,
+  is_trip_owner boolean
 )
 LANGUAGE plpgsql
 STABLE
@@ -89,17 +90,22 @@ BEGIN
     )::text AS avatar_url,
     (NULLIF(trim(u.raw_user_meta_data->>'first_name'), ''))::text AS first_name,
     (NULLIF(trim(u.raw_user_meta_data->>'last_name'), ''))::text AS last_name,
-    (NULLIF(trim(u.raw_user_meta_data->>'initials_avatar_bg'), ''))::text AS initials_avatar_bg
+    (NULLIF(trim(u.raw_user_meta_data->>'initials_avatar_bg'), ''))::text AS initials_avatar_bg,
+    (t.owner_id IS NOT NULL AND u.id = t.owner_id) AS is_trip_owner
   FROM auth.users u
-  WHERE lower(trim(u.email::text)) IN (
-    SELECT lower(trim(x::text))
-    FROM unnest(
-      CASE
-        WHEN t.invited_joined_emails IS NULL THEN COALESCE(t.invited_emails, ARRAY[]::text[])
-        ELSE t.invited_joined_emails
-      END
-    ) AS x
-  );
+  WHERE
+    (
+      lower(trim(u.email::text)) IN (
+        SELECT lower(trim(x::text))
+        FROM unnest(
+          CASE
+            WHEN t.invited_joined_emails IS NULL THEN COALESCE(t.invited_emails, ARRAY[]::text[])
+            ELSE t.invited_joined_emails
+          END
+        ) AS x
+      )
+    )
+    OR (t.owner_id IS NOT NULL AND u.id = t.owner_id);
 END;
 $$;
 
