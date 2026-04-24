@@ -6,7 +6,7 @@
 const EPS = 1e-6;
 
 /**
- * @param {string[]} canonicalParticipants — ex. ["Moi", "a@b.com"]
+ * @param {string[]} canonicalParticipants — ex. ["Moi", "a@b.com"] (souvent filtré aux seuls inscrits / ayant rejoint côté app)
  * @param {Array<{ amount?: number, paid_by?: string, split_between?: string[] }>} expenses
  * @returns {Record<string, number>} solde positif = on te doit, négatif = tu dois
  */

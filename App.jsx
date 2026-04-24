@@ -423,7 +423,165 @@ function getUnsplashHeroConflictAvoidKeywords(cityInput) {
 const CITY_HERO_STORAGE_BUCKET = import.meta.env.VITE_CITY_HERO_STORAGE_BUCKET || "";
 const cityImageMemoryCache = {};
 const CHAT_CACHE_KEY = "tp_chat_cache_v1";
+const CHAT_READ_STATE_KEY_PREFIX = "tp_chat_read_v1";
+const baseDocumentTitle = "Justtrip";
 const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
+
+function chatReadStorageKey(userId) {
+  const u = String(userId || "").trim();
+  if (!u) return null;
+  return `${CHAT_READ_STATE_KEY_PREFIX}:${u}`;
+}
+
+function loadChatReadState(userId) {
+  const k = chatReadStorageKey(userId);
+  if (!k || typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(k);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch (_e) {
+    return {};
+  }
+}
+
+function saveChatReadState(userId, state) {
+  const k = chatReadStorageKey(userId);
+  if (!k || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(k, JSON.stringify(state || {}));
+  } catch (_e) {
+    /* ignore */
+  }
+}
+
+/** Compare deux messages (created_at, id) pour l’ordre d’affichage et le curseur « lu ». */
+function compareChatMessagesByTime(a, b) {
+  const c = String(a?.created_at || "").localeCompare(String(b?.created_at || ""));
+  if (c !== 0) return c;
+  return String(a?.id || "").localeCompare(String(b?.id || ""));
+}
+
+/** vrai si `msg` est strictement plus récent que le point de lecture. */
+function chatMessageIsAfterReadPoint(msg, read) {
+  if (!read) return true;
+  const t = String(read.t || read.created_at || "");
+  const id = String(read.id || "");
+  const c = String(msg?.created_at || "").localeCompare(t);
+  if (c > 0) return true;
+  if (c < 0) return false;
+  return String(msg?.id || "").localeCompare(id) > 0;
+}
+
+function isPeerChatMessage(msg, currentUserId, userEmailLower) {
+  if (!msg) return false;
+  const mineById = currentUserId && String(msg?.author_id || "") === String(currentUserId);
+  const mineByEmail =
+    userEmailLower &&
+    String(msg?.author_email || "")
+      .trim()
+      .toLowerCase() === userEmailLower;
+  return !mineById && !mineByEmail;
+}
+
+function countChatUnreadForTrip(messages, currentUserId, userEmailLower, readCursor) {
+  const list = (Array.isArray(messages) ? messages : []).filter(Boolean);
+  let n = 0;
+  for (const m of list) {
+    if (!isPeerChatMessage(m, currentUserId, userEmailLower)) continue;
+    if (chatMessageIsAfterReadPoint(m, readCursor)) n += 1;
+  }
+  return n;
+}
+
+function formatUnreadCountBadge(n) {
+  if (n <= 0) return "";
+  if (n > 99) return "99+";
+  return String(n);
+}
+
+/** Au chargement, synchronise le curseur « lu » avec le cache disque (historique = lu). */
+function coalesceReadStateWithMessageCache(loaded, messageCache) {
+  const out = { ...(loaded || {}) };
+  const cache = messageCache && typeof messageCache === "object" ? messageCache : {};
+  for (const [tid, arr] of Object.entries(cache)) {
+    if (out[tid] || !Array.isArray(arr) || arr.length === 0) continue;
+    const sorted = arr.slice().sort(compareChatMessagesByTime);
+    const last = sorted[sorted.length - 1];
+    if (last) {
+      out[tid] = { t: String(last.created_at || ""), id: String(last.id || "") };
+    }
+  }
+  return out;
+}
+
+function setFaviconHref(url) {
+  if (typeof document === "undefined") return;
+  const link = document.querySelector('link[rel="icon"]');
+  if (link) link.href = url;
+}
+
+function applyTabNotification(totalUnread) {
+  if (typeof document === "undefined") return;
+  const n = Math.max(0, Number(totalUnread) || 0);
+  const label = n > 0 ? `(${n > 99 ? "99+" : String(n)}) ${baseDocumentTitle}` : baseDocumentTitle;
+  if (document.title !== label) document.title = label;
+
+  if (n <= 0) {
+    setFaviconHref("/logo-justtrip.png");
+    return;
+  }
+  const prevImg = new Image();
+  prevImg.crossOrigin = "anonymous";
+  prevImg.onload = () => {
+    const w = 32;
+    const h = 32;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setFaviconHref("/logo-justtrip.png");
+      return;
+    }
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(prevImg, 0, 0, w, h);
+    const txt = n > 99 ? "99+" : String(n);
+    ctx.save();
+    ctx.font = n > 99 ? "bold 7px Poppins,system-ui,sans-serif" : "bold 10px Poppins,system-ui,sans-serif";
+    const tw = ctx.measureText(txt).width;
+    const padX = n > 99 ? 2 : 3;
+    const ph = 10;
+    const pillW = Math.min(w - 1, tw + padX * 2);
+    const x = w - pillW - 1;
+    const y = 1;
+    const r = 4;
+    ctx.fillStyle = "rgba(220, 38, 38, 0.98)";
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + pillW - r, y);
+    ctx.quadraticCurveTo(x + pillW, y, x + pillW, y + r);
+    ctx.lineTo(x + pillW, y + ph - r);
+    ctx.quadraticCurveTo(x + pillW, y + ph, x + pillW - r, y + ph);
+    ctx.lineTo(x + r, y + ph);
+    ctx.quadraticCurveTo(x, y + ph, x, y + ph - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(txt, x + pillW / 2, y + ph / 2);
+    ctx.restore();
+    const blob = canvas.toDataURL("image/png");
+    setFaviconHref(blob);
+  };
+  prevImg.onerror = () => setFaviconHref("/logo-justtrip.png");
+  prevImg.src = "/logo-justtrip.png";
+}
 
 /** Date locale du jour (AAAA-MM-JJ). Toujours recalculée — évite une date « figée » au chargement du bundle. */
 function getTodayStr() {
@@ -603,6 +761,73 @@ function participantsForAvatarRow(trip) {
     if (!isValidEmail(s)) return true;
     return jset.has(s.toLowerCase());
   });
+}
+
+/** N’afficher qu’une pastille « moi » (évite Moi + même e-mail en doublon). */
+function dedupeCurrentUserInAvatarRow(list, session) {
+  if (!session?.user) return list;
+  const out = [];
+  let haveMe = false;
+  for (const p of list || []) {
+    if (isParticipantRawCurrentUser(p, session)) {
+      if (haveMe) continue;
+      haveMe = true;
+      out.push(p);
+    } else {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Pile d’avatars (calendrier, chat) : le dernier élément a le z-index le plus haut.
+ * Avec ["Moi", "autre@…"], l’autre recouvrait « Moi » — on met l’utilisateur connecté en dernier pour le voir au premier plan.
+ */
+function sortAvatarRowForStackOverlays(list, session) {
+  if (!session?.user) return list;
+  const me = [];
+  const others = [];
+  for (const p of list || []) {
+    if (isParticipantRawCurrentUser(p, session)) me.push(p);
+    else others.push(p);
+  }
+  return [...others, ...me];
+}
+
+function stackOrderedAvatarRaws(trip, session) {
+  return sortAvatarRowForStackOverlays(dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session), session);
+}
+
+/**
+ * Tricount (dépenses partagées) : « Moi » + seulement les e-mails listés dans `invited_joined_emails` (inscrits / ont accepté le voyage).
+ * Si `invited_joined_emails` est `null` (héritage) : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
+ * Tableau vide : uniquement toi, la dépense ne se divise qu’en une part (1 personne) jusqu’à ce qu’un autre ait rejoint.
+ */
+function participantsForExpenseSplit(trip, session) {
+  const full = canonicalParticipants(
+    Array.isArray(trip?.participants) ? trip.participants : [],
+    Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
+  );
+  const joined = trip?.invited_joined_emails;
+  if (joined == null) {
+    return dedupeCurrentUserInAvatarRow(full, session);
+  }
+  const jset = new Set(
+    (Array.isArray(joined) ? joined : [])
+      .map((x) => String(x || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (jset.size === 0) {
+    return dedupeCurrentUserInAvatarRow(["Moi"], session);
+  }
+  const filtered = full.filter((p) => {
+    const s = String(p || "").trim();
+    if (s.toLowerCase() === "moi") return true;
+    if (!isValidEmail(s)) return true;
+    return jset.has(s.toLowerCase());
+  });
+  return dedupeCurrentUserInAvatarRow(filtered, session);
 }
 
 async function tryMarkInviteeJoinedTrips(supabaseClient) {
@@ -8151,7 +8376,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfil
   useScrollLock(open);
   const { t } = useI18n();
   if (!open || !trip) return null;
-  const rawList = participantsForAvatarRow(trip);
+  const rawList = dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session);
   const display = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
   return (
     <div
@@ -12870,10 +13095,7 @@ function TripExpenseDetail({
 
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
-  const participants = canonicalParticipants(
-    Array.isArray(trip?.participants) ? trip.participants : [],
-    Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
-  );
+  const participants = useMemo(() => participantsForExpenseSplit(trip, session), [trip, session]);
   const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
 
   const totalPlanner = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
@@ -13333,6 +13555,8 @@ function ChatHubView({
   votes,
   onVote,
   peerProfileByEmail = {},
+  unreadByTrip = {},
+  onMarkThreadRead,
 }) {
   const { t, language } = useI18n();
   const currentUserDisplayName = getCurrentUserDisplayName(session);
@@ -13384,6 +13608,13 @@ function ChatHubView({
     el.scrollTop = el.scrollHeight;
   }, [chatMessages, activeTrip, hubSubView]);
 
+  useEffect(() => {
+    if (typeof onMarkThreadRead !== "function") return;
+    if (!activeTrip) return;
+    if (hubSubView !== "chat") return;
+    onMarkThreadRead(String(activeTrip.id), chatMessages);
+  }, [activeTrip, hubSubView, chatMessages, onMarkThreadRead]);
+
   return (
     <section className="space-y-5">
       <div className="rounded-[2rem] bg-white/72 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/60 backdrop-blur-lg sm:p-5">
@@ -13394,7 +13625,8 @@ function ChatHubView({
           {sortedTrips.length > 0 ? (
             sortedTrips.map((trip) => {
               const active = String(chatTripId) === String(trip.id);
-              const participantsRaw = participantsForAvatarRow(trip);
+              const tripUnread = Math.max(0, Number(unreadByTrip?.[String(trip.id)] || 0) || 0);
+              const participantsRaw = stackOrderedAvatarRaws(trip, session);
               const participantLabels = participantsRaw.map((p) =>
                 String(p).toLowerCase() === "moi" ? currentUserDisplayName : String(p)
               );
@@ -13403,12 +13635,20 @@ function ChatHubView({
                   key={String(trip.id)}
                   type="button"
                   onClick={() => setChatTripId(String(trip.id))}
-                  className={`block w-full overflow-hidden rounded-2xl border-0 bg-transparent p-0 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 ${
+                  className={`relative block w-full overflow-hidden rounded-2xl border-0 bg-transparent p-0 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 ${
                     active
                       ? "text-white shadow-[0_16px_34px_rgba(2,6,23,0.24)]"
                       : "text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)]"
                   }`}
                 >
+                  {tripUnread > 0 ? (
+                    <span
+                      className="absolute right-2 top-2 z-10 min-w-[1.4rem] rounded-full bg-rose-600 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white ring-2 ring-white/30 tabular-nums"
+                      aria-label={`${tripUnread} non lus`}
+                    >
+                      {formatUnreadCountBadge(tripUnread)}
+                    </span>
+                  ) : null}
                   <TripLiquidGlassShell
                     imageTitle={String(trip?.destination || trip?.title || "voyage")}
                     active={active}
@@ -13550,7 +13790,7 @@ function ChatHubView({
                     {t("chat.messagesHeading")}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {participantsForAvatarRow(activeTrip).map((p) => {
+                    {stackOrderedAvatarRaws(activeTrip, session).map((p) => {
                       const label = participantDisplayFromRaw(p, currentUserDisplayName);
                       return (
                         <ParticipantCircleAvatar
@@ -13901,6 +14141,7 @@ export default function App() {
   const [chatMessagesLocal, setChatMessagesLocal] = useState({});
   const chatMessagesLocalRef = useRef(chatMessagesLocal);
   chatMessagesLocalRef.current = chatMessagesLocal;
+  const [chatReadState, setChatReadState] = useState(() => ({}));
   const [activityVotesLocal, setActivityVotesLocal] = useState({});
   const [selectedDate, setSelectedDate] = useState(() => readStoredPlannerDate() || getTodayStr());
   const [monthCursor, setMonthCursor] = useState(() => {
@@ -13973,6 +14214,21 @@ export default function App() {
     };
   }, [authLoading, session, inviteeProfilesFetchKey]);
 
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setChatReadState({});
+      return;
+    }
+    const uid = String(session.user.id);
+    const loaded = loadChatReadState(uid);
+    const cache = loadChatCacheFromStorage();
+    const next = coalesceReadStateWithMessageCache(loaded, cache);
+    if (JSON.stringify(next) !== JSON.stringify(loaded)) {
+      saveChatReadState(uid, next);
+    }
+    setChatReadState(next);
+  }, [session?.user?.id]);
+
   useScrollLock(menuOpen);
   useScrollLock(accountOpen);
   useScrollLock(!!budgetDetailTrip);
@@ -14017,6 +14273,67 @@ export default function App() {
           : activeTab === "destination"
             ? t("nav.search")
             : t("nav.budget");
+
+  const tripsChatIdsKey = useMemo(
+    () =>
+      (trips || [])
+        .map((t) => String(t?.id || ""))
+        .filter(Boolean)
+        .sort()
+        .join(","),
+    [trips]
+  );
+
+  const chatUnreadByTrip = useMemo(() => {
+    const uid = String(session?.user?.id || "");
+    const email = String(session?.user?.email || "")
+      .trim()
+      .toLowerCase();
+    const out = {};
+    for (const t of trips || []) {
+      const tid = String(t.id);
+      const list = (chatMessagesByTrip[tid] || []).slice().sort(compareChatMessagesByTime);
+      out[tid] = countChatUnreadForTrip(list, uid, email, chatReadState[tid]);
+    }
+    return out;
+  }, [trips, chatMessagesByTrip, chatReadState, session?.user?.id, session?.user?.email]);
+
+  const totalChatUnread = useMemo(
+    () => Object.values(chatUnreadByTrip).reduce((a, b) => a + (Number(b) || 0), 0),
+    [chatUnreadByTrip]
+  );
+
+  const markChatThreadRead = useCallback(
+    (tripId, messages) => {
+      const tid = String(tripId || "");
+      if (!tid || !session?.user?.id) return;
+      const sorted = (Array.isArray(messages) ? messages : []).slice().sort(compareChatMessagesByTime);
+      if (sorted.length === 0) return;
+      const last = sorted[sorted.length - 1];
+      const key = { t: String(last.created_at || ""), id: String(last.id || "") };
+      setChatReadState((prev) => {
+        const cur = prev[tid];
+        if (cur && String(cur.t) === key.t && String(cur.id) === key.id) return prev;
+        const next = { ...prev, [tid]: key };
+        saveChatReadState(String(session.user.id), next);
+        return next;
+      });
+    },
+    [session?.user?.id]
+  );
+
+  useEffect(() => {
+    applyTabNotification(totalChatUnread);
+  }, [totalChatUnread]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof document !== "undefined") {
+        document.title = baseDocumentTitle;
+        setFaviconHref("/logo-justtrip.png");
+      }
+    };
+  }, []);
 
   const openPlannerToday = (tripToOpen = null) => {
     const today = getTodayStr();
@@ -14609,6 +14926,83 @@ export default function App() {
   useEffect(() => {
     saveChatCacheToStorage(chatMessagesByTrip);
   }, [chatMessagesByTrip]);
+
+  /** Tous les voyages : charge les messages pour les compteurs, et crée un curseur « lu » seulement si encore absent (historique côté serveur = lu). */
+  useEffect(() => {
+    if (authLoading || !session?.user?.id) return;
+    const rawIds = (tripsChatIdsKey && tripsChatIdsKey.length > 0 ? tripsChatIdsKey.split(",") : []).filter(Boolean);
+    if (rawIds.length === 0) return;
+    const uid = String(session.user.id);
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .in("trip_id", rawIds)
+        .order("created_at", { ascending: true });
+      if (cancelled || error) return;
+      const by = {};
+      for (const row of data || []) {
+        const t = String(row.trip_id);
+        if (!by[t]) by[t] = [];
+        by[t].push(row);
+      }
+      const mergedBy = {};
+      for (const id of rawIds) {
+        const prevR = chatMessagesByTripRef.current[id] || [];
+        mergedBy[id] = mergeChatMessageLists(prevR, by[id] || []);
+      }
+      setChatMessagesByTrip((prev) => {
+        const next = { ...prev };
+        for (const id of rawIds) {
+          const m = mergedBy[id];
+          if (m && m.length) next[id] = m;
+        }
+        return next;
+      });
+      setChatReadState((prev) => {
+        const n = { ...prev };
+        let ch = false;
+        for (const id of rawIds) {
+          if (n[id]) continue;
+          const m = mergedBy[id] || [];
+          if (!m.length) continue;
+          const last = m[m.length - 1];
+          n[id] = { t: String(last.created_at || ""), id: String(last.id || "") };
+          ch = true;
+        }
+        if (ch) saveChatReadState(uid, n);
+        return ch ? n : prev;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, session?.user?.id, tripsChatIdsKey]);
+
+  useEffect(() => {
+    if (authLoading || !session?.user?.id) return;
+    const allowed = new Set(
+      (tripsChatIdsKey && tripsChatIdsKey.length > 0 ? tripsChatIdsKey.split(",") : []).filter(Boolean)
+    );
+    if (allowed.size === 0) return;
+    const channel = supabase
+      .channel("tp-chat-messages-broadcast")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
+        const row = payload.new;
+        const tid = String(row?.trip_id || "");
+        if (!tid || !allowed.has(tid)) return;
+        setChatMessagesByTrip((prev) => {
+          const list = prev[tid] || [];
+          if (list.some((m) => String(m.id) === String(row.id))) return prev;
+          return { ...prev, [tid]: mergeChatMessageLists(list, [row]) };
+        });
+      })
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [authLoading, session?.user?.id, tripsChatIdsKey]);
 
   useEffect(() => {
     const loadChatData = async () => {
@@ -15696,6 +16090,15 @@ export default function App() {
       delete next[idStr];
       return next;
     });
+    if (session?.user?.id) {
+      setChatReadState((prev) => {
+        if (!prev[idStr]) return prev;
+        const next = { ...prev };
+        delete next[idStr];
+        saveChatReadState(String(session.user.id), next);
+        return next;
+      });
+    }
     if (String(chatTripId) === idStr) {
       setChatTripId("");
       setChatMessages([]);
@@ -15911,7 +16314,7 @@ export default function App() {
                     </div>
                     <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
                       {(() => {
-                        const rawList = participantsForAvatarRow(selectedTrip);
+                        const rawList = stackOrderedAvatarRaws(selectedTrip, session);
                         const displayNameFn = (p) =>
                           participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
                         const maxStack = 5;
@@ -15921,7 +16324,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setPlannerParticipantsListOpen(true)}
-                            className="group flex shrink-0 items-center rounded-full py-0.5 pl-0.5 pr-1 transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+                            className="group flex shrink-0 items-center overflow-visible rounded-full py-0.5 pl-0.5 pr-1 transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                             aria-label={t("planner.participantsListAria")}
                           >
                             <div className="flex items-center">
@@ -16098,6 +16501,8 @@ export default function App() {
             votes={activityVotes}
             onVote={voteActivity}
             peerProfileByEmail={inviteeProfileByEmail}
+            unreadByTrip={chatUnreadByTrip}
+            onMarkThreadRead={markChatThreadRead}
           />
         </div>
       </main>
@@ -16110,6 +16515,12 @@ export default function App() {
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
+            const chatTabUnread = tab.id === "chat" && totalChatUnread > 0 ? totalChatUnread : 0;
+            const labelBase = String(tab.label);
+            const labelOut =
+              chatTabUnread > 0
+                ? `${labelBase}, ${formatUnreadCountBadge(chatTabUnread) || chatTabUnread} non lus`
+                : labelBase;
             return (
               <button
                 key={tab.id}
@@ -16125,14 +16536,24 @@ export default function App() {
                   }
                   setActiveTab(tab.id);
                 }}
-                className={`flex min-h-[2.75rem] items-center justify-center rounded-[2rem] px-1 py-1.5 text-xs ring-0 outline-none sm:min-h-0 sm:px-2 sm:py-2.5 ${
+                className={`relative flex min-h-[2.75rem] items-center justify-center rounded-[2rem] px-1 py-1.5 text-xs ring-0 outline-none sm:min-h-0 sm:px-2 sm:py-2.5 ${
                   active ? "text-white shadow-[0_2px_8px_rgba(15,23,42,0.18)]" : "text-slate-700 hover:bg-slate-100"
                 }`}
                 style={active ? { backgroundColor: ACCENT } : undefined}
-                title={String(tab.label)}
-                aria-label={String(tab.label)}
+                title={labelOut}
+                aria-label={labelOut}
               >
-                <Icon size={20} className="shrink-0" aria-hidden />
+                <span className="relative inline-flex">
+                  <Icon size={20} className="shrink-0" aria-hidden />
+                  {chatTabUnread > 0 ? (
+                    <span
+                      className="absolute -right-1.5 -top-1 min-w-[1rem] rounded-full bg-rose-600 px-1 text-[9px] font-bold leading-4 text-white ring-1 ring-white tabular-nums"
+                      aria-hidden
+                    >
+                      {formatUnreadCountBadge(chatTabUnread)}
+                    </span>
+                  ) : null}
+                </span>
               </button>
             );
           })}
