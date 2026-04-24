@@ -570,25 +570,33 @@ function canonicalParticipants(participantsInput, invitedEmailsInput) {
   return ["Moi", ...invited];
 }
 
-/** Pastilles invités (planning) : sans invited_joined_emails (héritage) = tous les invited_emails ; sinon seulement les comptes ayant rejoint. */
+/** E-mails d’invités visibles en pastille : seulement ceux ayant rejoint (lien + compte) — @see invited_joined_emails. */
 function invitedEmailsForAvatarStrip(trip) {
   const all = Array.isArray(trip?.invited_emails)
     ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
   const joined = trip?.invited_joined_emails;
-  if (!Array.isArray(joined)) return all;
+  if (!Array.isArray(joined)) return [];
   const jset = new Set(joined.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
   return all.filter((e) => jset.has(String(e).trim().toLowerCase()));
 }
 
-/** Pastilles participants (chat, etc.) : même règle que invitedEmailsForAvatarStrip pour les e-mails. */
+/**
+ * Pastilles participants (calendrier, chat, liste) : « Moi » + invités e-mail seulement après inscription
+ * (présents dans invited_joined_emails). Sans cette liste côté base, on n’affiche pas les e-mails invités
+ * (seulement Moi + libellés non e-mail s’il en reste).
+ */
 function participantsForAvatarRow(trip) {
-  const legacy = !Array.isArray(trip?.invited_joined_emails);
   const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
-  if (legacy) return parts;
-  const jset = new Set(
-    trip.invited_joined_emails.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean)
-  );
+  const joined = trip?.invited_joined_emails;
+  if (!Array.isArray(joined)) {
+    return parts.filter((p) => {
+      const s = String(p || "").trim();
+      if (s.toLowerCase() === "moi") return true;
+      return !isValidEmail(s);
+    });
+  }
+  const jset = new Set(joined.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
   return parts.filter((p) => {
     const s = String(p || "").trim();
     if (s.toLowerCase() === "moi") return true;
@@ -791,30 +799,67 @@ function isParticipantRawCurrentUser(raw, session) {
   return Boolean(em && r === em);
 }
 
+/**
+ * Profil public d’un autre membre (invité ayant rejoint) — alimenté par get_invitee_public_profiles_for_trip.
+ * @param {Record<string, { avatarUrl?: string, firstName?: string, lastName?: string, initialsBg?: string }>} map
+ */
+function pickServerPeerProfile(map, raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s || s === "moi" || !isValidEmail(s)) return null;
+  const p = map && map[s];
+  if (!p || typeof p !== "object") return null;
+  return p;
+}
+
 function currentUserProfileAvatarUrl(session) {
   return String(session?.user?.user_metadata?.avatar_url || "").trim();
 }
 
 /**
  * Pastille ronde (chat, listes) : photo profil si c’est l’utilisateur et qu’une URL est enregistrée, sinon initiales.
+ * Si `serverPeerProfile` est fourni (invité connecté, RPC), photo + initiales depuis le serveur.
  * @param {"palette"|"none"} [initialsFill="palette"] — `none` désactive la palette (rare ; éviter les fonds gris en parallèle).
  */
-function ParticipantCircleAvatar({ raw, session, displayLabel, className, initialsFill = "palette" }) {
+function ParticipantCircleAvatar({
+  raw,
+  session,
+  displayLabel,
+  className,
+  initialsFill = "palette",
+  serverPeerProfile = null,
+}) {
   const isMe = isParticipantRawCurrentUser(raw, session);
-  const photoUrl = isMe ? currentUserProfileAvatarUrl(session) : "";
+  const peer = !isMe && serverPeerProfile ? serverPeerProfile : null;
+  const photoUrl = isMe ? currentUserProfileAvatarUrl(session) : String(peer?.avatarUrl || "").trim();
   const [imgBroken, setImgBroken] = useState(false);
   useEffect(() => {
     setImgBroken(false);
-  }, [photoUrl]);
-  const initials = initialsFromLabel(displayLabel);
+  }, [photoUrl, isMe, raw, peer]);
+  const labelForInitials = (() => {
+    if (peer) {
+      const f = String(peer.firstName || "").trim();
+      const l = String(peer.lastName || "").trim();
+      const full = `${f} ${l}`.trim();
+      if (full) return full;
+    }
+    return displayLabel;
+  })();
+  const initials = initialsFromLabel(labelForInitials);
   const showImg = Boolean(photoUrl && !imgBroken);
-  const paletteBg =
-    !showImg && initialsFill === "palette" ? initialsAvatarBgForParticipant(raw, session) : null;
+  const peerHex =
+    peer && /^#[0-9A-Fa-f]{6}$/i.test(String(peer.initialsBg || "").trim())
+      ? String(peer.initialsBg).trim()
+      : null;
+  const paletteBg = (() => {
+    if (showImg || initialsFill !== "palette") return null;
+    if (peerHex) return peerHex;
+    return initialsAvatarBgForParticipant(raw, session);
+  })();
   const initialsInk = paletteBg ? textColorOnInitialsBg(paletteBg) : undefined;
   return (
     <span
       className={className}
-      title={String(displayLabel)}
+      title={String(labelForInitials || displayLabel)}
       style={paletteBg ? { backgroundColor: paletteBg, color: initialsInk } : undefined}
     >
       {showImg ? (
@@ -8102,7 +8147,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
 }
 
 /** Liste lecture seule des participants (planning) — ouverte depuis la pile d’avatars sur la carte « Voyage actif ». */
-function PlannerParticipantsListModal({ open, onClose, trip, session }) {
+function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfileByEmail = {} }) {
   useScrollLock(open);
   const { t } = useI18n();
   if (!open || !trip) return null;
@@ -8161,6 +8206,7 @@ function PlannerParticipantsListModal({ open, onClose, trip, session }) {
                   <ParticipantCircleAvatar
                     raw={raw}
                     session={session}
+                    serverPeerProfile={pickServerPeerProfile(peerProfileByEmail, rawStr)}
                     displayLabel={label}
                     className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-xs font-normal"
                   />
@@ -13286,6 +13332,7 @@ function ChatHubView({
   onSendMessage,
   votes,
   onVote,
+  peerProfileByEmail = {},
 }) {
   const { t, language } = useI18n();
   const currentUserDisplayName = getCurrentUserDisplayName(session);
@@ -13390,6 +13437,10 @@ function ChatHubView({
                               key={`${String(trip.id)}-${String(rawParticipant)}`}
                               raw={rawParticipant}
                               session={session}
+                              serverPeerProfile={pickServerPeerProfile(
+                                peerProfileByEmail,
+                                String(rawParticipant)
+                              )}
                               displayLabel={label}
                               className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-white/45"
                             />
@@ -13506,6 +13557,7 @@ function ChatHubView({
                           key={`active-${String(p)}`}
                           raw={p}
                           session={session}
+                          serverPeerProfile={pickServerPeerProfile(peerProfileByEmail, String(p))}
                           displayLabel={label}
                           className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-slate-200/70"
                         />
@@ -13802,6 +13854,26 @@ export default function App() {
     },
     [session, t]
   );
+  const inviteSentToastTimerRef = useRef(0);
+  const [inviteSentToast, setInviteSentToast] = useState(null);
+  const showInviteSentToast = useCallback(
+    (count) => {
+      const n = Math.max(1, Math.floor(Number(count) || 1));
+      const message = n <= 1 ? t("toasts.inviteSent") : t("toasts.inviteSentMany");
+      window.clearTimeout(inviteSentToastTimerRef.current);
+      setInviteSentToast({ id: Date.now(), message });
+      inviteSentToastTimerRef.current = window.setTimeout(() => {
+        setInviteSentToast(null);
+      }, 4000);
+    },
+    [t]
+  );
+  useEffect(
+    () => () => {
+      window.clearTimeout(inviteSentToastTimerRef.current);
+    },
+    []
+  );
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
   /** Monte le composant Recherche dès le départ pour que la vidéo et le DOM soient prêts. */
@@ -13812,6 +13884,10 @@ export default function App() {
   const [tripDateConflictTrips, setTripDateConflictTrips] = useState([]);
 
   const [trips, setTrips] = useState([]);
+  /** e-mail (lower) -> profil public invité rejoint (RPC) pour avatars. */
+  const [inviteeProfileByEmail, setInviteeProfileByEmail] = useState(
+    /** @type {Record<string, { avatarUrl: string, firstName: string, lastName: string, initialsBg: string }>} */ ({})
+  );
   const [activities, setActivities] = useState([]);
   const [chatActivities, setChatActivities] = useState([]);
   const [selectedTripId, setSelectedTripId] = useState(() => readStoredSelectedTripId());
@@ -13835,6 +13911,67 @@ export default function App() {
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
   const [plannerParticipantsListOpen, setPlannerParticipantsListOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
+
+  const inviteeProfilesFetchKey = useMemo(
+    () =>
+      (trips || [])
+        .map((t) => {
+          const id = String(t?.id || "");
+          const joined = Array.isArray(t?.invited_joined_emails)
+            ? t.invited_joined_emails
+                .map((e) => String(e).toLowerCase().trim())
+                .filter(Boolean)
+                .sort()
+                .join(",")
+            : "";
+          return `${id}:${joined}`;
+        })
+        .sort()
+        .join("|"),
+    [trips]
+  );
+
+  useEffect(() => {
+    if (authLoading || !session?.user) {
+      setInviteeProfileByEmail({});
+      return undefined;
+    }
+    const targets = (trips || []).filter(
+      (t) => t?.id && Array.isArray(t.invited_joined_emails) && t.invited_joined_emails.length > 0
+    );
+    if (targets.length === 0) {
+      setInviteeProfileByEmail({});
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const next = {};
+      const results = await Promise.all(
+        targets.map((trip) => supabase.rpc("get_invitee_public_profiles_for_trip", { p_trip_id: trip.id }))
+      );
+      for (const { data, error } of results) {
+        if (error) continue;
+        for (const row of data || []) {
+          if (!row || typeof row !== "object") continue;
+          const r = row;
+          const k = String(r.email || "")
+            .trim()
+            .toLowerCase();
+          if (!k) continue;
+          next[k] = {
+            avatarUrl: String(r.avatar_url || "").trim(),
+            firstName: String(r.first_name || "").trim(),
+            lastName: String(r.last_name || "").trim(),
+            initialsBg: String(r.initials_avatar_bg || "").trim(),
+          };
+        }
+      }
+      if (!cancelled) setInviteeProfileByEmail(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, session, inviteeProfilesFetchKey]);
 
   useScrollLock(menuOpen);
   useScrollLock(accountOpen);
@@ -14535,8 +14672,35 @@ export default function App() {
         setActivityVotes(activityVotesLocal[chatTripId] || []);
       }
     };
-    loadChatData();
-  }, [chatTripId, chatMessagesLocal, activityVotesLocal]);
+    void loadChatData();
+
+    if (!chatTripId || !session) {
+      return undefined;
+    }
+
+    const filterId = String(chatTripId);
+    const channel = supabase
+      .channel(`tp-chat-messages-${filterId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "chat_messages", filter: `trip_id=eq.${filterId}` },
+        () => {
+          void loadChatData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "activity_votes", filter: `trip_id=eq.${filterId}` },
+        () => {
+          void loadChatData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [chatTripId, chatMessagesLocal, activityVotesLocal, session]);
 
   const sortChatMessagesList = (list) =>
     (Array.isArray(list) ? list : []).slice().sort((a, b) =>
@@ -14864,7 +15028,7 @@ export default function App() {
             );
           }
 
-          let inviteNotice = "";
+          let inviteErrorMsg = "";
           const inviteList = Array.isArray(body.invited_emails)
             ? [
                 ...new Set(
@@ -14883,19 +15047,21 @@ export default function App() {
               fixedUrl: body.fixed_url,
             });
             if (!inv.skipped) {
-              inviteNotice = !inv.ok
-                ? inv.error || NOTICE_INVITE_EMAIL_FAILED
-                : `${inviteList.length} invitation(s) envoyée(s).`;
+              if (inv.ok) {
+                showInviteSentToast(inviteList.length);
+              } else {
+                inviteErrorMsg = inv.error || NOTICE_INVITE_EMAIL_FAILED;
+              }
             }
           }
 
           setTripModalOpen(false);
           if (activitiesInsertOk) {
-            setNotice(inviteNotice);
-          } else if (inviteNotice) {
+            setNotice(inviteErrorMsg);
+          } else if (inviteErrorMsg) {
             setNotice((prev) => {
               const base = String(prev || "").trim();
-              return base ? `${base} — ${inviteNotice}` : inviteNotice;
+              return base ? `${base} — ${inviteErrorMsg}` : inviteErrorMsg;
             });
           }
 
@@ -15337,7 +15503,8 @@ export default function App() {
           fixedUrl: String(tricountTrip?.fixed_url || ""),
         });
         if (inv.ok && !inv.skipped) {
-          setNotice(`${newlyAddedInviteEmails.length} participant(s) invité(s) par e-mail.`);
+          showInviteSentToast(newlyAddedInviteEmails.length);
+          setNotice("");
         } else if (!inv.skipped) {
           setNotice(`Participants enregistrés. ${inv.error || NOTICE_INVITE_EMAIL_FAILED}`);
         } else {
@@ -15479,7 +15646,8 @@ export default function App() {
               fixedUrl: nextFixedUrl,
             });
             if (inv.ok && !inv.skipped) {
-              setNotice(`Voyage modifié. ${newlyAddedInvites.length} invitation(s) envoyée(s).`);
+              showInviteSentToast(newlyAddedInvites.length);
+              setNotice("");
             } else if (!inv.skipped) {
               setNotice(`Voyage modifié. ${inv.error || NOTICE_INVITE_EMAIL_FAILED}`);
             } else {
@@ -15629,6 +15797,23 @@ export default function App() {
           "radial-gradient(circle at 18% -8%, #f4f8fc 0%, #eef4fa 40%, #e3edf6 100%)",
       }}
     >
+      {typeof document !== "undefined" && inviteSentToast
+        ? createPortal(
+            <div
+              className="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom,0px)+0.5rem)] left-1/2 z-[200] w-[min(100%-1.5rem,22rem)] -translate-x-1/2 px-2"
+              role="status"
+              aria-live="polite"
+            >
+              <div
+                className="pointer-events-auto rounded-2xl border border-slate-200/90 bg-white/95 px-4 py-3 text-center text-sm font-semibold text-slate-900 shadow-[0_18px_48px_rgba(2,6,23,0.2)] ring-1 ring-slate-200/60 backdrop-blur-sm"
+                key={inviteSentToast.id}
+              >
+                {inviteSentToast.message}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
       <main className="mx-auto mt-5 w-full min-w-0 max-w-6xl px-3 sm:px-5">
@@ -15752,6 +15937,7 @@ export default function App() {
                                   <ParticipantCircleAvatar
                                     raw={raw}
                                     session={session}
+                                    serverPeerProfile={pickServerPeerProfile(inviteeProfileByEmail, String(raw))}
                                     displayLabel={displayNameFn(raw)}
                                     className="flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
                                   />
@@ -15911,6 +16097,7 @@ export default function App() {
             onSendMessage={sendChatMessage}
             votes={activityVotes}
             onVote={voteActivity}
+            peerProfileByEmail={inviteeProfileByEmail}
           />
         </div>
       </main>
@@ -15991,6 +16178,7 @@ export default function App() {
         onClose={() => setPlannerParticipantsListOpen(false)}
         trip={selectedTrip}
         session={session}
+        peerProfileByEmail={inviteeProfileByEmail}
       />
       <InviteEmailsModal
         open={plannerInviteOpen && !!selectedTrip}

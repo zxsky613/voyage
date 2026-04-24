@@ -19,6 +19,10 @@ export const translations = {
       termsOfService: "Conditions générales",
       legalNavAria: "Documents légaux et confidentialité",
     },
+    toasts: {
+      inviteSent: "Invitation envoyée.",
+      inviteSentMany: "Invitations envoyées.",
+    },
     menu: {
       title: "Menu",
       closeMenu: "Fermer le menu",
@@ -532,6 +536,10 @@ export const translations = {
       termsOfService: "Terms of use",
       legalNavAria: "Legal documents and privacy",
     },
+    toasts: {
+      inviteSent: "Invitation sent.",
+      inviteSentMany: "Invitations sent.",
+    },
     menu: {
       title: "Menu",
       closeMenu: "Close menu",
@@ -1034,6 +1042,10 @@ export const translations = {
       legalNotice: "Impressum",
       termsOfService: "Nutzungsbedingungen",
       legalNavAria: "Rechtliche Hinweise und Datenschutz",
+    },
+    toasts: {
+      inviteSent: "Einladung gesendet.",
+      inviteSentMany: "Einladungen gesendet.",
     },
     menu: {
       title: "Menü",
@@ -1547,6 +1559,10 @@ export const translations = {
       termsOfService: "Términos de uso",
       legalNavAria: "Documentos legales y privacidad",
     },
+    toasts: {
+      inviteSent: "Invitación enviada.",
+      inviteSentMany: "Invitaciones enviadas.",
+    },
     menu: {
       title: "Menú",
       closeMenu: "Cerrar menú",
@@ -2058,6 +2074,10 @@ export const translations = {
       termsOfService: "Condizioni d'uso",
       legalNavAria: "Documenti legali e privacy",
     },
+    toasts: {
+      inviteSent: "Invito inviato.",
+      inviteSentMany: "Inviti inviati.",
+    },
     menu: {
       title: "Menu",
       closeMenu: "Chiudi menu",
@@ -2568,6 +2588,10 @@ export const translations = {
       legalNotice: "法律声明",
       termsOfService: "使用条款",
       legalNavAria: "法律文件与隐私",
+    },
+    toasts: {
+      inviteSent: "邀请已发送。",
+      inviteSentMany: "邀请已发送。",
     },
     menu: {
       title: "菜单",

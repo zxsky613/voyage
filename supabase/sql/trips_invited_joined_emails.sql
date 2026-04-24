@@ -26,8 +26,7 @@ BEGIN
       WHEN v_email = ANY (
         SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_joined_emails, ARRAY[]::text[])) AS x
       ) THEN t.invited_joined_emails
-      WHEN t.invited_joined_emails IS NULL THEN ARRAY[v_email]::text[]
-      ELSE t.invited_joined_emails || v_email::text
+      ELSE array_append(COALESCE(t.invited_joined_emails, ARRAY[]::text[]), v_email)
     END
   WHERE v_email = ANY (
     SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
