@@ -728,25 +728,30 @@ function canonicalParticipants(participantsInput, invitedEmailsInput) {
   return ["Moi", ...invited];
 }
 
-/** E-mails d’invités visibles en pastille : seulement ceux ayant rejoint (lien + compte) — @see invited_joined_emails. */
+/** E-mails d’invités visibles en pastille — @see `trips_invited_joined_emails` (NULL = tous les invités). */
 function invitedEmailsForAvatarStrip(trip) {
   const all = Array.isArray(trip?.invited_emails)
     ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
   const joined = trip?.invited_joined_emails;
+  if (joined == null) {
+    return all.filter((e) => isValidEmail(String(e).trim()));
+  }
   if (!Array.isArray(joined)) return [];
   const jset = new Set(joined.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
   return all.filter((e) => jset.has(String(e).trim().toLowerCase()));
 }
 
 /**
- * Pastilles participants (calendrier, chat, liste) : « Moi » + invités e-mail seulement après inscription
- * (présents dans invited_joined_emails). Sans cette liste côté base, on n’affiche pas les e-mails invités
- * (seulement Moi + libellés non e-mail s’il en reste).
+ * Pastilles participants (calendrier, bandeau voyage) : NULL sur invited_joined_emails = héritage
+ * (tous les invited_emails) ; sinon sous-ensemble ayant rejoint.
  */
 function participantsForAvatarRow(trip) {
   const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
   const joined = trip?.invited_joined_emails;
+  if (joined == null) {
+    return parts;
+  }
   if (!Array.isArray(joined)) {
     return parts.filter((p) => {
       const s = String(p || "").trim();
@@ -1860,6 +1865,8 @@ function authHasInviteLink() {
 const TEXT = "#0B1220";
 /** Bleu logo Justtrip (aligné sur le fond du PNG). */
 const ACCENT = "#002B4F";
+/** Nuance plus foncée (dégradés boutons, coh. OnboardingTour). */
+const ACCENT_MID = "#001F3B";
 const slots = ["09:30", "14:00", "18:30", "21:00"];
 
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
@@ -7376,9 +7383,10 @@ function AuthView() {
               <div className="px-5 pb-8 pt-4 sm:px-6 sm:pt-5">
                 {/* Icône + titre */}
                 <div className="mb-5 flex items-center gap-3.5">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-2xl shadow-sm">
-                    ✈️
-                  </span>
+                  <JusttripBrand
+                    className="!h-12 !max-h-12 w-auto shrink-0 sm:!h-12 sm:!max-h-12"
+                    size="md"
+                  />
                   <div className="min-w-0">
                     <p className="text-[10px] font-normal uppercase tracking-[0.2em] text-slate-400">
                       {t("auth.inviteTitle")}
@@ -7445,7 +7453,8 @@ function AuthView() {
                   <button
                     type="button"
                     onClick={() => setInviteAccepted(true)}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+                    style={{ background: `linear-gradient(90deg, ${ACCENT} 0%, ${ACCENT_MID} 100%)` }}
                   >
                     <span>🎉</span>
                     {t("auth.inviteAccept")}
@@ -7499,7 +7508,8 @@ function AuthView() {
                     type="button"
                     onClick={completeInviteSignup}
                     disabled={loading}
-                    className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                    className="w-full rounded-xl py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                    style={{ background: `linear-gradient(90deg, ${ACCENT} 0%, ${ACCENT_MID} 100%)` }}
                   >
                     {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
                   </button>
@@ -14158,14 +14168,17 @@ export default function App() {
       (trips || [])
         .map((t) => {
           const id = String(t?.id || "");
-          const joined = Array.isArray(t?.invited_joined_emails)
-            ? t.invited_joined_emails
-                .map((e) => String(e).toLowerCase().trim())
-                .filter(Boolean)
-                .sort()
-                .join(",")
-            : "";
-          return `${id}:${joined}`;
+          const j = t?.invited_joined_emails;
+          let key;
+          if (j == null) {
+            const inv = Array.isArray(t?.invited_emails) ? t.invited_emails : [];
+            key = `legacy:${[...new Set(inv.map((e) => String(e).toLowerCase().trim()).filter(Boolean))].sort().join(",")}`;
+          } else if (Array.isArray(j)) {
+            key = `joined:${[...new Set(j.map((e) => String(e).toLowerCase().trim()).filter(Boolean))].sort().join(",")}`;
+          } else {
+            key = "invalid";
+          }
+          return `${id}:${key}`;
         })
         .sort()
         .join("|"),
@@ -14177,9 +14190,16 @@ export default function App() {
       setInviteeProfileByEmail({});
       return undefined;
     }
-    const targets = (trips || []).filter(
-      (t) => t?.id && Array.isArray(t.invited_joined_emails) && t.invited_joined_emails.length > 0
-    );
+    const targets = (trips || []).filter((t) => {
+      if (!t?.id) return false;
+      const j = t?.invited_joined_emails;
+      if (j == null) {
+        return (
+          Array.isArray(t?.invited_emails) && t.invited_emails.some((e) => isValidEmail(String(e || "").trim()))
+        );
+      }
+      return Array.isArray(j) && j.length > 0;
+    });
     if (targets.length === 0) {
       setInviteeProfileByEmail({});
       return undefined;
@@ -14199,12 +14219,23 @@ export default function App() {
             .trim()
             .toLowerCase();
           if (!k) continue;
-          next[k] = {
+          const incoming = {
             avatarUrl: String(r.avatar_url || "").trim(),
             firstName: String(r.first_name || "").trim(),
             lastName: String(r.last_name || "").trim(),
             initialsBg: String(r.initials_avatar_bg || "").trim(),
           };
+          const cur = next[k];
+          if (!cur) {
+            next[k] = incoming;
+          } else {
+            next[k] = {
+              avatarUrl: incoming.avatarUrl || cur.avatarUrl,
+              firstName: incoming.firstName || cur.firstName,
+              lastName: incoming.lastName || cur.lastName,
+              initialsBg: incoming.initialsBg || cur.initialsBg,
+            };
+          }
         }
       }
       if (!cancelled) setInviteeProfileByEmail(next);

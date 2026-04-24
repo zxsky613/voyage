@@ -80,13 +80,25 @@ BEGIN
   RETURN QUERY
   SELECT
     lower(trim(u.email::text))::text AS email,
-    (NULLIF(trim(u.raw_user_meta_data->>'avatar_url'), ''))::text AS avatar_url,
+    (
+      COALESCE(
+        NULLIF(trim(u.raw_user_meta_data->>'avatar_url'), ''),
+        NULLIF(trim(u.raw_user_meta_data->>'picture'), ''),
+        NULLIF(trim(u.raw_user_meta_data->>'avatar'), '')
+      )
+    )::text AS avatar_url,
     (NULLIF(trim(u.raw_user_meta_data->>'first_name'), ''))::text AS first_name,
     (NULLIF(trim(u.raw_user_meta_data->>'last_name'), ''))::text AS last_name,
     (NULLIF(trim(u.raw_user_meta_data->>'initials_avatar_bg'), ''))::text AS initials_avatar_bg
   FROM auth.users u
   WHERE lower(trim(u.email::text)) IN (
-    SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_joined_emails, ARRAY[]::text[])) AS x
+    SELECT lower(trim(x::text))
+    FROM unnest(
+      CASE
+        WHEN t.invited_joined_emails IS NULL THEN COALESCE(t.invited_emails, ARRAY[]::text[])
+        ELSE t.invited_joined_emails
+      END
+    ) AS x
   );
 END;
 $$;
