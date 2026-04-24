@@ -6869,16 +6869,16 @@ function AuthView() {
               <div className="flex shrink-0 flex-col items-center gap-0 leading-none">
                 <div className="relative z-[2] flex min-w-0 shrink-0 justify-center pb-1 sm:pb-2">
                   <div
-                    className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[min(42vw,20vmin,7rem)] w-[min(42vw,20vmin,7rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/28 blur-3xl sm:h-[min(36vw,18vmin,7.5rem)] sm:w-[min(36vw,18vmin,7.5rem)]"
+                    className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[min(46vw,22vmin,8rem)] w-[min(46vw,22vmin,8rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/28 blur-3xl sm:h-[min(40vw,20vmin,8.5rem)] sm:w-[min(40vw,20vmin,8.5rem)]"
                     aria-hidden
                   />
                   <img
                     src="/logo-justtrip.png"
                     alt={t("auth.logoAlt")}
-                    width={160}
-                    height={160}
+                    width={180}
+                    height={180}
                     decoding="async"
-                    className="relative z-[1] block h-auto w-auto max-h-[min(16vh,20vmin,4.5rem)] max-w-[min(52vw,28vmin,6rem)] rounded-[1.35rem] object-contain object-center align-top [filter:drop-shadow(0_0_10px_rgba(255,255,255,0.8))_drop-shadow(0_0_22px_rgba(255,255,255,0.4))_drop-shadow(0_2px_8px_rgba(0,0,0,0.28))] sm:max-h-[min(18vh,18vmin,5.25rem)] sm:max-w-[min(44vw,24vmin,6.75rem)] sm:rounded-[1.65rem] sm:[filter:drop-shadow(0_0_12px_rgba(255,255,255,0.85))_drop-shadow(0_0_26px_rgba(255,255,255,0.38))_drop-shadow(0_2px_10px_rgba(0,0,0,0.26))] md:max-h-[min(18vh,5.75rem)] md:max-w-[min(36vw,7.25rem)] md:rounded-[1.85rem]"
+                    className="relative z-[1] block h-auto w-auto max-h-[min(18vh,22vmin,5.25rem)] max-w-[min(56vw,30vmin,6.75rem)] rounded-[1.5rem] object-contain object-center align-top [filter:drop-shadow(0_0_10px_rgba(255,255,255,0.8))_drop-shadow(0_0_22px_rgba(255,255,255,0.4))_drop-shadow(0_2px_8px_rgba(0,0,0,0.28))] sm:max-h-[min(20vh,20vmin,6rem)] sm:max-w-[min(48vw,26vmin,7.5rem)] sm:rounded-[1.85rem] sm:[filter:drop-shadow(0_0_12px_rgba(255,255,255,0.85))_drop-shadow(0_0_26px_rgba(255,255,255,0.38))_drop-shadow(0_2px_10px_rgba(0,0,0,0.26))] md:max-h-[min(20vh,6.5rem)] md:max-w-[min(38vw,8rem)] md:rounded-[2rem]"
                   />
                 </div>
               </div>
