@@ -1887,9 +1887,11 @@ const CITY_HERO_IMAGE_URLS = Object.freeze({
 
 const CITY_HERO_IMAGE_URL_LISTS = Object.freeze({
   "los angeles": [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Los_Angeles_from_Griffith_Observatory_%28cropped%29.jpg/1920px-Los_Angeles_from_Griffith_Observatory_%28cropped%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Los_Angeles_from_Griffith_Observatory_%28cropped%29.jpg/1280px-Los_Angeles_from_Griffith_Observatory_%28cropped%29.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/f/f5/Los_Angeles_from_Griffith_Observatory_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Los_Angeles_Panorama_from_Griffith_Observatory_2013.jpg/1920px-Los_Angeles_Panorama_from_Griffith_Observatory_2013.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Hollywood_Sign.jpg/1920px-Hollywood_Sign.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg/1920px-Griffith_Observatory%2C_Los_Angeles_2011.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg/1280px-Griffith_Observatory%2C_Los_Angeles_2011.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg",
   ],
 });
 

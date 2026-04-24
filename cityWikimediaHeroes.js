@@ -149,6 +149,12 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   lille: [
     "https://upload.wikimedia.org/wikipedia/commons/b/bd/Grand-Place_Lille_panorama.jpg",
   ],
+  /** Panorama depuis Griffith + Hollywood Sign — reconnaissance immédiate (pas plage générique). */
+  "los angeles": [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Los_Angeles_Panorama_from_Griffith_Observatory_2013.jpg/1920px-Los_Angeles_Panorama_from_Griffith_Observatory_2013.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Hollywood_Sign.jpg/1920px-Hollywood_Sign.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg/1920px-Griffith_Observatory%2C_Los_Angeles_2011.jpg",
+  ],
   monaco: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Panorama_Monaco.jpg/1920px-Panorama_Monaco.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Panorama_Monaco_%28cropped%29.jpg/1920px-Panorama_Monaco_%28cropped%29.jpg",
@@ -181,16 +187,18 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg/1920px-Summer_evening_in_Bern%2C_Switzerland_%2855119784447%29.jpg",
   ],
   lisbonne: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Tram_28_Lisbon_Portuguese.jpg/1920px-Tram_28_Lisbon_Portuguese.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
   ],
   lisbon: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Tram_28_Lisbon_Portuguese.jpg/1920px-Tram_28_Lisbon_Portuguese.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg/1920px-View_from_the_MAAT_Rooftop_Toward_Ponte_25_de_Abril_and_the_Lisbon_Waterfront_%2854702003134%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg/1920px-Alfama_Rooftops_and_Tagus_River_View%2C_Lisbon_%2854733828355%29.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Lisboa_-_Torre_de_Bel%C3%A9m.jpg/1920px-Lisboa_-_Torre_de_Bel%C3%A9m.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Lisbon_Day_Panoramic.jpg/1920px-Lisbon_Day_Panoramic.jpg",
   ],
   porto: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Porto-Panorama_de_Ribeira-Rabelos-20120910.jpg/1920px-Porto-Panorama_de_Ribeira-Rabelos-20120910.jpg",
