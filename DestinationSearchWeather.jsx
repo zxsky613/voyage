@@ -457,9 +457,9 @@ export function DestinationSearchWeather({ coordinates = null, geocodeQuery = ""
                     <WeatherGlyphFlat code={row.code} size={43} />
                   </WeatherIconTray>
                   <p className="mt-2 text-[13px] font-bold tabular-nums leading-none tracking-tight text-white">
-                    {hi}°
-                    <span className="font-semibold text-slate-300">/</span>
                     <span className="font-semibold text-slate-200">{lo}°</span>
+                    <span className="font-semibold text-slate-300">/</span>
+                    {hi}°
                   </p>
                   <p
                     className="mt-auto pt-2 text-[11px] font-bold tabular-nums leading-none tracking-tight"
@@ -471,9 +471,6 @@ export function DestinationSearchWeather({ coordinates = null, geocodeQuery = ""
               );
             })}
           </div>
-          <p className="mt-4 border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-400">
-            {t("destination.weatherHint")}
-          </p>
         </>
       ) : null}
     </section>
