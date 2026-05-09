@@ -1,0 +1,9 @@
+# Cohérence script / langue d’interface (léger)
+
+Lorsque la langue d’interface est en **alphabet latin** (`fr`, `en`, `de`, `es`, `it`), tout texte affiché (conseils, activités, pastilles) ne doit pas mélanger **japonais, chinois, coréen, thaï, lao** en caractères natifs.
+
+- **Client** : `filterTipLinesForUiLang` et `filterSuggestedActivitiesForUiLang` dans `placeGuards.js` ; `ensureMinSuggestedActivities` applique le filtre activités.
+- **Serveur** : `suggestionsBundleContainsForbiddenNonLatinScript` + second passage dans `api/groq/suggestions.js`, `api/gemini/suggestions.js` et le plugin dev.
+- **Tests** : `npm test` exécute `placeGuards.test.mjs` et `api/_helpers.script.test.mjs`.
+
+Éviter d’afficher ou de fusionner des chaînes LLM sans passer par ces filtres pour les chemins lieu/conseils/activités.

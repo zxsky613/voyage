@@ -3,6 +3,7 @@ import {
   runGroqJson, countInclusiveTripDays, resolveUiLanguage,
   langRuleParagraph, formatPrefsForPrompt, budgetRangeHint, formatError,
   buildItineraryEnrichmentBlock,
+  dedupeItineraryDayIdeas,
 } from "../_helpers.js";
 
 export default async function handler(req, res) {
@@ -59,11 +60,12 @@ export default async function handler(req, res) {
     "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
     "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
     "Le champ costEur est toujours un entier JSON. " +
-    "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
+    "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+    "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
 
   try {
     const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
-    const list = Array.isArray(data?.dayIdeas) ? data.dayIdeas : [];
+    const list = dedupeItineraryDayIdeas(Array.isArray(data?.dayIdeas) ? data.dayIdeas : [], uiLang);
     sendJson(res, 200, { ok: true, data: { dayIdeas: list, tripDays: days, startDate, endDate } });
   } catch (e) {
     sendJson(res, 502, { error: formatError(e) });

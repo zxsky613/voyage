@@ -1,6 +1,9 @@
 import {
   handleCors, sendJson, parseBody, getGroqKey,
   runGroqJson, resolveUiLanguage, langRuleParagraph, formatError,
+  buildProperNamesScriptConsistencyRule,
+  tipsContainForbiddenNonLatinScript,
+  buildTipsRewriteRetryInstruction,
 } from "../_helpers.js";
 
 export default async function handler(req, res) {
@@ -21,12 +24,24 @@ export default async function handler(req, res) {
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
     `{"tips":{"do":["conseil1","conseil2","conseil3"],"dont":["piege1","piege2","piege3"]}}\n` +
     `"do" : 3 conseils pratiques SPÉCIFIQUES à "${destination}".\n` +
-    `"dont" : 3 pièges à éviter.\n${langRule}`;
+    `"dont" : 3 pièges à éviter.\n${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}`;
 
-  const systemPrompt = "Tu produis uniquement un objet JSON valide UTF-8.";
+  const systemPrompt =
+    "Tu produis uniquement un objet JSON valide UTF-8. " +
+    "Tout le texte pour le voyageur est entièrement dans la langue de l'interface : y compris les noms de musées, temples, centres (forme usuelle dans cette langue), jamais la graphie locale seule si ce n'est pas la langue de l'interface.";
 
   try {
-    const data = await runGroqJson({ key: groqKey, prompt, systemPrompt });
+    let data = await runGroqJson({ key: groqKey, prompt, systemPrompt });
+    if (tipsContainForbiddenNonLatinScript(data?.tips, uiLang)) {
+      data = await runGroqJson({
+        key: groqKey,
+        prompt: prompt + buildTipsRewriteRetryInstruction(uiLang),
+        systemPrompt:
+          systemPrompt +
+          " Seconde tentative : aucun caractère japonais, chinois ou coréen dans le JSON si la langue n'est pas le japonais, le chinois ou le coréen.",
+        temperature: 0.05,
+      });
+    }
     sendJson(res, 200, { ok: true, data });
   } catch (e) {
     sendJson(res, 502, { error: formatError(e) });

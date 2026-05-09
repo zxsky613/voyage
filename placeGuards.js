@@ -1,6 +1,9 @@
 /** Thaï + lao (alphasyllabaires) : titres OSM/WP souvent dans la langue locale alors que l’UI est FR/EN… */
 const THAI_LAO_SCRIPT_RE = /[\u0E00-\u0EFF]/;
 
+/** Hiragana/katakana/CJC/Hangul : souvent mélangés au français/anglais dans les tips si l’UI est en alphabet latin. */
+const LATIN_UI_EXCLUDE_CJK_HANGUL_RE = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af]/;
+
 /**
  * Retire les noms de lieux uniquement / principalement en thaï ou lao lorsque la langue UI n’est pas th ou lo,
  * afin que clampPlacesList puisse compléter avec le catalogue (ex. iconicPlacesData en français).
@@ -40,8 +43,8 @@ export function pickPlacesListAfterScriptFilter(sanitized, uiLanguage = "fr") {
 }
 
 /**
- * Phrases de conseils (tips.do / tips.dont) : retire les lignes contenant du thaï/lao si l’UI n’est pas th/lo
- * (l’IA ou des données locales mélangent souvent ces scripts avec le français).
+ * Phrases de conseils (tips.do / tips.dont) : retire les lignes contenant du thaï/lao si l’UI n’est pas th/lo,
+ * et du japonais/chinois/coréen (mélangé à une phrase FR/EN/…) si l’UI n’est pas ja/zh/ko.
  * @param {unknown[]} lines
  * @param {string} [uiLanguage]
  */
@@ -54,9 +57,43 @@ export function filterTipLinesForUiLang(lines, uiLanguage = "fr") {
   if (lang === "th" || lang === "lo") {
     return lines.map((x) => String(x || "").trim()).filter((s) => s.length >= 2);
   }
+  if (lang === "ja" || lang === "zh" || lang === "ko") {
+    return lines.map((x) => String(x || "").trim()).filter((s) => s.length >= 2);
+  }
   return lines
     .map((x) => String(x || "").trim())
-    .filter((s) => s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s));
+    .filter(
+      (s) =>
+        s.length >= 2 &&
+        !THAI_LAO_SCRIPT_RE.test(s) &&
+        !LATIN_UI_EXCLUDE_CJK_HANGUL_RE.test(s)
+    );
+}
+
+/**
+ * Activités proposées : retire les entrées dont title/location/description/costNote mélangent thaï/lao ou CJK/kana/hangul
+ * alors que l’UI est en alphabet latin (même logique que les pastilles de lieux et les tips).
+ * @param {object[]} activities — forme normalisée { title, location, cost?, description, costNote }
+ */
+export function filterSuggestedActivitiesForUiLang(activities, uiLanguage = "fr") {
+  if (!Array.isArray(activities)) return [];
+  const lang = String(uiLanguage || "fr")
+    .toLowerCase()
+    .split("-")[0]
+    .slice(0, 2);
+  if (lang === "ja" || lang === "zh" || lang === "ko" || lang === "th" || lang === "lo") {
+    return activities.filter((a) => a && typeof a === "object" && String(a.title || "").trim().length >= 1);
+  }
+  return activities.filter((a) => {
+    if (!a || typeof a !== "object") return false;
+    const title = String(a.title || "").trim();
+    if (title.length < 1) return false;
+    const chunks = [title, a.location, a.description, a.costNote].map((x) => String(x ?? ""));
+    for (const s of chunks) {
+      if (THAI_LAO_SCRIPT_RE.test(s) || LATIN_UI_EXCLUDE_CJK_HANGUL_RE.test(s)) return false;
+    }
+    return true;
+  });
 }
 
 /** Chaîne normalisée pour dédoublonnage / tests (minuscules, sans accents). */

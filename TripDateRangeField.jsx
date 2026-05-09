@@ -18,6 +18,20 @@ function parseYmdToNoon(ymd) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Jours inclus entre deux AAAA-MM-JJ, ou `null` si invalide. */
+function inclusiveSpanDays(ymdA, ymdB) {
+  if (!ymdA || !ymdB) return null;
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(String(ymdA)) || !re.test(String(ymdB))) return null;
+  const t0 = Date.parse(`${ymdA}T12:00:00`);
+  const t1 = Date.parse(`${ymdB}T12:00:00`);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null;
+  let a = t0;
+  let b = t1;
+  if (b < a) [a, b] = [b, a];
+  return Math.round((b - a) / 86400000) + 1;
+}
+
 function formatYmdDisplay(ymd) {
   const d = parseYmdToNoon(ymd);
   if (!d) return "—";
@@ -34,7 +48,14 @@ function mondayIndexOfFirstDay(year, monthIndex) {
   return (dow + 6) % 7;
 }
 
-export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly = false }) {
+export function TripDateRangeField({
+  startDate,
+  endDate,
+  onRangeChange,
+  readOnly = false,
+  /** Si défini (ex. 14), affiche le nombre de jours et une alerte si la plage le dépasse (programme). */
+  highlightMaxInclusiveDays = null,
+}) {
   const { t, language } = useI18n();
   const titleId = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -50,6 +71,8 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
   const [draftEnd, setDraftEnd] = useState(endDate);
 
   const todayStr = useMemo(() => ymdFromLocalDate(new Date()), []);
+
+  const closedSpan = useMemo(() => inclusiveSpanDays(startDate, endDate), [startDate, endDate]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -161,6 +184,10 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
   };
 
   const effEnd = draftEnd ?? draftStart;
+  const draftSpan =
+    highlightMaxInclusiveDays != null && draftStart
+      ? inclusiveSpanDays(draftStart, effEnd)
+      : null;
   const rangeLo = draftStart && effEnd ? (draftStart <= effEnd ? draftStart : effEnd) : "";
   const rangeHi = draftStart && effEnd ? (draftStart <= effEnd ? effEnd : draftStart) : "";
 
@@ -263,6 +290,25 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
             </div>
           </div>
 
+          {highlightMaxInclusiveDays != null && draftSpan != null ? (
+            <div
+              className={`mt-3 shrink-0 text-center text-sm ${
+                draftSpan > highlightMaxInclusiveDays ? "font-semibold text-amber-700" : "text-slate-700"
+              }`}
+            >
+              <p className="tabular-nums">{t("tripForm.dateRangeDayCount", { n: draftSpan })}</p>
+              {draftSpan > highlightMaxInclusiveDays ? (
+                <p className="mt-1 text-xs font-normal text-amber-800/95">
+                  {t("tripForm.dateRangeOverLimit", { max: highlightMaxInclusiveDays })}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs font-normal text-slate-500">
+                  {t("tripForm.dateRangeMaxHint", { max: highlightMaxInclusiveDays })}
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <div className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
             <div className="min-w-0 text-xs font-normal tracking-[0.02em] text-slate-600">
               <span className="text-slate-800">{formatYmdDisplay(draftStart)}</span>
@@ -330,6 +376,25 @@ export function TripDateRangeField({ startDate, endDate, onRangeChange, readOnly
           </span>
         </button>
       )}
+
+      {!readOnly && highlightMaxInclusiveDays != null && closedSpan != null ? (
+        <div
+          className={`mt-2 text-center text-sm ${
+            closedSpan > highlightMaxInclusiveDays ? "font-semibold text-amber-700" : "text-slate-700"
+          }`}
+        >
+          <span className="tabular-nums">{t("tripForm.dateRangeDayCount", { n: closedSpan })}</span>
+          {closedSpan > highlightMaxInclusiveDays ? (
+            <span className="mt-0.5 block text-xs font-normal text-amber-800/95">
+              {t("tripForm.dateRangeOverLimit", { max: highlightMaxInclusiveDays })}
+            </span>
+          ) : (
+            <span className="mt-0.5 block text-xs font-normal text-slate-500">
+              {t("tripForm.dateRangeMaxHint", { max: highlightMaxInclusiveDays })}
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {pickerOverlay ? createPortal(pickerOverlay, document.body) : null}
     </>

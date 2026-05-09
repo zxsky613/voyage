@@ -1,6 +1,9 @@
 import {
   handleCors, sendJson, parseBody, getGeminiKey, getGeminiModel,
   runGeminiJson, resolveUiLanguage, langRuleParagraph, formatError,
+  buildProperNamesScriptConsistencyRule,
+  suggestionsBundleContainsForbiddenNonLatinScript,
+  buildTipsRewriteRetryInstruction,
 } from "../_helpers.js";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
@@ -33,17 +36,28 @@ export default async function handler(req, res) {
     `- "title" : NOM PROPRE d'un lieu concret (même règle que places).\n` +
     `- "location" : quartier ou adresse précise.\n` +
     `- "estimatedCostEur" (nombre), "costNote", "description" (1 phrase).\n` +
-    `${langRule}`;
+    `${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}`;
 
   const systemInstruction =
     "Tu réponds uniquement par un objet JSON valide UTF-8. " +
     "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux géographiques réels visitables dans la ville nommée, jamais de descriptions génériques.";
 
   try {
-    const data = await runGeminiJson({
+    let data = await runGeminiJson({
       key, modelId, prompt, systemInstruction,
       generationConfigExtra: { temperature: 0.2, topP: 0.8, maxOutputTokens: 4096 },
     });
+    if (data && typeof data === "object" && suggestionsBundleContainsForbiddenNonLatinScript(data, uiLang)) {
+      data = await runGeminiJson({
+        key, modelId,
+        prompt: prompt + buildTipsRewriteRetryInstruction(uiLang) +
+          " Apply same rule to suggestedActivities titles/descriptions and each place name in \"places\".\n",
+        systemInstruction:
+          systemInstruction +
+          " Second attempt required: output only in the interface language; no CJK/kana/hangul for French/English/German/Spanish/Italian output.",
+        generationConfigExtra: { temperature: 0.05, topP: 0.8, maxOutputTokens: 4096 },
+      });
+    }
     if (data && typeof data === "object" && Array.isArray(data.places)) {
       const cleaned = sanitizeMustSeePlaces(data.places, destination);
       data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);

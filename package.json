@@ -16,7 +16,7 @@
     "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
     "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
     "fix:logo": "node scripts/fix-logo-white-dot.mjs",
-    "test": "node --test placeGuards.test.mjs"
+    "test": "node --test placeGuards.test.mjs api/_helpers.script.test.mjs"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",

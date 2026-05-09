@@ -124,6 +124,131 @@ export function langRuleParagraph(code) {
   return GEMINI_UI_LANG_RULES[code] || GEMINI_UI_LANG_RULES.fr;
 }
 
+/** Détecte japonais / chinois / coréen (UI censée être en alphabet latin). */
+const FOREIGN_SCRIPT_FOR_LATIN_UI_RE = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af]/;
+
+/**
+ * Tips ou phrases : présence de scripts non latins alors que l’UI n’est pas ja/zh/ko → régénération.
+ */
+export function tipsContainForbiddenNonLatinScript(tips, uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "ja" || code === "zh" || code === "ko") return false;
+  const chunks = [];
+  if (tips && typeof tips === "object") {
+    if (Array.isArray(tips.do)) chunks.push(...tips.do);
+    if (Array.isArray(tips.dont)) chunks.push(...tips.dont);
+  }
+  return chunks.some((x) => FOREIGN_SCRIPT_FOR_LATIN_UI_RE.test(String(x || "")));
+}
+
+/**
+ * Bundle /api/.../suggestions : tips + champs texte des activités proposées.
+ */
+export function suggestionsBundleContainsForbiddenNonLatinScript(data, uiLang) {
+  if (tipsContainForbiddenNonLatinScript(data?.tips, uiLang)) return true;
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "ja" || code === "zh" || code === "ko") return false;
+  const re = FOREIGN_SCRIPT_FOR_LATIN_UI_RE;
+  const acts = Array.isArray(data?.suggestedActivities) ? data.suggestedActivities : [];
+  for (const a of acts) {
+    if (!a || typeof a !== "object") continue;
+    for (const k of ["title", "location", "description", "costNote"]) {
+      if (re.test(String(a[k] || ""))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Instruction stricte de second passage si le modèle a encore collé du kanji/kana/etc.
+ */
+export function buildTipsRewriteRetryInstruction(uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") {
+    return (
+      "\n\nREGENERATE (previous reply INVALID): The tips still contained Japanese/Chinese/Korean characters. " +
+      "Output again: 100% English for English readers—including venue names as they appear in English guidebooks or clear English descriptive names. " +
+      "Zero hiragana, katakana, kanji, hangul, or han characters in any string.\n"
+    );
+  }
+  if (code === "de") {
+    return (
+      "\n\nNEU SCHREIBEN (vorher ungültig): Es waren noch japanische/chinesische/koreanische Zeichen drin. " +
+      "Alle 6 Sätze vollständig auf Deutsch für deutschsprachige Reisende, auch Eigennamen wie in deutschen Reiseführern — keine Kanji/Kana/Hangul.\n"
+    );
+  }
+  if (code === "es") {
+    return (
+      "\n\nREESCRIBE (respuesta inválida): Aún había caracteres japoneses/chinos/coreanos. " +
+      "Vuelve a generar todo en español para hispanohablantes, incluidos los nombres de sitios como en guías en español — cero kanji, kana o hangul.\n"
+    );
+  }
+  if (code === "it") {
+    return (
+      "\n\nRISCRIVI (risposta non valida): C'erano ancora caratteri giapponesi/cinesi/coreani. " +
+      "Rigenera tutto in italiano per lettori italiani, inclusi i toponimi come nelle guide — nessun kanji, kana, hangul.\n"
+    );
+  }
+  return (
+    "\n\nRÉÉCRITURE OBLIGATOIRE (réponse précédente NON CONFORME) : il restait des caractères japonais, chinois ou coréens. " +
+    "Regénère l’intégralité des 6 chaînes à 100% en français pour un public francophone : " +
+    "tous les noms de lieux doivent être ceux qu’on trouve en français (guides type Routard, Lonely Planet FR, office de tourisme FR), " +
+    "ou une appellation descriptive claire en français — AUCUN kanji, hiragana, katakana, hangul ni han dans le JSON.\n"
+  );
+}
+
+/**
+ * Lieux cités : même langue que l’interface (pas seulement même alphabet).
+ * Les lecteurs doivent voir des libellés « comme dans un guide dans leur langue ».
+ */
+export function buildProperNamesScriptConsistencyRule(uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") {
+    return (
+      "\nPLACE NAMES — TRAVELER'S LANGUAGE (MANDATORY):\n" +
+      "- The OUTPUT language applies to ALL proper nouns: museums, shrines, districts. Use names as English-speaking travelers see them (English guidebooks, official English pages), e.g. 'Kyoto Railway Museum', 'Kyoto City KYOCERA Museum of Art' — not raw Japanese copy-paste.\n" +
+      "- FORBIDDEN: any Japanese (kanji/kana), Korean hangul, or Chinese characters in your strings when the UI is English. Zero exceptions.\n" +
+      "- If unsure of the official English name, use a clear short English descriptive name ('science museum for families in Kyoto') instead of foreign script.\n"
+    );
+  }
+  if (code === "de") {
+    return (
+      "\nTOPONYME — SPRACHE DER OBERFLÄCHE (PFLICHT):\n" +
+      "- Alle Eigennamen wie in deutschsprachigen Reiseführern (DuMont, Baedeker-ähnlich) — nicht japanische Silbenschriften beibehalten.\n" +
+      "- VERBOTEN: Kanji/Kana/Hangul in den Texten, wenn die Ausgabesprache Deutsch ist.\n"
+    );
+  }
+  if (code === "es") {
+    return (
+      "\nTOPÓNIMOS — IDIOMA DE LA UI (OBLIGATORIO):\n" +
+      "- Todos los nombres propios como en guías en español para viajeros hispanohablantes. Prohibido dejar bloques en japonés, chino o coreano cuando la salida debe ser español.\n"
+    );
+  }
+  if (code === "it") {
+    return (
+      "\nTOPONIMI — LINGUA DELL'INTERFACCIA (OBBLIGATORIO):\n" +
+      "- Nomi dei luoghi come nelle guide italiane per chi legge in italiano. Vietato kanji/kana/hangul se l'output è italiano.\n"
+    );
+  }
+  if (code === "zh") {
+    return (
+      "\n专名：面向中文读者时使用中文通用译名或规范汉字称谓；避免在无必要时夹写日文假名整段。韩文、日文专有名词用常见中文译名或简短中文说明。\n"
+    );
+  }
+  if (code === "ja") {
+    return (
+      "\n固有名詞：日本語UIなら和表記を優先し、外国地名は一貫した表記に。他言語のままの固有名詞を混ぜない。\n"
+    );
+  }
+  return (
+    "\nNOMS DE LIEUX — MÊME LANGUE QUE L'INTERFACE (IMPÉRATIF) :\n" +
+    "- La langue de sortie s'applique à tout le texte, y compris les noms d'établissements : forme française usuelle telle qu'un lecteur français la lit dans un Routard, un Petit Futé, ou une traduction française officielle.\n" +
+    "- INTERDIT : laisser le nom uniquement en caractères japonais (kanji, hiragana, katakana), chinois ou coréen dans un conseil pour interface en français — comme dans un article de magazine de voyage français.\n" +
+    "- Si aucun nom court en français n'est fixé : utiliser une désignation descriptive en français (ex. musée municipal des sciences pour les jeunes à Kyoto) plutôt que le libellé en écriture locale.\n" +
+    "- Toute chaîne du JSON ne doit contenir aucun caractère hiragana, katakana, kanji, hangul ni han lorsque l'interface est en français.\n"
+  );
+}
+
 export function budgetRangeHint(prefs) {
   const tier = prefs?.budget;
   if (tier === "low")    return "< 50 €/jour";
@@ -339,13 +464,189 @@ export function buildItinerarySchedulingRulesParagraph(uiLang) {
   );
 }
 
+/**
+ * Cohésion quartier / anti-doublons / variété type marketplace (voyagistes & agrégateurs d’excursions).
+ * Injecté dans les prompts d’itinéraire (Groq + Gemini, dev + prod).
+ */
+export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") {
+    return (
+      "\nGEOGRAPHY & SAME-DAY COHESION (MANDATORY):\n" +
+      "- Each day MUST focus on ONE main neighborhood/district/arrondissement (or one tight, walkable cluster). Morning + afternoon + evening bullets for that same calendar day must stay in that area, or at most one short metro/tram hop that does not feel like crisscrossing the whole city.\n" +
+      "- Mention the focal area early (in the day title or the first bullet), e.g. \"Le Marais & nearby\" / \"Historic center west\".\n" +
+      "\nNO CROSS-DAY DUPLICATES (MANDATORY):\n" +
+      "- Do NOT repeat the same named venue, museum, monument, park, market, bridge, or viewpoint on a later day. Synonyms count (e.g. \"Louvre\" vs \"Musée du Louvre\").\n" +
+      "- Across a long stay (e.g. 14 days), rotate widely: if a major icon appears once, later days must use other districts, smaller gems, or different experience types.\n" +
+      "\nVARIETY (broad catalog, e.g. tour marketplaces):\n" +
+      "- Mix guided walks, local food/market stops, viewpoints, craft or tasting experiences, residential quartiers, half-day nature nearby if realistic—avoid recycling the same \"flagship museum\" pattern every day unless the traveler's style prefs demand it.\n"
+    );
+  }
+  if (code === "de") {
+    return (
+      "\nGEO & TAGES-KOHÄRENZ (PFLICHT):\n" +
+      "- Pro Kalender-Tag EIN Hauptviertel/Stadtteil/Arrondissement (oder eine kleine fußläufige Gruppe). Alle Bullet-Phasen dieses Tages bleiben dort oder max. eine kurze ÖPNV-Verbindung — nicht morgens Umland und nachmittags andere Stadtseite ohne realistische Zeiten.\n" +
+      "- Das Viertel früh nennen (Titel oder erste Bullet).\n" +
+      "\nKEINE DUPLIKATE ÜBER TAGE (PFLICHT):\n" +
+      "- Dasselbe benannte Museum/Denkmal/Park/Markt nicht an einem späteren Tag erneut einplanen. Synonyme zählen.\n" +
+      "\nVIELFALT (breites Angebot wie bei Reise-Plattformen):\n" +
+      "- Wechselnde Tagestypen: Spaziergänge, Märkte, Aussichtspunkte, kulinarische Stops, ruhigere Stadtviertel — nicht täglich nur die gleiche Kategorie Top-Museum.\n"
+    );
+  }
+  if (code === "es") {
+    return (
+      "\nGEOGRAFÍA Y COHESIÓN EN EL MISMO DÍA (OBLIGATORIO):\n" +
+      "- Cada día debe centrarse en UN barrio/distrito principal (o un grupo pequeño caminable). Mañana, tarde y noche del MISMO día deben quedarse en esa zona o en un trayecto corto en transporte público, sin saltar al otro extremo de la ciudad.\n" +
+      "- Cita el barrio al inicio (título o primera viñeta).\n" +
+      "\nSIN REPETICIONES ENTRE DÍAS (OBLIGATORIO):\n" +
+      "- No repitas el mismo museo, monumento, parque, mercado o mirador en otro día. Los sinónimos cuentan (p. ej. \"Louvre\" / \"Museo del Louvre\").\n" +
+      "\nVARIEDAD (catálogo amplio, estilo agregadores de excursiones):\n" +
+      "- Combina paseos guiados, comida local, miradores, talleres o barrios menos turísticos.\n"
+    );
+  }
+  if (code === "it") {
+    return (
+      "\nGEOGRAFIA E COESIONE NELLO STESSO GIORNO (OBBLIGATORIO):\n" +
+      "- Ogni giorno si concentra su UN quartiere/distretto (o un piccolo cluster a piedi). Mattina, pomeriggio e sera di quel CALENDARIO devono restare nella stessa area o in un solo breve spostamento in metro/tram.\n" +
+      "- Nomina il quartiere all’inizio (titolo o prima bullet).\n" +
+      "\nNESSUN DUPLICATO TRA I GIORNI (OBBLIGATORIO):\n" +
+      "- Non ripetere lo stesso museo, monumento, parco, mercato o belvedere in un giorno successivo. I sinonimi contano.\n" +
+      "\nVARIETÀ (catalogo ampio come marketplace tour):\n" +
+      "- Alterna passeggiate, street food, punti panoramici, quartieri residenziali, esperienze locali.\n"
+    );
+  }
+  if (code === "zh") {
+    return (
+      "\n地理与同一天动线一致性（必须）：\n" +
+      "- 每个日历日聚焦一个主要街区/区域（或可步行的小范围）。同一天内上午、下午、晚上的安排应尽量留在该区域内，或最多一次短途公共交通衔接，避免在城市两端来回奔波。\n" +
+      "- 在标题或第一条 bullet 中尽早写出当日区域。\n" +
+      "\n跨天不重复（必须）：\n" +
+      "- 不要把同一座博物馆、地标、公园、市场或观景台在后续日期再次安排；同义词也算重复（如「卢浮宫」「卢浮宫博物馆」）。\n" +
+      "\n多样性（类似综合旅游平台）：\n" +
+      "- 混合步行导览、市集/美食、观景、手作体验、居民区等，避免每天都同一类「旗舰博物馆」模板。\n"
+    );
+  }
+  return (
+    "\nGÉOGRAPHIE & COHÉRENCE DU MÊME JOUR (OBLIGATOIRE) :\n" +
+    "- Chaque jour se concentre sur UN quartier / arrondissement / zone centrale principal (ou un petit cluster vraiment accessible à pied). Toutes les parties de la journée (matin, après-midi, soir) pour cette date du calendrier restent dans cette même zone, ou au maximum un court trajet en transport en commun — pas un éclatement aux deux bouts de la ville.\n" +
+    "- Indique le quartier du jour dès le titre ou la première bullet.\n" +
+    "\nPAS DE RÉPÉTITIONS SUR PLUSIEURS JOURS (OBLIGATOIRE) :\n" +
+    "- Ne repropose pas le même musée, monument, parc, marché couvert, pont ou belvédère à une autre date. Les synonymes comptent (ex. « Louvre » / « Musée du Louvre »).\n" +
+    "- Sur un long séjour, fais tourner largement les lieux et les expériences.\n" +
+    "\nVARIÉTÉ (large catalogue, esprit plateformes d’excursions) :\n" +
+    "- Variété type GetYourGuide / marchands d’activités : visites guidées pédestres, marché ou cuisine locale, points de vue, ateliers, quartiers moins fréquentés, demi-journée nature périphérique si cohérent — pas la réutilisation du même schéma « musée phare » jour après jour sauf si les préférences du voyageur l’exigent.\n"
+  );
+}
+
+function normalizeBulletForDedup(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[''′´`]/g, "'")
+    .replace(/[^a-z0-9àâäéèêëïîôùûüçñœæß\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function bulletTokenOverlapRatio(a, b) {
+  const ta = normalizeBulletForDedup(a)
+    .split(" ")
+    .filter((w) => w.length > 2);
+  const tb = normalizeBulletForDedup(b)
+    .split(" ")
+    .filter((w) => w.length > 2);
+  if (ta.length === 0 || tb.length === 0) return 0;
+  const setB = new Set(tb);
+  let inter = 0;
+  for (const w of ta) if (setB.has(w)) inter += 1;
+  return inter / Math.min(ta.length, tb.length);
+}
+
+const FALLBACK_BULLETS_EXTRA = {
+  fr: [
+    "Même zone : flânerie dans des rues secondaires ou cour intérieure, sans reprendre un site déjà cité un autre jour.",
+    "Pause locale (café, épicerie fine ou petite galerie) — toujours dans le quartier du jour.",
+  ],
+  en: [
+    "Same area: side streets or a courtyard visit—do not revisit any place named earlier in the trip.",
+    "Short local stop (café, deli, small shop) staying within the day’s neighborhood.",
+  ],
+  de: [
+    "Gleiches Viertel: Nebenstraßen ohne bereits genannte Orte.",
+    "Kurzer Stopp (Café, kleiner Laden) im Tagesgebiet.",
+  ],
+  es: [
+    "Misma zona: callejuelas o patios sin repetir lugares de otros días.",
+    "Parada corta (café, tienda) dentro del barrio del día.",
+  ],
+  it: [
+    "Stessa zona: vicoli o cortili senza ripetere luoghi di altri giorni.",
+    "Sosta locale (caffè, bottega) nel quartiere del giorno.",
+  ],
+  zh: [
+    "仍在当日区域：走小巷或庭院，不重复前几日已提过的地点。",
+    "短暂停留（咖啡馆、小店）保持在当日街区范围内。",
+  ],
+};
+
+/**
+ * Supprime les bullets quasi identiques entre jours (post-traitement serveur).
+ */
+export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr") {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  const extras = FALLBACK_BULLETS_EXTRA[code] || FALLBACK_BULLETS_EXTRA.fr;
+  const kept = [];
+  const out = [];
+  for (const day of Array.isArray(dayIdeas) ? dayIdeas : []) {
+    const rawBullets = Array.isArray(day?.bullets) ? day.bullets : [];
+    const next = [];
+    for (const b of rawBullets) {
+      const s = String(b || "").trim();
+      if (!s) continue;
+      const norm = normalizeBulletForDedup(s);
+      if (norm.length < 12) {
+        next.push(s);
+        kept.push(s);
+        continue;
+      }
+      let dup = false;
+      for (const prev of kept) {
+        const pn = normalizeBulletForDedup(prev);
+        if (norm === pn) {
+          dup = true;
+          break;
+        }
+        if (bulletTokenOverlapRatio(s, prev) >= 0.72) {
+          dup = true;
+          break;
+        }
+        if (norm.length >= 34 && pn.length >= 34 && (norm.includes(pn.slice(0, 34)) || pn.includes(norm.slice(0, 34)))) {
+          dup = true;
+          break;
+        }
+      }
+      if (dup) continue;
+      next.push(s);
+      kept.push(s);
+    }
+    while (next.length < 2) {
+      next.push(extras[(next.length + out.length) % extras.length]);
+    }
+    out.push({ ...day, bullets: next });
+  }
+  return out;
+}
+
 /** Bloc à injecter dans les prompts Groq/Gemini d'itinéraire. */
 export async function buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang }) {
   const cal = buildItineraryCalendarPromptBlock(startDate, endDate, uiLang);
-  const [holidays, rules] = await Promise.all([
+  const [holidays, rules, cohesion] = await Promise.all([
     formatNagerHolidaysForPrompt(countryCode, startDate, endDate, uiLang),
     Promise.resolve(buildItinerarySchedulingRulesParagraph(uiLang)),
+    Promise.resolve(buildItineraryCohesionAndVarietyRulesParagraph(uiLang)),
   ]);
+  const scriptRule = buildProperNamesScriptConsistencyRule(uiLang);
   const code = String(uiLang || "fr").toLowerCase().split("-")[0];
   const calTitle =
     code === "en"
@@ -353,7 +654,7 @@ export async function buildItineraryEnrichmentBlock({ startDate, endDate, countr
       : code === "zh"
         ? "精确日历（行程中的每一天对应下方日期）"
         : "Calendrier exact (chaque jour du programme = une date réelle)";
-  return `\n${calTitle} :\n${cal}\n${holidays}${rules}`;
+  return `\n${calTitle} :\n${cal}\n${holidays}${rules}${cohesion}${scriptRule}`;
 }
 
 export function getGeminiKey() {

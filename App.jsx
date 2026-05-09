@@ -30,6 +30,7 @@ import {
   ArrowRight,
   ArrowLeft,
   ThumbsUp,
+  AlertTriangle,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
@@ -44,6 +45,7 @@ import {
   sanitizeMustSeePlaces,
   pickPlacesListAfterScriptFilter,
   filterTipLinesForUiLang,
+  filterSuggestedActivitiesForUiLang,
 } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
@@ -75,6 +77,7 @@ import {
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
+import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
 import { formatNoticeForEndUser } from "./devUiNotices.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
@@ -2699,7 +2702,7 @@ function mergeTipsDoFromGemini(baseDo, geminiDo, cityName, uiLanguage = "fr") {
   return merged.slice(0, 12);
 }
 
-/** Dernière barrière : pas de thaï/lao dans les conseils si l’UI n’est pas th/lo ; complète depuis le catalogue. */
+/** Dernière barrière : pas de thaï/lao ni caractères CJK/kana/hangul dans les conseils si l’UI est en alphabet latin ; complète depuis le catalogue. */
 function finalizeTravelTipsForUi(tips, cityName, uiLanguage) {
   const city = String(cityName || "").trim();
   const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
@@ -5214,7 +5217,8 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     suggestedActivitySource,
     safeCity,
     suggestedActivityMin,
-    placesForGuide
+    placesForGuide,
+    uiLanguage
   );
 
   const displayCountry = String(geoPack.country || "").trim();
@@ -5390,18 +5394,21 @@ const MIN_SUGGESTED_ACTIVITIES = 6;
 
 /**
  * Complète jusqu’à `min` activités : d’abord les lieux réels du guide, puis le catalogue par ville, puis le repli générique.
+ * `uiLanguage` : retire les entrées en alphabet local (CJK, thaï, etc.) lorsque l’interface est en alphabet latin.
  */
 function ensureMinSuggestedActivities(
   rawList,
   cityHint,
   min = MIN_SUGGESTED_ACTIVITIES,
-  placeTitlesHint = null
+  placeTitlesHint = null,
+  uiLanguage = "fr"
 ) {
   const city = String(cityHint || "").trim();
+  const lang = String(uiLanguage || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   const normalized = normalizeSuggestedActivitiesList(rawList, city);
-  if (normalized.length >= min) return normalized;
-  const seen = new Set(normalized.map((x) => normalizeTextForSearch(String(x.title || ""))));
-  const out = [...normalized];
+  let out = filterSuggestedActivitiesForUiLang(normalized, lang);
+  if (out.length >= min) return out;
+  const seen = new Set(out.map((x) => normalizeTextForSearch(String(x.title || ""))));
   const fromPlaces = normalizeSuggestedActivitiesList(
     buildSuggestedActivitiesFromDistinctPlaces(placeTitlesHint, city),
     city
@@ -5479,7 +5486,8 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr
         baseGuide.suggestedActivities,
         city,
         MIN_SUGGESTED_ACTIVITIES,
-        pc
+        pc,
+        uiLanguage
       ),
     };
   }
@@ -5504,23 +5512,33 @@ function mergeDestinationGuideWithGemini(baseGuide, geminiNorm, uiLanguage = "fr
         : baseGuide.suggestedActivities,
       city,
       MIN_SUGGESTED_ACTIVITIES,
-      mergedClamped
+      mergedClamped,
+      uiLanguage
     ),
   };
 }
 
-function countInclusiveTripDaysClient(startYmd, endYmd) {
+/** Nombre de jours inclus entre deux dates AAAA-MM-JJ, ou `null` si invalide. */
+function countInclusiveSpanDaysLoose(startYmd, endYmd) {
   const re = /^\d{4}-\d{2}-\d{2}$/;
-  if (!re.test(String(startYmd)) || !re.test(String(endYmd)))
-    return { ok: false, days: 0, error: "Utilise le format AAAA-MM-JJ." };
+  if (!re.test(String(startYmd)) || !re.test(String(endYmd))) return null;
   const t0 = Date.parse(`${startYmd}T12:00:00`);
   const t1 = Date.parse(`${endYmd}T12:00:00`);
-  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return { ok: false, days: 0, error: "Dates invalides." };
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null;
   let a = t0;
   let b = t1;
   if (b < a) [a, b] = [b, a];
-  const days = Math.round((b - a) / 86400000) + 1;
-  if (days > 14) return { ok: false, days: 0, error: "Maximum 14 jours." };
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+const ITINERARY_MAX_INCLUSIVE_DAYS = 14;
+
+function countInclusiveTripDaysClient(startYmd, endYmd) {
+  const days = countInclusiveSpanDaysLoose(startYmd, endYmd);
+  if (days == null)
+    return { ok: false, days: 0, error: "Utilise le format AAAA-MM-JJ." };
+  if (days > ITINERARY_MAX_INCLUSIVE_DAYS)
+    return { ok: false, days, error: "Maximum 14 jours." };
   return { ok: true, days, error: "" };
 }
 
@@ -9395,6 +9413,12 @@ function userFacingItineraryErrorMessage(raw, tFn) {
   if (/JSON|invalide|guillemet|array element/i.test(s)) {
     return fb("destination.itineraryFormatError", "The response was incomplete. Try again or shorten the period.");
   }
+  if (/maximum\s*14|^maximum\s*14\s*jours\.?$/i.test(s.trim()) || /\bmax(?:imum)?\s*14\s*jours/i.test(s)) {
+    return fb(
+      "destination.itineraryMaxDaysShort",
+      "The selected period exceeds 14 days. Shorten your dates."
+    );
+  }
   return fb("destination.itineraryGenerateError", "Unable to generate. Please try again later.");
 }
 
@@ -10163,6 +10187,8 @@ function DestinationGuideView({
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
   const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
+  const [itineraryMaxDaysModalOpen, setItineraryMaxDaysModalOpen] = useState(false);
+  const [itineraryMaxDaysCount, setItineraryMaxDaysCount] = useState(0);
   const [tripPrefsOpen, setTripPrefsOpen] = useState(false);
   const [pendingTripRequest, setPendingTripRequest] = useState(null);
   const [itineraryResultOpen, setItineraryResultOpen] = useState(false);
@@ -10173,6 +10199,7 @@ function DestinationGuideView({
 
   useScrollLock(addModalOpen);
   useScrollLock(itineraryModalOpen);
+  useScrollLock(itineraryMaxDaysModalOpen);
 
   // ── sessionStorage helpers ────────────────────────────────────────────────
   const ITIN_SS_KEY = "tp_last_itinerary_result";
@@ -10285,7 +10312,8 @@ function DestinationGuideView({
           base.suggestedActivities,
           city,
           MIN_SUGGESTED_ACTIVITIES,
-          placesForUi
+          placesForUi,
+          language
         ),
         city,
         language
@@ -10622,7 +10650,7 @@ function DestinationGuideView({
         if (cancelled) return;
         if (res?.ok && res.data) {
           const norm = normalizeGeminiSuggestedActivitiesPayload(res.data, dest);
-          const padded = ensureMinSuggestedActivities(norm, dest);
+          const padded = ensureMinSuggestedActivities(norm, dest, MIN_SUGGESTED_ACTIVITIES, null, language);
           if (padded.length > 0) {
             setGeminiAiSuggestedActivities(padded);
             setGeminiError("");
@@ -10635,7 +10663,7 @@ function DestinationGuideView({
         if (cancelled || !res) return;
         if (res?.ok && res.data) {
           const norm = normalizeGeminiSuggestedActivitiesPayload(res.data, dest);
-          const padded = ensureMinSuggestedActivities(norm, dest);
+          const padded = ensureMinSuggestedActivities(norm, dest, MIN_SUGGESTED_ACTIVITIES, null, language);
           setGeminiAiSuggestedActivities(padded.length > 0 ? padded : null);
           setGeminiError("");
         } else {
@@ -10715,8 +10743,15 @@ function DestinationGuideView({
     }
     const dest = String(displayGuide?.city || "").trim();
     if (!dest) return;
+    const spanDays = countInclusiveSpanDaysLoose(programStartDate, programEndDate);
     const { ok, error } = countInclusiveTripDaysClient(programStartDate, programEndDate);
     if (!ok) {
+      if (spanDays != null && spanDays > ITINERARY_MAX_INCLUSIVE_DAYS) {
+        setItineraryMaxDaysCount(spanDays);
+        setItineraryMaxDaysModalOpen(true);
+        setItineraryError("");
+        return;
+      }
       setItineraryError(error);
       return;
     }
@@ -10808,8 +10843,15 @@ function DestinationGuideView({
     const startDate = String(req?.startDate || programStartDate || "").trim();
     const endDate = String(req?.endDate || programEndDate || "").trim();
     if (!dest || !startDate || !endDate) return;
+    const spanDays = countInclusiveSpanDaysLoose(startDate, endDate);
     const { ok, error } = countInclusiveTripDaysClient(startDate, endDate);
     if (!ok) {
+      if (spanDays != null && spanDays > ITINERARY_MAX_INCLUSIVE_DAYS) {
+        setItineraryMaxDaysCount(spanDays);
+        setItineraryMaxDaysModalOpen(true);
+        setItineraryError("");
+        return;
+      }
       setItineraryError(error);
       return;
     }
@@ -11064,6 +11106,11 @@ function DestinationGuideView({
                   {t("destination.addToTrips")}
                 </button>
               </div>
+
+              <DestinationSearchWeather
+                coordinates={displayGuide.coordinates}
+                geocodeQuery={String(confirmedDestination || displayGuide.city || "").trim()}
+              />
 
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white/95 p-5 shadow-[0_8px_32px_rgba(30,58,95,0.05)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
@@ -11500,22 +11547,13 @@ function DestinationGuideView({
               <TripDateRangeField
                 startDate={programStartDate}
                 endDate={programEndDate}
+                highlightMaxInclusiveDays={ITINERARY_MAX_INCLUSIVE_DAYS}
                 onRangeChange={(s, e) => {
                   setProgramStartDate(s);
                   setProgramEndDate(e);
                 }}
               />
             </div>
-            {(() => {
-              const prev = countInclusiveTripDaysClient(programStartDate, programEndDate);
-              return (
-                <p className="mt-3 text-xs text-slate-600">
-                  {prev.ok
-                    ? t("destination.itineraryDuration", { n: prev.days })
-                    : prev.error || t("destination.itineraryDatesError")}
-                </p>
-              );
-            })()}
             {itineraryError ? <ItineraryErrorNotice raw={itineraryError} /> : null}
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
@@ -11532,6 +11570,51 @@ function DestinationGuideView({
                 className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-normal tracking-[0.04em] text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
               >
                 {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryNext")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {itineraryMaxDaysModalOpen ? (
+        <div
+          className="fixed -inset-1 z-[68] flex items-center justify-center bg-black/40 p-3 sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setItineraryMaxDaysModalOpen(false);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="itinerary-max-days-title"
+            className="min-w-0 w-full max-w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-amber-200/90 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.12)] ring-1 ring-amber-100/80 sm:max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-b from-amber-50/90 via-white to-white px-5 pb-8 pt-9 sm:px-9 sm:pb-9 sm:pt-10">
+              <div className="flex flex-col items-center text-center">
+                <span
+                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] ring-1 ring-amber-200/70"
+                  aria-hidden
+                >
+                  <AlertTriangle className="h-7 w-7" strokeWidth={1.75} />
+                </span>
+                <h2
+                  id="itinerary-max-days-title"
+                  className="mt-5 text-lg font-semibold leading-snug tracking-tight text-slate-900"
+                >
+                  {t("destination.itineraryMaxDaysTitle")}
+                </h2>
+                <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-600">
+                  {t("destination.itineraryMaxDaysBody", { n: itineraryMaxDaysCount })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setItineraryMaxDaysModalOpen(false)}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
+                style={GLASS_ACCENT_STYLE}
+              >
+                {t("common.ok")}
               </button>
             </div>
           </div>
@@ -12004,11 +12087,23 @@ function DestinationGuideView({
                   itineraryCalendarConflict.draftStart,
                   itineraryCalendarConflict.draftEnd
                 );
+                if (span.ok) {
+                  return (
+                    <p className="mt-2 text-xs text-slate-600">
+                      {t("destination.itineraryDuration", { n: span.days })}
+                    </p>
+                  );
+                }
+                if (span.days > 0) {
+                  return (
+                    <p className="mt-2 text-xs font-medium text-amber-700">
+                      {t("destination.itineraryDuration", { n: span.days })} — {span.error}
+                    </p>
+                  );
+                }
                 return (
-                  <p className="mt-2 text-xs text-slate-600">
-                    {span.ok
-                      ? t("destination.itineraryDuration", { n: span.days })
-                      : span.error || t("destination.itineraryDatesError")}
+                  <p className="mt-2 text-xs text-rose-600">
+                    {span.error || t("destination.itineraryDatesError")}
                   </p>
                 );
               })()}
@@ -12230,7 +12325,7 @@ function PlannerView({
     const monday = new Date(2024, 0, 1);
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
-      return d.toLocaleDateString(tag, { weekday: "narrow" });
+      return d.toLocaleDateString(tag, { weekday: "long" });
     });
   }, [language]);
   const [activityModalOpen, setActivityModalOpen] = useState(false);
@@ -12349,8 +12444,8 @@ function PlannerView({
           </div>
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 sm:gap-2 sm:text-xs">
             {plannerWeekdayLabels.map((x, i) => (
-              <div key={`wd-${i}-${x}`} className="py-2">
-                {x}
+              <div key={`wd-${i}-${x}`} className="flex min-h-[2.75rem] items-end justify-center py-2 sm:min-h-[2.5rem]">
+                <span className="leading-[1.2] capitalize sm:leading-snug">{x}</span>
               </div>
             ))}
             {days.map((d, i) => {

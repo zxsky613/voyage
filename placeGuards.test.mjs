@@ -5,6 +5,7 @@ import {
   pickPlacesListAfterScriptFilter,
   sanitizeMustSeePlaces,
   filterTipLinesForUiLang,
+  filterSuggestedActivitiesForUiLang,
 } from "./placeGuards.js";
 
 test("dropPlacesWrongScriptForUiLang removes Thai when UI is French", () => {
@@ -43,4 +44,26 @@ test("filterTipLinesForUiLang drops mixed French+Thai tip lines when UI is FR", 
 test("filterTipLinesForUiLang keeps Thai tips for Thai UI", () => {
   const th = ["วัดพระแก้ว — จองล่วงหน้า"];
   assert.deepEqual(filterTipLinesForUiLang(th, "th"), th);
+});
+
+test("filterTipLinesForUiLang drops lines with Japanese mixed in French for FR UI", () => {
+  const line =
+    "À Kyoto, pour 岩倉具視幽棲旧宅 et ガーデン ミュージアム 比叡, réserve sur les sites officiels.";
+  const out = filterTipLinesForUiLang([line, "Conseil sans caractères japonais."], "fr");
+  assert.deepEqual(out, ["Conseil sans caractères japonais."]);
+});
+
+test("filterSuggestedActivitiesForUiLang removes activity with Japanese title for FR UI", () => {
+  const acts = [
+    { title: "清水寺", location: "Kyoto", cost: 0, description: "", costNote: "" },
+    { title: "Musée national", location: "Kyoto", cost: 5, description: "Visite", costNote: "" },
+  ];
+  const out = filterSuggestedActivitiesForUiLang(acts, "fr");
+  assert.equal(out.length, 1);
+  assert.match(out[0].title, /Musée national/);
+});
+
+test("filterSuggestedActivitiesForUiLang keeps Japanese titles for ja UI", () => {
+  const acts = [{ title: "清水寺", location: "京都", cost: 0, description: "", costNote: "" }];
+  assert.deepEqual(filterSuggestedActivitiesForUiLang(acts, "ja"), acts);
 });

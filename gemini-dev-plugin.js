@@ -12,7 +12,7 @@ import path from "node:path";
 import { loadEnv } from "vite";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
-import { buildItineraryEnrichmentBlock } from "./api/_helpers.js";
+import { buildItineraryEnrichmentBlock, dedupeItineraryDayIdeas, buildProperNamesScriptConsistencyRule, tipsContainForbiddenNonLatinScript, suggestionsBundleContainsForbiddenNonLatinScript, buildTipsRewriteRetryInstruction } from "./api/_helpers.js";
 import { fetchLandmarkNamesFromOverpass } from "./api/osm/overpassLandmarks.js";
 
 function readBody(req) {
@@ -657,12 +657,23 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           `(transports réels, monuments nommés, usages locaux, astuces terrain). ` +
           `Interdit : phrases génériques valables pour n'importe quelle ville.\n` +
           `"dont" : exactement 3 pièges ou erreurs concrètes à éviter, ancrés dans "${destination}".\n` +
-          `${langRule}`;
+          `${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}`;
         const systemPrompt =
           "Tu produis uniquement un objet JSON valide UTF-8. " +
-          "Chaque conseil est une phrase courte, sans guillemet double non échappé.";
+          "Chaque conseil est une phrase courte, sans guillemet double non échappé. " +
+          "Tout le texte, y compris les noms de lieux, est dans la langue de l'interface ; forme usuelle pour cette langue, pas la graphie locale seule hors langue UI.";
         try {
-          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt });
+          let data = await runGroqJson({ key: groqKey, prompt, systemPrompt });
+          if (tipsContainForbiddenNonLatinScript(data?.tips, uiLang)) {
+            data = await runGroqJson({
+              key: groqKey,
+              prompt: prompt + buildTipsRewriteRetryInstruction(uiLang),
+              systemPrompt:
+                systemPrompt +
+                " Seconde tentative : zéro kanji/kana/hangul dans le JSON si la langue de sortie est le français, l'anglais, l'allemand, l'espagnol ou l'italien.",
+              temperature: 0.05,
+            });
+          }
           sendJson(res, 200, { ok: true, data });
         } catch (e) {
           sendJson(res, 502, { error: String(e?.message || e) });
@@ -714,7 +725,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
           "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
           "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
-          "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
+          "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+          "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
         try {
           const data = await runGroqJson({
             key: groqKey,
@@ -722,7 +734,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
             systemPrompt,
             temperature: 0.2,
           });
-          const list = Array.isArray(data?.dayIdeas) ? data.dayIdeas : [];
+          const list = dedupeItineraryDayIdeas(Array.isArray(data?.dayIdeas) ? data.dayIdeas : [], uiLang);
           sendJson(res, 200, { ok: true, data: { dayIdeas: list, tripDays: days, startDate, endDate } });
         } catch (e) {
           sendJson(res, 502, { error: String(e?.message || e) });
@@ -732,7 +744,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
 
       // ── /api/groq/suggestions ─────────────────────────────────────────────
       if (isGroqSuggestions) {
-        const uiLang = resolveGeminiUiLanguage(parsed);
+        const uiLang = resolveGeminiUiLanguage(body);
         const langRule = geminiLangRuleParagraph(uiLang);
         const prompt =
           `Tu agis comme un expert en voyage et conseiller touristique.\n` +
@@ -749,12 +761,24 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           `- "title" : NOM PROPRE d'un lieu concret.\n` +
           `- "location" : quartier ou adresse précise.\n` +
           `- "estimatedCostEur" (nombre), "costNote", "description" (1 phrase).\n` +
-          `${langRule}`;
+          `${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}`;
         const systemPrompt =
           "Tu réponds uniquement par un objet JSON valide UTF-8. " +
+          "Tous les textes visibles par le voyageur, y compris noms de lieux dans tips et suggestedActivities, sont entièrement dans la langue de l'interface. " +
           "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux réels.";
         try {
-          const data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
+          let data = await runGroqJson({ key: groqKey, prompt, systemPrompt, temperature: 0.2 });
+          if (data && typeof data === "object" && suggestionsBundleContainsForbiddenNonLatinScript(data, uiLang)) {
+            data = await runGroqJson({
+              key: groqKey,
+              prompt: prompt + buildTipsRewriteRetryInstruction(uiLang) +
+                " Même exigence pour « places », « suggestedActivities.title », « location », « description », « costNote » : aucun caractère japonais, chinois ou coréen si la langue de sortie est le français, l'anglais, l'allemand, l'espagnol ou l'italien.\n",
+              systemPrompt:
+                systemPrompt +
+                " Seconde tentative obligatoire : réponse 100 % dans la langue de l'interface, sans han/kana/hangul pour ces langues.",
+              temperature: 0.05,
+            });
+          }
           if (data && typeof data === "object" && Array.isArray(data.places)) {
             const cleaned = sanitizeMustSeePlaces(data.places, destination);
             data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
@@ -768,13 +792,13 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
 
       // ── /api/groq/suggested-activities ────────────────────────────────────
       if (isGroqSuggestedActivities) {
-        const uiLang = resolveGeminiUiLanguage(parsed);
+        const uiLang = resolveGeminiUiLanguage(body);
         const langRule = geminiLangRuleParagraph(uiLang);
         const prompt =
           `Tu es conseiller voyage expert. Destination : « ${destination} ».\n` +
           `Réponds UNIQUEMENT avec un JSON UTF-8 valide :\n` +
           `{"suggestedActivities":[...]}\n` +
-          `${langRule}\n` +
+          `${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}\n` +
           `Exactement 6 objets avec title, location, estimatedCostEur (nombre), costNote, description.\n` +
           `Chaque "title" DOIT être le NOM PROPRE d'un lieu réel et concret.\n` +
           `Les activités doivent correspondre à la géographie réelle de « ${destination} ».\n` +
@@ -884,7 +908,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         "Chaque dayIdeas DOIT contenir un title non vide et un bullets non vide. " +
         "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets. " +
         "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
-        "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables.";
+        "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+        "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
 
       try {
         const data = await runGeminiJson({
@@ -898,7 +923,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
             maxOutputTokens: Math.min(8192, 2048 + days * 500),
           },
         });
-        const list = Array.isArray(data?.dayIdeas) ? data.dayIdeas : [];
+        const list = dedupeItineraryDayIdeas(Array.isArray(data?.dayIdeas) ? data.dayIdeas : [], uiLang);
         sendJson(res, 200, { ok: true, data: { dayIdeas: list, tripDays: days, startDate, endDate } });
       } catch (e) {
         const msg = formatError(e);
@@ -997,14 +1022,14 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       `- "estimatedCostEur" : nombre JSON uniquement, estimation réaliste en euros ; 0 si gratuit avéré.\n` +
       `- "costNote" : courte précision dans la langue de sortie (ex. billet adulte, gratuit).\n` +
       `- "description" : une phrase utile (horaires types, durée, conseil pratique) dans la langue de sortie.\n` +
-      `${langRule}`;
+      `${langRule}${buildProperNamesScriptConsistencyRule(uiLang)}`;
 
     const systemInstruction =
       "Tu réponds uniquement par un objet JSON valide UTF-8. " +
       "Le tableau \"places\" ne contient que des NOMS PROPRES de lieux géographiques réels visitables dans la ville nommée, jamais de descriptions génériques, personnes ni œuvres de fiction.";
 
     try {
-      const data = await runGeminiJson({
+      let data = await runGeminiJson({
         key,
         modelId,
         prompt,
@@ -1015,6 +1040,22 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           maxOutputTokens: 4096,
         },
       });
+      if (data && typeof data === "object" && suggestionsBundleContainsForbiddenNonLatinScript(data, uiLang)) {
+        data = await runGeminiJson({
+          key,
+          modelId,
+          prompt: prompt + buildTipsRewriteRetryInstruction(uiLang) +
+            " Apply same rule to suggestedActivities titles/descriptions and each place name in \"places\".\n",
+          systemInstruction:
+            systemInstruction +
+            " Second attempt required: output only in the interface language; no CJK/kana/hangul for French/English/German/Spanish/Italian output.",
+          generationConfigExtra: {
+            temperature: 0.05,
+            topP: 0.8,
+            maxOutputTokens: 4096,
+          },
+        });
+      }
       if (data && typeof data === "object" && Array.isArray(data.places)) {
         const cleaned = sanitizeMustSeePlaces(data.places, destination);
         data.places = pickPlacesListAfterScriptFilter(cleaned, uiLang);
