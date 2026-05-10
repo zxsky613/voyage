@@ -3,6 +3,7 @@
 -- =============================================================================
 -- Chaque ligne : qui a payé, montant, partage entre quels participants (tableau).
 -- L’app lit/écrit public.trip_expenses pour soldes et remboursements simplifiés.
+-- Les dépenses restent limitées aux membres du voyage (propriétaire + e-mails invités).
 --
 -- trip_id est volontairement sans FK dans le CREATE : si REFERENCES public.trips
 -- échoue (table absente, id pas en uuid), tout le script s’arrêtait sans créer la table.
@@ -49,13 +50,85 @@ END $$;
 
 ALTER TABLE public.trip_expenses ENABLE ROW LEVEL SECURITY;
 
+-- Même helper que chat_trip_member_access.sql, répété ici pour que ce script reste autonome.
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+BEGIN
+  IF u IS NULL OR p_trip_id IS NULL THEN
+    RETURN false;
+  END IF;
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  IF em IS NULL OR em = '' THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = p_trip_id
+      AND (
+        t.owner_id IS NOT NULL AND t.owner_id = u
+        OR em = ANY (
+            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+          )
+      )
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v text := trim(COALESCE(p_trip_id, ''));
+BEGIN
+  IF v !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN false;
+  END IF;
+  RETURN public.trip_id_visible_to_requester(v::uuid);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
+
 DROP POLICY IF EXISTS "trip_expenses_authenticated_all" ON public.trip_expenses;
-CREATE POLICY "trip_expenses_authenticated_all"
-ON public.trip_expenses
-FOR ALL
-TO authenticated
-USING (true)
-WITH CHECK (true);
+DROP POLICY IF EXISTS "trip_expenses_trip_member_select" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_trip_member_insert" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_trip_member_update" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_trip_member_delete" ON public.trip_expenses;
+
+CREATE POLICY "trip_expenses_trip_member_select" ON public.trip_expenses
+  FOR SELECT TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id));
+
+CREATE POLICY "trip_expenses_trip_member_insert" ON public.trip_expenses
+  FOR INSERT TO authenticated
+  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+
+CREATE POLICY "trip_expenses_trip_member_update" ON public.trip_expenses
+  FOR UPDATE TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id))
+  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+
+CREATE POLICY "trip_expenses_trip_member_delete" ON public.trip_expenses
+  FOR DELETE TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id));
 
 -- Nécessaire pour l’API (clé anon + JWT) : sans ces GRANT, la table peut exister mais PostgREST renvoie une erreur.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.trip_expenses TO authenticated;
