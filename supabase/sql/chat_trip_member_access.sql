@@ -114,6 +114,42 @@ REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.trip_id_owned_by_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = p_trip_id
+      AND t.owner_id IS NOT NULL
+      AND t.owner_id = auth.uid()
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_owned_by_requester(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.requester_email_lower()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT lower(trim(au.email::text))
+  FROM auth.users au
+  WHERE au.id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.requester_email_lower() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.requester_email_lower() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.requester_email_lower() TO service_role;
+
 -- chat_messages
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 
@@ -129,16 +165,33 @@ CREATE POLICY "chat_messages_trip_member_select" ON public.chat_messages
 
 CREATE POLICY "chat_messages_trip_member_insert" ON public.chat_messages
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND author_id = auth.uid()::text
+    AND lower(trim(author_email)) = public.requester_email_lower()
+  );
 
 CREATE POLICY "chat_messages_trip_member_update" ON public.chat_messages
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND author_id = auth.uid()::text
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND author_id = auth.uid()::text
+    AND lower(trim(author_email)) = public.requester_email_lower()
+  );
 
 CREATE POLICY "chat_messages_trip_member_delete" ON public.chat_messages
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND (
+      author_id = auth.uid()::text
+      OR public.trip_id_owned_by_requester(trip_id)
+    )
+  );
 
 -- activity_votes (même principe : votes visibles/éditables par les membres du voyage)
 ALTER TABLE public.activity_votes ENABLE ROW LEVEL SECURITY;
@@ -155,16 +208,33 @@ CREATE POLICY "activity_votes_trip_member_select" ON public.activity_votes
 
 CREATE POLICY "activity_votes_trip_member_insert" ON public.activity_votes
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND voter_id = auth.uid()::text
+    AND lower(trim(voter_email)) = public.requester_email_lower()
+  );
 
 CREATE POLICY "activity_votes_trip_member_update" ON public.activity_votes
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND voter_id = auth.uid()::text
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND voter_id = auth.uid()::text
+    AND lower(trim(voter_email)) = public.requester_email_lower()
+  );
 
 CREATE POLICY "activity_votes_trip_member_delete" ON public.activity_votes
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND (
+      voter_id = auth.uid()::text
+      OR public.trip_id_owned_by_requester(trip_id)
+    )
+  );
 
 -- Temps réel : inclure les tables (sinon postgres_changes côté client ne reçoit rien)
 DO $$
