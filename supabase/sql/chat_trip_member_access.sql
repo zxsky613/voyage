@@ -101,7 +101,7 @@ BEGIN
     FROM public.trips t
     WHERE t.id = p_trip_id
       AND (
-        t.owner_id IS NOT NULL AND t.owner_id = u
+        t.owner_id IS NOT NULL AND t.owner_id::text = u::text
         OR em = ANY (
             SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
           )
@@ -110,9 +110,32 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  parsed uuid;
+BEGIN
+  BEGIN
+    parsed := NULLIF(trim(p_trip_id), '')::uuid;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RETURN false;
+  END;
+  RETURN public.trip_id_visible_to_requester(parsed);
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
 
 -- chat_messages
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
