@@ -20,10 +20,8 @@ TO authenticated
 USING (true)
 WITH CHECK (true);
 
--- Si vous utilisez le rôle anon avec une clé anon et sans login, décommentez :
--- DROP POLICY IF EXISTS "activities_allow_anon_all" ON public.activities;
--- CREATE POLICY "activities_allow_anon_all"
--- ON public.activities FOR ALL TO anon USING (true) WITH CHECK (true);
+-- Le rôle anon n'a volontairement aucune politique : l'app utilise des sessions
+-- Supabase authentifiées (y compris anonymes) pour que auth.uid() soit disponible.
 
 -- -----------------------------------------------------------------------------
 -- Option plus stricte (remplacez la politique ci-dessus par ceci si vous voulez
