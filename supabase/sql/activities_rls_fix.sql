@@ -9,78 +9,66 @@
 
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
 
--- Politique simple (développement / petit projet) : tout utilisateur avec une
--- session Supabase (auth, y compris anonyme) peut lire/écrire les activités.
--- À remplacer plus tard par des politiques liées à trips.owner_id si besoin.
 DROP POLICY IF EXISTS "activities_allow_authenticated_all" ON public.activities;
-CREATE POLICY "activities_allow_authenticated_all"
-ON public.activities
-FOR ALL
-TO authenticated
-USING (true)
-WITH CHECK (true);
+DROP POLICY IF EXISTS "activities_trip_member_select" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_insert" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_update" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_delete" ON public.activities;
 
--- Si vous utilisez le rôle anon avec une clé anon et sans login, décommentez :
--- DROP POLICY IF EXISTS "activities_allow_anon_all" ON public.activities;
--- CREATE POLICY "activities_allow_anon_all"
--- ON public.activities FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+BEGIN
+  IF u IS NULL OR p_trip_id IS NULL OR trim(p_trip_id) = '' THEN
+    RETURN false;
+  END IF;
 
--- -----------------------------------------------------------------------------
--- Option plus stricte (remplacez la politique ci-dessus par ceci si vous voulez
--- limiter aux voyages dont vous êtes propriétaire). Adaptez le type de owner_id.
--- -----------------------------------------------------------------------------
-/*
-DROP POLICY IF EXISTS "activities_allow_authenticated_all" ON public.activities;
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
 
-CREATE POLICY "activities_select_own_trips"
-ON public.activities FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1 FROM public.trips t
-    WHERE t.id = activities.trip_id
-      AND t.owner_id IS NOT NULL
-      AND t.owner_id::text = auth.uid()::text
-  )
-);
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id::text = trim(p_trip_id)
+      AND (
+        (t.owner_id IS NOT NULL AND t.owner_id::text = u::text)
+        OR (
+          em IS NOT NULL AND em <> ''
+          AND em = ANY (
+            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+          )
+        )
+      )
+  );
+END;
+$$;
 
-CREATE POLICY "activities_insert_own_trips"
-ON public.activities FOR INSERT TO authenticated
-WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM public.trips t
-    WHERE t.id = activities.trip_id
-      AND t.owner_id IS NOT NULL
-      AND t.owner_id::text = auth.uid()::text
-  )
-);
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
 
-CREATE POLICY "activities_update_own_trips"
-ON public.activities FOR UPDATE TO authenticated
-USING (
-  EXISTS (
-    SELECT 1 FROM public.trips t
-    WHERE t.id = activities.trip_id
-      AND t.owner_id IS NOT NULL
-      AND t.owner_id::text = auth.uid()::text
-  )
-)
-WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM public.trips t
-    WHERE t.id = activities.trip_id
-      AND t.owner_id IS NOT NULL
-      AND t.owner_id::text = auth.uid()::text
-  )
-);
+CREATE POLICY "activities_trip_member_select" ON public.activities
+  FOR SELECT TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id::text));
 
-CREATE POLICY "activities_delete_own_trips"
-ON public.activities FOR DELETE TO authenticated
-USING (
-  EXISTS (
-    SELECT 1 FROM public.trips t
-    WHERE t.id = activities.trip_id
-      AND t.owner_id IS NOT NULL
-      AND t.owner_id::text = auth.uid()::text
-  )
-);
-*/
+CREATE POLICY "activities_trip_member_insert" ON public.activities
+  FOR INSERT TO authenticated
+  WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "activities_trip_member_update" ON public.activities
+  FOR UPDATE TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id::text))
+  WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "activities_trip_member_delete" ON public.activities
+  FOR DELETE TO authenticated
+  USING (public.trip_id_visible_to_requester(trip_id::text));
+
+-- Le rôle anon n'a volontairement aucune politique : l'app utilise des sessions
+-- Supabase authentifiées (y compris anonymes) pour que auth.uid() soit disponible.
