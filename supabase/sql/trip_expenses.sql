@@ -49,13 +49,113 @@ END $$;
 
 ALTER TABLE public.trip_expenses ENABLE ROW LEVEL SECURITY;
 
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+  tid text := NULLIF(trim(p_trip_id), '');
+  has_owner_id boolean;
+  has_invited_emails boolean;
+  visible boolean := false;
+BEGIN
+  IF u IS NULL OR tid IS NULL THEN
+    RETURN false;
+  END IF;
+
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  IF em IS NULL OR em = '' THEN
+    RETURN false;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'trips'
+      AND c.column_name = 'owner_id'
+  ) INTO has_owner_id;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'trips'
+      AND c.column_name = 'invited_emails'
+  ) INTO has_invited_emails;
+
+  IF has_owner_id AND has_invited_emails THEN
+    EXECUTE $q$
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.trips t
+        WHERE t.id::text = $1
+          AND (
+            (t.owner_id IS NOT NULL AND t.owner_id::text = $2)
+            OR $3 = ANY (
+              SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+            )
+          )
+      )
+    $q$ INTO visible USING tid, u::text, em;
+  ELSIF has_owner_id THEN
+    EXECUTE $q$
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.trips t
+        WHERE t.id::text = $1
+          AND t.owner_id IS NOT NULL
+          AND t.owner_id::text = $2
+      )
+    $q$ INTO visible USING tid, u::text;
+  ELSIF has_invited_emails THEN
+    EXECUTE $q$
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.trips t
+        WHERE t.id::text = $1
+          AND $2 = ANY (
+            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+          )
+      )
+    $q$ INTO visible USING tid, em;
+  END IF;
+
+  RETURN COALESCE(visible, false);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
+
 DROP POLICY IF EXISTS "trip_expenses_authenticated_all" ON public.trip_expenses;
-CREATE POLICY "trip_expenses_authenticated_all"
-ON public.trip_expenses
-FOR ALL
-TO authenticated
-USING (true)
-WITH CHECK (true);
+DROP POLICY IF EXISTS "trip_expenses_select_trip_members" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_insert_trip_members" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_update_trip_members" ON public.trip_expenses;
+DROP POLICY IF EXISTS "trip_expenses_delete_trip_members" ON public.trip_expenses;
+
+CREATE POLICY "trip_expenses_select_trip_members"
+ON public.trip_expenses FOR SELECT TO authenticated
+USING (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "trip_expenses_insert_trip_members"
+ON public.trip_expenses FOR INSERT TO authenticated
+WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "trip_expenses_update_trip_members"
+ON public.trip_expenses FOR UPDATE TO authenticated
+USING (public.trip_id_visible_to_requester(trip_id::text))
+WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "trip_expenses_delete_trip_members"
+ON public.trip_expenses FOR DELETE TO authenticated
+USING (public.trip_id_visible_to_requester(trip_id::text));
 
 -- Nécessaire pour l’API (clé anon + JWT) : sans ces GRANT, la table peut exister mais PostgREST renvoie une erreur.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.trip_expenses TO authenticated;
