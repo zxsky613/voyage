@@ -10900,8 +10900,15 @@ function DestinationGuideView({
       const schedule = [];
       const ideas = generatedDayIdeas;
       if (!Array.isArray(ideas) || ideas.length === 0) return false;
-      for (const d of ideas) {
-        const dayNum = Number(d?.day) || 1;
+      const tripDays = countInclusiveSpanDaysLoose(rangeStart, rangeEnd);
+      ideas.forEach((d, idx) => {
+        const parsedDayNum = Number(d?.day);
+        const dayNum =
+          Number.isInteger(parsedDayNum) &&
+          parsedDayNum >= 1 &&
+          (tripDays == null || parsedDayNum <= tripDays)
+            ? parsedDayNum
+            : idx + 1;
         const actDate = addDaysToDate(rangeStart, dayNum - 1);
         const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
         const perActCost =
@@ -10918,7 +10925,7 @@ function DestinationGuideView({
             description: `Jour ${dayNum} — ${String(d?.title || "")}`,
           });
         });
-      }
+      });
       const dest = String(displayGuide?.city || confirmedDestination || "");
       return onCreateTrip({
         title: dest,

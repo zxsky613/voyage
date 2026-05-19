@@ -127,7 +127,7 @@ function itineraryDayHasUsableContent(d) {
   return hasTitle && (hasBullets || hasActivities);
 }
 
-function isGroqItineraryAcceptable(res, expectedDays) {
+function isItineraryAcceptable(res, expectedDays) {
   if (!res?.ok || !Array.isArray(res.data?.dayIdeas)) return false;
   const list = res.data.dayIdeas;
   if (list.length !== expectedDays) return false;
@@ -172,11 +172,11 @@ export async function fetchItineraryGroqFirst({
     res = null;
   }
 
-  if (isGroqItineraryAcceptable(res, expectedDays)) {
+  if (isItineraryAcceptable(res, expectedDays)) {
     return res;
   }
 
-  return await fetchGeminiItinerary({
+  const fallback = await fetchGeminiItinerary({
     destination,
     startDate,
     endDate,
@@ -184,6 +184,10 @@ export async function fetchItineraryGroqFirst({
     prefs,
     countryCode,
   });
+  if (isItineraryAcceptable(fallback, expectedDays)) {
+    return fallback;
+  }
+  throw new Error("ITIN_ERROR_EMPTY_RESULT");
 }
 
 /**
