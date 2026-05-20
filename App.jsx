@@ -821,14 +821,17 @@ function stackOrderedAvatarRaws(trip, session) {
 /**
  * Tricount (dépenses partagées) : « Moi » + seulement les e-mails listés dans `invited_joined_emails` (inscrits / ont accepté le voyage).
  * Si `invited_joined_emails` est `null` (héritage) : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
- * Tableau vide : uniquement toi, la dépense ne se divise qu’en une part (1 personne) jusqu’à ce qu’un autre ait rejoint.
+ * Tableau vide hérité : même traitement que `null` (anciens voyages créés avant la migration).
  */
 function participantsForExpenseSplit(trip, session) {
   const full = canonicalParticipants(
     Array.isArray(trip?.participants) ? trip.participants : [],
     Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
   );
-  const joined = trip?.invited_joined_emails;
+  let joined = trip?.invited_joined_emails;
+  if (Array.isArray(joined) && joined.length === 0) {
+    joined = null;
+  }
   if (joined == null) {
     return dedupeCurrentUserInAvatarRow(full, session, trip);
   }
