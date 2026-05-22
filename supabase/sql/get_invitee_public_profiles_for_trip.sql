@@ -97,12 +97,7 @@ BEGIN
     (
       lower(trim(u.email::text)) IN (
         SELECT lower(trim(x::text))
-        FROM unnest(
-          CASE
-            WHEN t.invited_joined_emails IS NULL THEN COALESCE(t.invited_emails, ARRAY[]::text[])
-            ELSE t.invited_joined_emails
-          END
-        ) AS x
+        FROM unnest(COALESCE(t.invited_joined_emails, ARRAY[]::text[])) AS x
       )
     )
     OR (t.owner_id IS NOT NULL AND u.id = t.owner_id);
