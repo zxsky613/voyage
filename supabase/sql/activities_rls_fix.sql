@@ -9,16 +9,52 @@
 
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
 
--- Politique simple (développement / petit projet) : tout utilisateur avec une
--- session Supabase (auth, y compris anonyme) peut lire/écrire les activités.
--- À remplacer plus tard par des politiques liées à trips.owner_id si besoin.
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+  trip_key text := NULLIF(trim(p_trip_id), '');
+BEGIN
+  IF u IS NULL OR trip_key IS NULL THEN
+    RETURN false;
+  END IF;
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  IF em IS NULL OR em = '' THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id::text = trip_key
+      AND (
+        t.owner_id IS NOT NULL AND t.owner_id = u
+        OR em = ANY (
+            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+          )
+      )
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
+
+-- Les activités sont visibles et modifiables uniquement par les membres du voyage.
 DROP POLICY IF EXISTS "activities_allow_authenticated_all" ON public.activities;
-CREATE POLICY "activities_allow_authenticated_all"
+DROP POLICY IF EXISTS "activities_trip_member_access" ON public.activities;
+CREATE POLICY "activities_trip_member_access"
 ON public.activities
 FOR ALL
 TO authenticated
-USING (true)
-WITH CHECK (true);
+USING (public.trip_id_visible_to_requester(trip_id::text))
+WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
 
 -- Si vous utilisez le rôle anon avec une clé anon et sans login, décommentez :
 -- DROP POLICY IF EXISTS "activities_allow_anon_all" ON public.activities;
