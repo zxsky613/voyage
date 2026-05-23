@@ -49,13 +49,59 @@ END $$;
 
 ALTER TABLE public.trip_expenses ENABLE ROW LEVEL SECURITY;
 
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+BEGIN
+  IF u IS NULL OR p_trip_id IS NULL THEN
+    RETURN false;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = p_trip_id
+      AND t.owner_id IS NOT NULL
+      AND t.owner_id = u
+  ) THEN
+    RETURN true;
+  END IF;
+
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  IF em IS NULL OR em = '' THEN
+    RETURN false;
+  END IF;
+
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = p_trip_id
+      AND em = ANY (
+        SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+      )
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
+
 DROP POLICY IF EXISTS "trip_expenses_authenticated_all" ON public.trip_expenses;
-CREATE POLICY "trip_expenses_authenticated_all"
+DROP POLICY IF EXISTS "trip_expenses_trip_members" ON public.trip_expenses;
+CREATE POLICY "trip_expenses_trip_members"
 ON public.trip_expenses
 FOR ALL
 TO authenticated
-USING (true)
-WITH CHECK (true);
+USING (public.trip_id_visible_to_requester(trip_id))
+WITH CHECK (public.trip_id_visible_to_requester(trip_id));
 
 -- Nécessaire pour l’API (clé anon + JWT) : sans ces GRANT, la table peut exister mais PostgREST renvoie une erreur.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.trip_expenses TO authenticated;
