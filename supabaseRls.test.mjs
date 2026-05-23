@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const readSql = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+const executableSql = (sql) =>
+  sql
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--.*$/gm, "");
 
 test("trip-scoped tables do not ship authenticated-wide RLS policies", () => {
-  const activities = readSql("./supabase/sql/activities_rls_fix.sql");
-  const expenses = readSql("./supabase/sql/trip_expenses.sql");
+  const activities = executableSql(readSql("./supabase/sql/activities_rls_fix.sql"));
+  const expenses = executableSql(readSql("./supabase/sql/trip_expenses.sql"));
 
   for (const [name, sql] of [
     ["activities", activities],
