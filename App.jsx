@@ -62,6 +62,7 @@ import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale } from "./i18n/cityDisplay.js";
 import { activityTitleSaveValue, displayActivityTitleForLocale } from "./i18n/activityDisplay.js";
+import { normalizeInvitedJoinedEmailsForParticipantVisibility } from "./tripParticipantVisibility.js";
 import {
   UiLocalizedTripTitle,
   UiTranslatedActivityTitle,
@@ -736,11 +737,7 @@ function invitedEmailsForAvatarStrip(trip) {
   const all = Array.isArray(trip?.invited_emails)
     ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  let joined = trip?.invited_joined_emails;
-  // `[]` à la création (ancien code) n’est pas le même cas qu’un « 0 inscrit » voulu : comme NULL, afficher les invités.
-  if (Array.isArray(joined) && joined.length === 0) {
-    joined = null;
-  }
+  const joined = normalizeInvitedJoinedEmailsForParticipantVisibility(trip?.invited_joined_emails);
   if (joined == null) {
     return all.filter((e) => isValidEmail(String(e).trim()));
   }
@@ -755,10 +752,7 @@ function invitedEmailsForAvatarStrip(trip) {
  */
 function participantsForAvatarRow(trip) {
   const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
-  let joined = trip?.invited_joined_emails;
-  if (Array.isArray(joined) && joined.length === 0) {
-    joined = null;
-  }
+  const joined = normalizeInvitedJoinedEmailsForParticipantVisibility(trip?.invited_joined_emails);
   if (joined == null) {
     return parts;
   }
@@ -820,15 +814,14 @@ function stackOrderedAvatarRaws(trip, session) {
 
 /**
  * Tricount (dépenses partagées) : « Moi » + seulement les e-mails listés dans `invited_joined_emails` (inscrits / ont accepté le voyage).
- * Si `invited_joined_emails` est `null` (héritage) : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
- * Tableau vide : uniquement toi, la dépense ne se divise qu’en une part (1 personne) jusqu’à ce qu’un autre ait rejoint.
+ * Si `invited_joined_emails` est `null` ou `[]` hérité : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
  */
 function participantsForExpenseSplit(trip, session) {
   const full = canonicalParticipants(
     Array.isArray(trip?.participants) ? trip.participants : [],
     Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
   );
-  const joined = trip?.invited_joined_emails;
+  const joined = normalizeInvitedJoinedEmailsForParticipantVisibility(trip?.invited_joined_emails);
   if (joined == null) {
     return dedupeCurrentUserInAvatarRow(full, session, trip);
   }
@@ -13284,6 +13277,7 @@ function BudgetTripDetailShell({ trip, onClose, children }) {
 function TripExpenseDetail({
   trip,
   session,
+  ownerPeer = null,
   activities,
   groupExpenses,
   groupExpensesEnabled,
@@ -13324,7 +13318,7 @@ function TripExpenseDetail({
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
   const participants = useMemo(() => participantsForExpenseSplit(trip, session), [trip, session]);
-  const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+  const displayName = (p) => participantDisplayFromRawForTrip(p, session, trip, ownerPeer);
 
   const totalPlanner = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
   const totalGroup = safeGroup.reduce((sum, e) => sum + Number(e.amount || 0), 0);
@@ -16947,6 +16941,7 @@ export default function App() {
           <TripExpenseDetail
             trip={budgetDetailTrip}
             session={session}
+            ownerPeer={peerOwnerProfileByTripId[String(budgetDetailTrip.id)] || null}
             activities={(activities || []).filter((a) => String(a.trip_id) === String(budgetDetailTrip.id))}
             groupExpenses={(tripExpenses || []).filter((e) => String(e.trip_id) === String(budgetDetailTrip.id))}
             groupExpensesEnabled={tripExpensesTableReady}
