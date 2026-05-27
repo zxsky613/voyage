@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.chat_messages
+  ADD COLUMN IF NOT EXISTS author_id text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS author_email text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS author_name text NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS chat_messages_trip_id_created_at_idx
   ON public.chat_messages (trip_id, created_at);
 
@@ -31,6 +36,11 @@ CREATE TABLE IF NOT EXISTS public.activity_votes (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.activity_votes
+  ADD COLUMN IF NOT EXISTS voter_id text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS voter_name text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS voter_email text NOT NULL DEFAULT '';
 
 -- Upsert côté app : onConflict trip_id, activity_id, voter_id
 CREATE UNIQUE INDEX IF NOT EXISTS activity_votes_trip_activity_voter_uidx
@@ -78,7 +88,7 @@ $$;
 -- Politiques (propriétaire du voyage + e-mails invités) + Realtime
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id uuid)
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
 RETURNS boolean
 LANGUAGE plpgsql
 STABLE
@@ -89,7 +99,7 @@ DECLARE
   u uuid := auth.uid();
   em text;
 BEGIN
-  IF u IS NULL OR p_trip_id IS NULL THEN
+  IF u IS NULL OR p_trip_id IS NULL OR trim(p_trip_id) = '' THEN
     RETURN false;
   END IF;
   SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
@@ -99,20 +109,105 @@ BEGIN
   RETURN EXISTS (
     SELECT 1
     FROM public.trips t
-    WHERE t.id = p_trip_id
+    WHERE t.id::text = p_trip_id
       AND (
-        t.owner_id IS NOT NULL AND t.owner_id = u
+        (t.owner_id IS NOT NULL AND t.owner_id = u)
         OR em = ANY (
-            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
-          )
+          SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+        )
       )
   );
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT public.trip_id_visible_to_requester($1::text);
+$$;
+
+CREATE OR REPLACE FUNCTION public.trip_id_owned_by_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+BEGIN
+  IF u IS NULL OR p_trip_id IS NULL OR trim(p_trip_id) = '' THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id::text = p_trip_id
+      AND t.owner_id IS NOT NULL
+      AND t.owner_id = u
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.trip_id_owned_by_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT public.trip_id_owned_by_requester($1::text);
+$$;
+
+CREATE OR REPLACE FUNCTION public.requester_matches_identity(p_user_id text, p_email text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+  wanted_uid text := trim(COALESCE(p_user_id, ''));
+  wanted_email text := lower(trim(COALESCE(p_email, '')));
+BEGIN
+  IF u IS NULL THEN
+    RETURN false;
+  END IF;
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  IF wanted_uid = '' AND wanted_email = '' THEN
+    RETURN false;
+  END IF;
+  IF wanted_uid <> '' AND wanted_uid <> u::text THEN
+    RETURN false;
+  END IF;
+  IF wanted_email <> '' AND (em IS NULL OR wanted_email <> em) THEN
+    RETURN false;
+  END IF;
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.trip_id_owned_by_requester(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.trip_id_owned_by_requester(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.requester_matches_identity(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.requester_matches_identity(text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.requester_matches_identity(text, text) TO service_role;
 
 -- chat_messages
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
@@ -129,16 +224,31 @@ CREATE POLICY "chat_messages_trip_member_select" ON public.chat_messages
 
 CREATE POLICY "chat_messages_trip_member_insert" ON public.chat_messages
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id, author_email)
+  );
 
 CREATE POLICY "chat_messages_trip_member_update" ON public.chat_messages
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id, author_email)
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id, author_email)
+  );
 
 CREATE POLICY "chat_messages_trip_member_delete" ON public.chat_messages
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_owned_by_requester(trip_id)
+    OR (
+      public.trip_id_visible_to_requester(trip_id)
+      AND public.requester_matches_identity(author_id, author_email)
+    )
+  );
 
 -- activity_votes (même principe : votes visibles/éditables par les membres du voyage)
 ALTER TABLE public.activity_votes ENABLE ROW LEVEL SECURITY;
@@ -155,16 +265,31 @@ CREATE POLICY "activity_votes_trip_member_select" ON public.activity_votes
 
 CREATE POLICY "activity_votes_trip_member_insert" ON public.activity_votes
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id, voter_email)
+  );
 
 CREATE POLICY "activity_votes_trip_member_update" ON public.activity_votes
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id, voter_email)
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id, voter_email)
+  );
 
 CREATE POLICY "activity_votes_trip_member_delete" ON public.activity_votes
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_owned_by_requester(trip_id)
+    OR (
+      public.trip_id_visible_to_requester(trip_id)
+      AND public.requester_matches_identity(voter_id, voter_email)
+    )
+  );
 
 -- Temps réel : inclure les tables (sinon postgres_changes côté client ne reçoit rien)
 DO $$
