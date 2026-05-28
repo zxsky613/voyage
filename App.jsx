@@ -14904,7 +14904,12 @@ export default function App() {
         const ids = (ownedTrips || []).map((t) => t.id).filter(Boolean);
         if (ids.length > 0) {
           try {
-            await supabase.from("activities").delete().in("trip_id", ids);
+            await Promise.all([
+              supabase.from("activity_votes").delete().in("trip_id", ids),
+              supabase.from("chat_messages").delete().in("trip_id", ids),
+              supabase.from("trip_expenses").delete().in("trip_id", ids),
+              supabase.from("activities").delete().in("trip_id", ids),
+            ]);
           } catch (_e) {
             // ignore child cleanup failure
           }
@@ -16416,6 +16421,7 @@ export default function App() {
       await Promise.all([
         supabase.from("activity_votes").delete().eq("trip_id", idStr),
         supabase.from("chat_messages").delete().eq("trip_id", idStr),
+        supabase.from("trip_expenses").delete().eq("trip_id", idStr),
         supabase.from("activities").delete().eq("trip_id", idStr),
       ]);
       const { error } = await supabase.from("trips").delete().eq("id", tid);
