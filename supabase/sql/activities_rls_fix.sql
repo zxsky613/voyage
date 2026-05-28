@@ -9,16 +9,101 @@
 
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
 
--- Politique simple (développement / petit projet) : tout utilisateur avec une
--- session Supabase (auth, y compris anonyme) peut lire/écrire les activités.
--- À remplacer plus tard par des politiques liées à trips.owner_id si besoin.
+-- Accès limité aux membres du voyage (propriétaire ou e-mail invité).
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+  trip_uuid uuid;
+BEGIN
+  IF u IS NULL OR NULLIF(trim(COALESCE(p_trip_id, '')), '') IS NULL THEN
+    RETURN false;
+  END IF;
+
+  BEGIN
+    trip_uuid := trim(p_trip_id)::uuid;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RETURN false;
+  END;
+
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = trip_uuid
+      AND (
+        (t.owner_id IS NOT NULL AND t.owner_id = u)
+        OR (
+          em IS NOT NULL
+          AND em <> ''
+          AND em = ANY (
+            SELECT lower(trim(x::text)) FROM unnest(COALESCE(t.invited_emails, ARRAY[]::text[])) AS x
+          )
+        )
+      )
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.trip_id_visible_to_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT public.trip_id_visible_to_requester(p_trip_id::text);
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
+
 DROP POLICY IF EXISTS "activities_allow_authenticated_all" ON public.activities;
-CREATE POLICY "activities_allow_authenticated_all"
+DROP POLICY IF EXISTS "activities_select_own_trips" ON public.activities;
+DROP POLICY IF EXISTS "activities_insert_own_trips" ON public.activities;
+DROP POLICY IF EXISTS "activities_update_own_trips" ON public.activities;
+DROP POLICY IF EXISTS "activities_delete_own_trips" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_select" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_insert" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_update" ON public.activities;
+DROP POLICY IF EXISTS "activities_trip_member_delete" ON public.activities;
+
+CREATE POLICY "activities_trip_member_select"
 ON public.activities
-FOR ALL
+FOR SELECT
 TO authenticated
-USING (true)
-WITH CHECK (true);
+USING (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "activities_trip_member_insert"
+ON public.activities
+FOR INSERT
+TO authenticated
+WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "activities_trip_member_update"
+ON public.activities
+FOR UPDATE
+TO authenticated
+USING (public.trip_id_visible_to_requester(trip_id::text))
+WITH CHECK (public.trip_id_visible_to_requester(trip_id::text));
+
+CREATE POLICY "activities_trip_member_delete"
+ON public.activities
+FOR DELETE
+TO authenticated
+USING (public.trip_id_visible_to_requester(trip_id::text));
 
 -- Si vous utilisez le rôle anon avec une clé anon et sans login, décommentez :
 -- DROP POLICY IF EXISTS "activities_allow_anon_all" ON public.activities;
