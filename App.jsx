@@ -69,6 +69,7 @@ import {
   useUiTranslatedText,
 } from "./i18n/userContentTranslate.jsx";
 import { translations, DEFAULT_LOCALE } from "./i18n/translations.js";
+import { normalizeInvitedJoinedEmails } from "./tripParticipantVisibility.js";
 import {
   OnboardingTour,
   hasSeenOnboardingForUser,
@@ -736,11 +737,7 @@ function invitedEmailsForAvatarStrip(trip) {
   const all = Array.isArray(trip?.invited_emails)
     ? trip.invited_emails.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  let joined = trip?.invited_joined_emails;
-  // `[]` à la création (ancien code) n’est pas le même cas qu’un « 0 inscrit » voulu : comme NULL, afficher les invités.
-  if (Array.isArray(joined) && joined.length === 0) {
-    joined = null;
-  }
+  const joined = normalizeInvitedJoinedEmails(trip?.invited_joined_emails);
   if (joined == null) {
     return all.filter((e) => isValidEmail(String(e).trim()));
   }
@@ -755,10 +752,7 @@ function invitedEmailsForAvatarStrip(trip) {
  */
 function participantsForAvatarRow(trip) {
   const parts = canonicalParticipants(trip?.participants, trip?.invited_emails);
-  let joined = trip?.invited_joined_emails;
-  if (Array.isArray(joined) && joined.length === 0) {
-    joined = null;
-  }
+  const joined = normalizeInvitedJoinedEmails(trip?.invited_joined_emails);
   if (joined == null) {
     return parts;
   }
@@ -821,14 +815,14 @@ function stackOrderedAvatarRaws(trip, session) {
 /**
  * Tricount (dépenses partagées) : « Moi » + seulement les e-mails listés dans `invited_joined_emails` (inscrits / ont accepté le voyage).
  * Si `invited_joined_emails` est `null` (héritage) : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
- * Tableau vide : uniquement toi, la dépense ne se divise qu’en une part (1 personne) jusqu’à ce qu’un autre ait rejoint.
+ * Tableau vide : ancien encodage de création, traité comme NULL pour éviter de recalculer les dépenses à 1 personne.
  */
 function participantsForExpenseSplit(trip, session) {
   const full = canonicalParticipants(
     Array.isArray(trip?.participants) ? trip.participants : [],
     Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
   );
-  const joined = trip?.invited_joined_emails;
+  const joined = normalizeInvitedJoinedEmails(trip?.invited_joined_emails);
   if (joined == null) {
     return dedupeCurrentUserInAvatarRow(full, session, trip);
   }
@@ -6004,10 +5998,7 @@ async function fetchActivityImageFromUnsplash(activityLike) {
 function normalizeTrip(trip) {
   const normalizedTitle = formatCityName(trip?.title || trip?.destination || trip?.name || "Voyage");
   const invites = Array.isArray(trip?.invited_emails) ? trip.invited_emails : [];
-  const jRaw = trip?.invited_joined_emails;
-  const invited_joined_emails = Array.isArray(jRaw)
-    ? [...new Set(jRaw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean))]
-    : undefined;
+  const invited_joined_emails = normalizeInvitedJoinedEmails(trip?.invited_joined_emails);
   return {
     ...trip,
     title: String(normalizedTitle || "Voyage"),
@@ -14405,7 +14396,7 @@ export default function App() {
       (trips || [])
         .map((t) => {
           const id = String(t?.id || "");
-          const j = t?.invited_joined_emails;
+          const j = normalizeInvitedJoinedEmails(t?.invited_joined_emails);
           const oid = String(t?.owner_id || "").trim();
           let key;
           if (j == null) {
@@ -14433,7 +14424,7 @@ export default function App() {
     const targets = (trips || []).filter((t) => {
       if (!t?.id) return false;
       const isGuest = Boolean(t?.owner_id && myId && String(t.owner_id) !== myId);
-      const j = t?.invited_joined_emails;
+      const j = normalizeInvitedJoinedEmails(t?.invited_joined_emails);
       const hasInvitedFetch =
         j == null
           ? Array.isArray(t?.invited_emails) && t.invited_emails.some((e) => isValidEmail(String(e || "").trim()))
