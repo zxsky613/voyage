@@ -99,7 +99,8 @@ BEGIN
         SELECT lower(trim(x::text))
         FROM unnest(
           CASE
-            WHEN t.invited_joined_emails IS NULL THEN COALESCE(t.invited_emails, ARRAY[]::text[])
+            WHEN t.invited_joined_emails IS NULL OR cardinality(t.invited_joined_emails) = 0
+              THEN COALESCE(t.invited_emails, ARRAY[]::text[])
             ELSE t.invited_joined_emails
           END
         ) AS x
