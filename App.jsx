@@ -50,6 +50,13 @@ import {
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 import {
+  defaultPayerForParticipants,
+  isCurrentUserTripOwner,
+  isParticipantRawCurrentUser,
+  participantDisplayFromRawForTrip,
+  participantsForExpenseSplit,
+} from "./participantLogic.js";
+import {
   buildCityHeroUnsplashQuery,
   buildCityDronePromptFR,
   getHeroUnsplashDescBoostTokens,
@@ -818,37 +825,6 @@ function stackOrderedAvatarRaws(trip, session) {
   );
 }
 
-/**
- * Tricount (dépenses partagées) : « Moi » + seulement les e-mails listés dans `invited_joined_emails` (inscrits / ont accepté le voyage).
- * Si `invited_joined_emails` est `null` (héritage) : comme `canonicalParticipants` (tous les e-mails invités) — rétrocompatibilité.
- * Tableau vide : uniquement toi, la dépense ne se divise qu’en une part (1 personne) jusqu’à ce qu’un autre ait rejoint.
- */
-function participantsForExpenseSplit(trip, session) {
-  const full = canonicalParticipants(
-    Array.isArray(trip?.participants) ? trip.participants : [],
-    Array.isArray(trip?.invited_emails) ? trip.invited_emails : []
-  );
-  const joined = trip?.invited_joined_emails;
-  if (joined == null) {
-    return dedupeCurrentUserInAvatarRow(full, session, trip);
-  }
-  const jset = new Set(
-    (Array.isArray(joined) ? joined : [])
-      .map((x) => String(x || "").trim().toLowerCase())
-      .filter(Boolean)
-  );
-  if (jset.size === 0) {
-    return dedupeCurrentUserInAvatarRow(["Moi"], session, trip);
-  }
-  const filtered = full.filter((p) => {
-    const s = String(p || "").trim();
-    if (s.toLowerCase() === "moi") return true;
-    if (!isValidEmail(s)) return true;
-    return jset.has(s.toLowerCase());
-  });
-  return dedupeCurrentUserInAvatarRow(filtered, session, trip);
-}
-
 async function tryMarkInviteeJoinedTrips(supabaseClient) {
   if (!supabaseClient) return;
   try {
@@ -946,17 +922,6 @@ function cacheActivityDescription(activityId, description) {
   saveActivityDescriptionCache(cache);
 }
 
-function getCurrentUserDisplayName(session) {
-  const first = String(session?.user?.user_metadata?.first_name || "").trim();
-  const last = String(session?.user?.user_metadata?.last_name || "").trim();
-  const full = `${first} ${last}`.trim();
-  if (full) return full;
-  const fromMeta = String(session?.user?.user_metadata?.full_name || "").trim();
-  if (fromMeta) return fromMeta;
-  const emailLocal = String(session?.user?.email || "").split("@")[0] || "";
-  return emailLocal || "Moi";
-}
-
 function initialsFromLabel(label) {
   const raw = String(label || "").trim();
   if (!raw) return "??";
@@ -1018,30 +983,6 @@ function luminanceOfHex(hex) {
 
 function textColorOnInitialsBg(bgHex) {
   return luminanceOfHex(bgHex) > 0.55 ? "#0f172a" : "#ffffff";
-}
-
-/** Le compte actuel est le propriétaire de ce voyage (a créé le trip). */
-function isCurrentUserTripOwner(session, trip) {
-  const oid = String(trip?.owner_id || "").trim();
-  if (!oid) return true;
-  return String(session?.user?.id || "").trim() === oid;
-}
-
-/**
- * Coordonne « Moi » dans les données avec l’utilisateur : pour le propriétaire c’est le viewer ;
- * pour un invité, « Moi » désigne l’organisateur, pas l’utilisateur actuel.
- * @param {object} [trip] — si absent, « Moi » = viewer (héritage).
- */
-function isParticipantRawCurrentUser(raw, session, trip) {
-  const r = String(raw || "").trim().toLowerCase();
-  if (r === "moi") {
-    if (trip && String(trip.owner_id || "").trim()) {
-      return isCurrentUserTripOwner(session, trip);
-    }
-    return true;
-  }
-  const em = String(session?.user?.email || "").trim().toLowerCase();
-  return Boolean(em && r === em);
 }
 
 /**
@@ -1176,45 +1117,6 @@ function InviteeEmailAvatar({ email, session }) {
       className="h-full w-full object-cover"
     />
   );
-}
-
-function participantDisplayFromRaw(value, currentUserDisplayName) {
-  const raw = String(value || "").trim();
-  if (!raw) return "Membre";
-  if (raw.toLowerCase() === "moi") return String(currentUserDisplayName || "Moi");
-  if (!raw.includes("@")) return raw;
-  const local = raw.split("@")[0] || "";
-  const pretty = local
-    .split(/[._-]+/g)
-    .map((x) => String(x || "").trim())
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-  return pretty || raw;
-}
-
-/**
- * Libellé « Moi » : pour l’organisateur c’est le prénom du viewer ; pour un invité, « Moi » = l’hôte.
- */
-function participantDisplayFromRawForTrip(value, session, trip, ownerPeer) {
-  const raw = String(value || "").trim();
-  if (
-    raw.toLowerCase() === "moi" &&
-    trip &&
-    String(trip.owner_id || "").trim() &&
-    String(session?.user?.id || "") !== String(trip.owner_id)
-  ) {
-    if (ownerPeer && typeof ownerPeer === "object") {
-      const f = String(ownerPeer.firstName || "").trim();
-      const l = String(ownerPeer.lastName || "").trim();
-      const full = `${f} ${l}`.trim();
-      if (full) return full;
-      const em = String(ownerPeer.email || "").trim();
-      if (em) return participantDisplayFromRaw(em, getCurrentUserDisplayName(session));
-    }
-    return "Organisateur";
-  }
-  return participantDisplayFromRaw(value, getCurrentUserDisplayName(session));
 }
 
 function resolveVoterLabel(vote, session) {
@@ -12916,7 +12818,17 @@ function normalizeTripExpenseRow(row) {
   };
 }
 
-function GroupExpenseModal({ open, onClose, trip, participants, displayForParticipant, initial, onSave, saving }) {
+function GroupExpenseModal({
+  open,
+  onClose,
+  trip,
+  participants,
+  displayForParticipant,
+  defaultPaidBy,
+  initial,
+  onSave,
+  saving,
+}) {
   useScrollLock(open);
   const { t } = useI18n();
   const [title, setTitle] = useState("");
@@ -12939,11 +12851,11 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
     } else {
       setTitle("");
       setAmount("");
-      setPaidBy(parts.includes("Moi") ? "Moi" : parts[0]);
+      setPaidBy(String(defaultPaidBy || (parts.includes("Moi") ? "Moi" : parts[0])));
       setSplitSet(new Set(parts));
       setExpenseDate("");
     }
-  }, [open, initial?.id, participantsKey]);
+  }, [open, initial?.id, participantsKey, defaultPaidBy]);
 
   if (!open || !trip) return null;
 
@@ -13294,6 +13206,7 @@ function TripExpenseDetail({
   onUpdateGroupExpense,
   onDeleteGroupExpense,
   onShareTrip,
+  ownerPeer = null,
 }) {
   const { t, language } = useI18n();
   const [editingActivity, setEditingActivity] = useState(null);
@@ -13324,7 +13237,11 @@ function TripExpenseDetail({
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
   const participants = useMemo(() => participantsForExpenseSplit(trip, session), [trip, session]);
-  const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+  const defaultPaidBy = useMemo(
+    () => defaultPayerForParticipants(participants, session, trip),
+    [participants, session, trip]
+  );
+  const displayName = (p) => participantDisplayFromRawForTrip(p, session, trip, ownerPeer);
 
   const totalPlanner = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
   const totalGroup = safeGroup.reduce((sum, e) => sum + Number(e.amount || 0), 0);
@@ -13663,6 +13580,7 @@ function TripExpenseDetail({
         trip={trip}
         participants={participants}
         displayForParticipant={displayName}
+        defaultPaidBy={defaultPaidBy}
         initial={groupModal?.mode === "edit" ? groupModal.expense : null}
         saving={groupSaving}
         onSave={async (payload) => {
@@ -16957,6 +16875,7 @@ export default function App() {
             onUpdateGroupExpense={updateGroupExpense}
             onDeleteGroupExpense={deleteGroupExpense}
             onShareTrip={(tr) => setShareTrip(tr)}
+            ownerPeer={peerOwnerProfileByTripId[String(budgetDetailTrip?.id || "")] || null}
           />
         </BudgetTripDetailShell>
       ) : null}
