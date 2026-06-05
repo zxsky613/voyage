@@ -15661,8 +15661,9 @@ export default function App() {
           Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
             ? payload.invited_emails
             : [],
-        // NULL = legacy « tous les invités » en pastille ; un tableau [] excluait toute adresse côté UI.
-        invited_joined_emails: null,
+        // Nouveau voyage : aucun invité n'a encore rejoint. Les avatars gardent l'affichage hérité,
+        // mais le tricount ne divise pas les dépenses par défaut avec des invités non inscrits.
+        invited_joined_emails: [],
         title: safeTitle,
         name: safeTitle,
         destination: formatCityName(payload?.destination || payload?.title || safeTitle),
