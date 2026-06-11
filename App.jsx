@@ -13064,7 +13064,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 title: String(title || "").trim() || t("budget.expenseDefaultTitle"),
                 amount: amt,
                 paid_by: paidBy,
-                split_between: splitArr.length === parts.length ? [] : splitArr,
+                split_between: splitArr.map(String),
                 expense_date: expenseDate.trim() || null,
               });
             }}
@@ -15661,8 +15661,8 @@ export default function App() {
           Array.isArray(payload?.invited_emails) && payload.invited_emails.length > 0
             ? payload.invited_emails
             : [],
-        // NULL = legacy « tous les invités » en pastille ; un tableau [] excluait toute adresse côté UI.
-        invited_joined_emails: null,
+        // [] garde les dépenses partagées limitées aux personnes déjà rejointes ; les avatars affichent toujours les invités.
+        invited_joined_emails: [],
         title: safeTitle,
         name: safeTitle,
         destination: formatCityName(payload?.destination || payload?.title || safeTitle),

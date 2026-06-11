@@ -28,7 +28,7 @@ export function computeTricountBalances(canonicalParticipants, expenses) {
     const payer = String(e?.paid_by || "Moi");
     const rawSplit = Array.isArray(e?.split_between) ? e.split_between.map(String) : [];
     let effective =
-      rawSplit.length > 0 ? rawSplit.filter((p) => base.includes(p)) : [...base];
+      rawSplit.length > 0 ? [...new Set(rawSplit.filter((p) => p.trim() !== ""))] : [...base];
     if (effective.length === 0) effective = [...base];
     const share = amount / effective.length;
     if (balances[payer] === undefined) balances[payer] = 0;
