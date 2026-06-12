@@ -114,6 +114,60 @@ REVOKE ALL ON FUNCTION public.trip_id_visible_to_requester(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.trip_id_visible_to_requester(uuid) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.trip_id_owned_by_requester(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+BEGIN
+  IF u IS NULL OR p_trip_id IS NULL THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.id = p_trip_id
+      AND t.owner_id IS NOT NULL
+      AND t.owner_id = u
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.requester_matches_identity(p_user_id text, p_email text DEFAULT '')
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  u uuid := auth.uid();
+  em text;
+  supplied_uid text := NULLIF(trim(COALESCE(p_user_id, '')), '');
+  supplied_email text := lower(trim(COALESCE(p_email, '')));
+BEGIN
+  IF u IS NULL OR supplied_uid IS NULL OR supplied_uid <> u::text THEN
+    RETURN false;
+  END IF;
+  IF supplied_email = '' THEN
+    RETURN true;
+  END IF;
+  SELECT lower(trim(au.email::text)) INTO em FROM auth.users au WHERE au.id = u;
+  RETURN em IS NOT NULL AND em <> '' AND supplied_email = em;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trip_id_owned_by_requester(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.requester_matches_identity(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trip_id_owned_by_requester(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.requester_matches_identity(text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.requester_matches_identity(text, text) TO service_role;
+
 -- chat_messages
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 
@@ -129,16 +183,31 @@ CREATE POLICY "chat_messages_trip_member_select" ON public.chat_messages
 
 CREATE POLICY "chat_messages_trip_member_insert" ON public.chat_messages
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id, author_email)
+  );
 
 CREATE POLICY "chat_messages_trip_member_update" ON public.chat_messages
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id)
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(author_id, author_email)
+  );
 
 CREATE POLICY "chat_messages_trip_member_delete" ON public.chat_messages
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND (
+      public.requester_matches_identity(author_id)
+      OR public.trip_id_owned_by_requester(trip_id)
+    )
+  );
 
 -- activity_votes (même principe : votes visibles/éditables par les membres du voyage)
 ALTER TABLE public.activity_votes ENABLE ROW LEVEL SECURITY;
@@ -155,16 +224,31 @@ CREATE POLICY "activity_votes_trip_member_select" ON public.activity_votes
 
 CREATE POLICY "activity_votes_trip_member_insert" ON public.activity_votes
   FOR INSERT TO authenticated
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id, voter_email)
+  );
 
 CREATE POLICY "activity_votes_trip_member_update" ON public.activity_votes
   FOR UPDATE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id))
-  WITH CHECK (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id)
+  )
+  WITH CHECK (
+    public.trip_id_visible_to_requester(trip_id)
+    AND public.requester_matches_identity(voter_id, voter_email)
+  );
 
 CREATE POLICY "activity_votes_trip_member_delete" ON public.activity_votes
   FOR DELETE TO authenticated
-  USING (public.trip_id_visible_to_requester(trip_id));
+  USING (
+    public.trip_id_visible_to_requester(trip_id)
+    AND (
+      public.requester_matches_identity(voter_id)
+      OR public.trip_id_owned_by_requester(trip_id)
+    )
+  );
 
 -- Temps réel : inclure les tables (sinon postgres_changes côté client ne reçoit rien)
 DO $$

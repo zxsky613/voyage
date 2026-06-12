@@ -13064,7 +13064,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 title: String(title || "").trim() || t("budget.expenseDefaultTitle"),
                 amount: amt,
                 paid_by: paidBy,
-                split_between: splitArr.length === parts.length ? [] : splitArr,
+                split_between: splitArr.map(String),
                 expense_date: expenseDate.trim() || null,
               });
             }}
