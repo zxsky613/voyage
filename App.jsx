@@ -2393,6 +2393,8 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
     if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
       return upgradeLandscapeImageUrl(fromResolve);
     }
+    /** Contexte géo explicite + resolve échoué : pas de repli Unsplash (homonymes, ex. Capri IT). */
+    if (geoCtx) return "";
     const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
     const unsplash =
       unsplashPref || (await getCityHeroImage(buildNominatimCityQuery(ctx) || ctx));
