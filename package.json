@@ -13,10 +13,13 @@
     "fetch:destinations": "node scripts/fetch-destination-images.mjs",
     "upload:destinations": "node scripts/upload-destinations-to-supabase.mjs",
     "verify:city-heroes": "node scripts/verify-city-heroes.mjs",
+    "verify:catalog-hero": "node scripts/verify-catalog-city-hero-coverage.mjs",
+    "verify:hero-stem": "node scripts/verify-hero-stem-regression.mjs",
+    "verify:resolve-image": "node scripts/verify-resolve-image-regression.mjs",
     "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
     "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
     "fix:logo": "node scripts/fix-logo-white-dot.mjs",
-    "test": "node --test placeGuards.test.mjs api/_helpers.script.test.mjs"
+    "test": "node --test placeGuards.test.mjs api/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",

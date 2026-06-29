@@ -232,7 +232,9 @@ export function buildProperNamesScriptConsistencyRule(uiLang) {
   }
   if (code === "zh") {
     return (
-      "\n专名：面向中文读者时使用中文通用译名或规范汉字称谓；避免在无必要时夹写日文假名整段。韩文、日文专有名词用常见中文译名或简短中文说明。\n"
+      "\n专名：面向中文读者时使用中文通用译名或规范汉字称谓；避免在无必要时夹写日文假名整段。韩文、日文专有名词用常见中文译名或简短中文说明。\n" +
+      "- 禁止在 places / tips / activities 中保留希腊字母地名（如 Ι.Ν.、Αγίας 等）；改用中文译名或简短中文说明（如「圣尼古拉教堂」）。\n" +
+      "- 禁止仅输出英文或法文专名而不提供中文读者可读的汉字称谓。\n"
     );
   }
   if (code === "ja") {
@@ -264,8 +266,11 @@ export function formatPrefsForPrompt(prefs) {
   const paceLabel = { relaxed: "Détendu (2-3 activités/jour)", moderate: "Modéré (3-4)", intensive: "Intensif (maximum)" };
   if (prefs.pace) lines.push(`- Rythme : ${paceLabel[prefs.pace] || prefs.pace}`);
   if (Array.isArray(prefs.styles) && prefs.styles.length > 0) {
-    const styleLabel = { cultural: "Culturel", gastronomy: "Gastronomie", nature: "Nature", relaxation: "Détente", adventure: "Aventure", nightlife: "Vie nocturne", shopping: "Shopping" };
-    lines.push(`- Style(s) : ${prefs.styles.map((s) => styleLabel[s] || s).join(", ")}`);
+    const styles = prefs.styles.filter((s) => s !== "gastronomy");
+    if (styles.length > 0) {
+      const styleLabel = { cultural: "Culturel", nature: "Nature", relaxation: "Détente", adventure: "Aventure", nightlife: "Vie nocturne", shopping: "Shopping" };
+      lines.push(`- Style(s) : ${styles.map((s) => styleLabel[s] || s).join(", ")}`);
+    }
   }
   const travelersLabel = { solo: "Solo", couple: "Couple", family: "Famille", friends: "Amis" };
   if (prefs.travelers) lines.push(`- Profil : ${travelersLabel[prefs.travelers] || prefs.travelers}`);
@@ -405,7 +410,7 @@ export function buildItinerarySchedulingRulesParagraph(uiLang) {
       "\nSCHEDULING & CLOSURE RULES (MANDATORY):\n" +
       "- Use the calendar below: each \"Day N\" MUST match the listed calendar date and weekday.\n" +
       "- Museums / monuments: respect TYPICAL weekly closing patterns for the destination country (e.g. many museums in France closed Monday; adapt to the city/country). If unsure for a specific venue, say \"check official hours / book online\" instead of inventing times.\n" +
-      "- Restaurants & shops: respect common local patterns (e.g. Sunday closures in some areas); say \"check opening hours\" when relevant.\n" +
+      "- Shops & services: respect common local patterns (e.g. Sunday closures in some areas); say \"check opening hours\" when relevant.\n" +
       "- If public holidays are listed below, adapt that day (closures, crowds) and mention the holiday name in that day's bullets.\n" +
       "\nLIMITS (be honest):\n" +
       "- You do NOT have real-time data: marathons, protests, roadworks, exceptional street or store closures, or weather. In at least ONE bullet somewhere in the itinerary, tell the traveler to check the official city website, public transport alerts, and local news before the trip.\n" +
@@ -456,11 +461,64 @@ export function buildItinerarySchedulingRulesParagraph(uiLang) {
     "\nCONTRAINTES D'HORAIRES ET FERMETURES (OBLIGATOIRE) :\n" +
     "- S'appuie sur le calendrier ci-dessous : chaque « Jour N » correspond à la date et au jour de la semaine indiqués — ne pas les mélanger.\n" +
     "- Musées / monuments : respecte les fermetures hebdomadaires TYPIQUES du pays de la destination (ex. beaucoup de musées en France fermés le lundi ; adapte selon la ville et le pays). Si la règle d'un lieu précis est incertaine, indique « vérifier les horaires sur le site officiel / réservation en ligne » plutôt qu'un horaire inventé.\n" +
-    "- Restaurants et commerces : selon les habitudes locales, évite un planning incohérent ; utilise « vérifier ouverture » quand c'est pertinent.\n" +
+    "- Commerces et services : selon les habitudes locales, évite un planning incohérent ; utilise « vérifier ouverture » quand c'est pertinent.\n" +
     "- Jours fériés : s'ils sont listés ci-dessous, adapte le jour concerné (fermetures, affluence) et cite le nom du jour férié dans les bullets de ce jour.\n" +
     "\nLIMITES (honnêteté) :\n" +
     "- Tu n'as pas les données en temps réel : marathon, manifestation, travaux, fermeture exceptionnelle d'une rue ou d'un magasin, météo. Dans au moins une bullet du programme, rappelle explicitement de consulter avant le départ le site officiel de la ville ou de la région, les infos transports et l'actualité locale pour anticiper les imprévus.\n" +
     "- Pour les zones sensibles aux événements (centre-ville un week-end), propose dans les bullets une alternative ou une marge horaire.\n"
+  );
+}
+
+/** Pas de restauration ni « retour à l’hôtel / repos » dans les programmes — uniquement des visites. */
+export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
+  const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  if (code === "en") {
+    return (
+      "\nACTIVITIES ONLY — PRODUCT RULE (MANDATORY):\n" +
+      "- Exactly 2 bullets per day (morning + afternoon): concrete visits, walks, museums, nature, viewpoints.\n" +
+      "- Do NOT plan meals, snacks, cafés, restaurants, bars, or food tours — not even generically.\n" +
+      "- Do NOT add an evening bullet whose only purpose is rest, sleep, or « return to accommodation ».\n" +
+      "- costEur covers tickets and local transport only — no restaurant-style spending.\n"
+    );
+  }
+  if (code === "de") {
+    return (
+      "\nNUR BESICHTIGUNGEN — PRODUKTKONDITION (VERPFLICHTEND):\n" +
+      "- Genau 2 Bullets pro Tag (Vormittag + Nachmittag): konkrete Besuche, keine Mahlzeiten.\n" +
+      "- Keine Restaurants, Cafés, Bars, Snacks oder « Rückkehr zur Unterkunft / Ruhe » als Programmpunkt.\n" +
+      "- costEur nur Eintritte und Nahverkehr — kein Restaurant-Budget.\n"
+    );
+  }
+  if (code === "es") {
+    return (
+      "\nSOLO VISITAS — REGLA DE PRODUCTO (OBLIGATORIO):\n" +
+      "- Exactamente 2 viñetas por día (mañana + tarde): visitas concretas, sin comidas.\n" +
+      "- Prohibido restaurantes, bares, cafés, comida o « volver al alojamiento / descansar » como actividad.\n" +
+      "- costEur solo entradas y transporte local.\n"
+    );
+  }
+  if (code === "it") {
+    return (
+      "\nSOLO VISITE — REGOLA DI PRODOTTO (OBBLIGATORIO):\n" +
+      "- Esattamente 2 bullet al giorno (mattina + pomeriggio): visite concrete, niente pasti.\n" +
+      "- Vietati ristoranti, bar, caffè, cibo o « rientro in hotel / riposo » come attività.\n" +
+      "- costEur solo biglietti e trasporti locali.\n"
+    );
+  }
+  if (code === "zh") {
+    return (
+      "\n仅安排参观 — 产品约束（必须遵守）：\n" +
+      "- 每天恰好 2 条 bullet（上午 + 下午）：具体景点或体验，不写餐饮。\n" +
+      "- 禁止餐厅、咖啡馆、酒吧、用餐、小吃，也不要写「返回住宿休息」类 filler。\n" +
+      "- costEur 仅含门票与本地交通，不含餐饮消费。\n"
+    );
+  }
+  return (
+    "\nVISITES UNIQUEMENT — CONTRAINTE PRODUIT (OBLIGATOIRE) :\n" +
+    "- Exactement 2 bullets par jour (matin + après-midi) : visites concrètes, musées, nature, belvédères.\n" +
+    "- Aucun repas, café, restaurant, bar, collation ou tournée gastronomique — même en générique.\n" +
+    "- Pas de bullet « soir » ou « retour à l’hôtel / repos » sans visite réelle.\n" +
+    "- costEur = entrées + transports locaux uniquement, sans poste restaurant.\n"
   );
 }
 
@@ -479,7 +537,7 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
       "- Do NOT repeat the same named venue, museum, monument, park, market, bridge, or viewpoint on a later day. Synonyms count (e.g. \"Louvre\" vs \"Musée du Louvre\").\n" +
       "- Across a long stay (e.g. 14 days), rotate widely: if a major icon appears once, later days must use other districts, smaller gems, or different experience types.\n" +
       "\nVARIETY (broad catalog, e.g. tour marketplaces):\n" +
-      "- Mix guided walks, local food/market stops, viewpoints, craft or tasting experiences, residential quartiers, half-day nature nearby if realistic—avoid recycling the same \"flagship museum\" pattern every day unless the traveler's style prefs demand it.\n"
+      "- Mix guided walks, viewpoints, craft or heritage workshops, residential quartiers, outdoor or civic spaces, half-day nature nearby if realistic—avoid recycling the same \"flagship museum\" pattern every day unless the traveler's style prefs demand it.\n"
     );
   }
   if (code === "de") {
@@ -490,7 +548,7 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
       "\nKEINE DUPLIKATE ÜBER TAGE (PFLICHT):\n" +
       "- Dasselbe benannte Museum/Denkmal/Park/Markt nicht an einem späteren Tag erneut einplanen. Synonyme zählen.\n" +
       "\nVIELFALT (breites Angebot wie bei Reise-Plattformen):\n" +
-      "- Wechselnde Tagestypen: Spaziergänge, Märkte, Aussichtspunkte, kulinarische Stops, ruhigere Stadtviertel — nicht täglich nur die gleiche Kategorie Top-Museum.\n"
+      "- Wechselnde Tagestypen: Spaziergänge, Aussichtspunkte, Handwerk/Workshops, ruhigere Stadtviertel, Stadtparks — nicht täglich nur die gleiche Kategorie Top-Museum.\n"
     );
   }
   if (code === "es") {
@@ -501,7 +559,7 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
       "\nSIN REPETICIONES ENTRE DÍAS (OBLIGATORIO):\n" +
       "- No repitas el mismo museo, monumento, parque, mercado o mirador en otro día. Los sinónimos cuentan (p. ej. \"Louvre\" / \"Museo del Louvre\").\n" +
       "\nVARIEDAD (catálogo amplio, estilo agregadores de excursiones):\n" +
-      "- Combina paseos guiados, comida local, miradores, talleres o barrios menos turísticos.\n"
+      "- Combina paseos guiados, miradores, talleres patrimoniales o barrios menos turísticos, espacios al aire libre.\n"
     );
   }
   if (code === "it") {
@@ -512,7 +570,7 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
       "\nNESSUN DUPLICATO TRA I GIORNI (OBBLIGATORIO):\n" +
       "- Non ripetere lo stesso museo, monumento, parco, mercato o belvedere in un giorno successivo. I sinonimi contano.\n" +
       "\nVARIETÀ (catalogo ampio come marketplace tour):\n" +
-      "- Alterna passeggiate, street food, punti panoramici, quartieri residenziali, esperienze locali.\n"
+      "- Alterna passeggiate, punti panoramici, quartieri residenziali, laboratori artigianali o patrimonio locale.\n"
     );
   }
   if (code === "zh") {
@@ -523,7 +581,7 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
       "\n跨天不重复（必须）：\n" +
       "- 不要把同一座博物馆、地标、公园、市场或观景台在后续日期再次安排；同义词也算重复（如「卢浮宫」「卢浮宫博物馆」）。\n" +
       "\n多样性（类似综合旅游平台）：\n" +
-      "- 混合步行导览、市集/美食、观景、手作体验、居民区等，避免每天都同一类「旗舰博物馆」模板。\n"
+      "- 混合步行导览、观景、手作或文化体验、居民区、城市公共空间或近郊自然半日等，避免每天都同一类「旗舰博物馆」模板。\n"
     );
   }
   return (
@@ -534,8 +592,44 @@ export function buildItineraryCohesionAndVarietyRulesParagraph(uiLang) {
     "- Ne repropose pas le même musée, monument, parc, marché couvert, pont ou belvédère à une autre date. Les synonymes comptent (ex. « Louvre » / « Musée du Louvre »).\n" +
     "- Sur un long séjour, fais tourner largement les lieux et les expériences.\n" +
     "\nVARIÉTÉ (large catalogue, esprit plateformes d’excursions) :\n" +
-    "- Variété type GetYourGuide / marchands d’activités : visites guidées pédestres, marché ou cuisine locale, points de vue, ateliers, quartiers moins fréquentés, demi-journée nature périphérique si cohérent — pas la réutilisation du même schéma « musée phare » jour après jour sauf si les préférences du voyageur l’exigent.\n"
+    "- Variété type GetYourGuide / marchands d’activités : visites guidées pédestres, points de vue, ateliers patrimoine ou artisanat, quartiers moins fréquentés, espaces extérieurs ou demi-journée nature périphérique si cohérent — pas la réutilisation du même schéma « musée phare » jour après jour sauf si les préférences du voyageur l’exigent.\n"
   );
+}
+
+function stripItineraryBulletTimePrefix(bullet) {
+  return String(bullet || "")
+    .replace(
+      /^(matin|apr[eè]s[- ]midi|soir|morning|afternoon|evening|morgen|vormittag|nachmittag|abend|上午|下午|晚上|午前|午後)\s*[:：\-–—]\s*/iu,
+      ""
+    )
+    .trim();
+}
+
+/** Repas, pause-resto ou retour hôtel/repos — exclus du programme affiché. */
+export function isItineraryMealOrRestBullet(bullet) {
+  const s = String(bullet || "").trim();
+  if (!s) return true;
+  const body = stripItineraryBulletTimePrefix(s);
+  const low = body.toLowerCase();
+  if (
+    /(restaurant|repas|dîner|diner|déjeuner|dejeuner|lunch|breakfast|brunch|café|coffee|food tour|gastronom|用餐|餐厅|午餐|晚餐|早餐|夜宵|品茶|美食|小吃)/i.test(
+      body
+    )
+  ) {
+    return true;
+  }
+  if (
+    /(回到|返回|回至).{0,16}(住宿|酒店|旅馆)|return to (?:your )?(?:hotel|accommodation|lodging)|zur(?:ück)?\s+(?:unterkunft|hotel)/i.test(
+      body
+    )
+  ) {
+    return true;
+  }
+  if (/^(repos|rest|se reposer|休息|歇(?:息|一歇)?)\b/i.test(low)) return true;
+  if (/^(soir|evening|晚上|abend)\s*[:：]/i.test(s) && /(repos|rest|住宿|hotel|回去|返回|休息)/i.test(body)) {
+    return true;
+  }
+  return false;
 }
 
 function normalizeBulletForDedup(s) {
@@ -565,28 +659,28 @@ function bulletTokenOverlapRatio(a, b) {
 
 const FALLBACK_BULLETS_EXTRA = {
   fr: [
-    "Même zone : flânerie dans des rues secondaires ou cour intérieure, sans reprendre un site déjà cité un autre jour.",
-    "Pause locale (café, épicerie fine ou petite galerie) — toujours dans le quartier du jour.",
+    "Matin : balade dans les ruelles du quartier du jour, sans reprendre un site déjà cité.",
+    "Après-midi : point de vue ou petit musée de quartier dans la même zone.",
   ],
   en: [
-    "Same area: side streets or a courtyard visit—do not revisit any place named earlier in the trip.",
-    "Short local stop (café, deli, small shop) staying within the day’s neighborhood.",
+    "Morning: walk the side streets of the day's neighborhood—no repeat venues.",
+    "Afternoon: viewpoint or small local museum in the same area.",
   ],
   de: [
-    "Gleiches Viertel: Nebenstraßen ohne bereits genannte Orte.",
-    "Kurzer Stopp (Café, kleiner Laden) im Tagesgebiet.",
+    "Vormittag: Spaziergang im Tagesviertel ohne bereits genannte Orte.",
+    "Nachmittag: Aussichtspunkt oder kleines Museum in derselben Zone.",
   ],
   es: [
-    "Misma zona: callejuelas o patios sin repetir lugares de otros días.",
-    "Parada corta (café, tienda) dentro del barrio del día.",
+    "Mañana: paseo por callejuelas del barrio del día, sin repetir lugares.",
+    "Tarde: mirador o museo pequeño en la misma zona.",
   ],
   it: [
-    "Stessa zona: vicoli o cortili senza ripetere luoghi di altri giorni.",
-    "Sosta locale (caffè, bottega) nel quartiere del giorno.",
+    "Mattina: passeggiata nei vicoli del quartiere del giorno, senza ripetizioni.",
+    "Pomeriggio: belvedere o piccolo museo nella stessa area.",
   ],
   zh: [
-    "仍在当日区域：走小巷或庭院，不重复前几日已提过的地点。",
-    "短暂停留（咖啡馆、小店）保持在当日街区范围内。",
+    "上午：在当日街区漫步小巷，不重复前几日地点。",
+    "下午：同一区域的小博物馆或观景点。",
   ],
 };
 
@@ -603,7 +697,7 @@ export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr") {
     const next = [];
     for (const b of rawBullets) {
       const s = String(b || "").trim();
-      if (!s) continue;
+      if (!s || isItineraryMealOrRestBullet(s)) continue;
       const norm = normalizeBulletForDedup(s);
       if (norm.length < 12) {
         next.push(s);
@@ -633,7 +727,7 @@ export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr") {
     while (next.length < 2) {
       next.push(extras[(next.length + out.length) % extras.length]);
     }
-    out.push({ ...day, bullets: next });
+    out.push({ ...day, bullets: next.slice(0, 2) });
   }
   return out;
 }
@@ -647,6 +741,7 @@ export async function buildItineraryEnrichmentBlock({ startDate, endDate, countr
     Promise.resolve(buildItineraryCohesionAndVarietyRulesParagraph(uiLang)),
   ]);
   const scriptRule = buildProperNamesScriptConsistencyRule(uiLang);
+  const noRestaurants = buildItineraryNoNamedRestaurantsParagraph(uiLang);
   const code = String(uiLang || "fr").toLowerCase().split("-")[0];
   const calTitle =
     code === "en"
@@ -654,7 +749,7 @@ export async function buildItineraryEnrichmentBlock({ startDate, endDate, countr
       : code === "zh"
         ? "精确日历（行程中的每一天对应下方日期）"
         : "Calendrier exact (chaque jour du programme = une date réelle)";
-  return `\n${calTitle} :\n${cal}\n${holidays}${rules}${cohesion}${scriptRule}`;
+  return `\n${calTitle} :\n${cal}\n${holidays}${rules}${cohesion}${noRestaurants}${scriptRule}`;
 }
 
 export function getGeminiKey() {
@@ -671,4 +766,22 @@ export function getGroqKey() {
 
 export function getFoursquareKey() {
   return String(process.env.FOURSQUARE_API_KEY || "").trim();
+}
+
+/** Clé Unsplash — serveur uniquement (jamais VITE_ en prod). */
+export function getUnsplashKey() {
+  return String(process.env.UNSPLASH_ACCESS_KEY || "").trim();
+}
+
+export function getSupabaseUrl() {
+  return String(
+    process.env.VITE_SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      process.env.SUPABASE_URL ||
+      ""
+  ).trim();
+}
+
+export function getSupabaseServiceRoleKey() {
+  return String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 }

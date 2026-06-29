@@ -45,12 +45,12 @@ export default async function handler(req, res) {
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
     enrichBlock +
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-    `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
+    `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : visite …","Après-midi : …"]}, ...]}\n` +
     `Règles STRICTES :\n` +
     `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus (même ordre).\n` +
-    `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-    `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
-    `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${bHint}. Inclure repas, entrées, transports locaux.\n` +
+    `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville & patrimoine").\n` +
+    `- Chaque objet DOIT avoir exactement 2 bullets (matin + après-midi) : visites concrètes uniquement — pas de repas, pas de « retour à l'hôtel / repos ».\n` +
+    `- "costEur" : entier JSON — coût total estimé de la journée en euros (entrées + transports locaux), cohérent avec le budget : ${bHint}.\n` +
     `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
     `${langRule}\n` +
     `Lieux réels pour cette destination (pas de lieux inventés).`;
@@ -61,6 +61,7 @@ export default async function handler(req, res) {
     "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
     "Le champ costEur est toujours un entier JSON. " +
     "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+    "Ne planifie aucun repas ni retour à l'hôtel pour se reposer ; uniquement des visites. " +
     "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
 
   try {

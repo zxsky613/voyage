@@ -6,6 +6,9 @@
  * Lit GEMINI_API_KEY depuis .env.local (sans préfixe VITE_).
  * - POST /api/send-invite — invitations e-mail (RESEND_API_KEY dans .env.local).
  * - POST /api/ui-translate — traduction des libellés utilisateur (GROQ_API_KEY ou GEMINI_API_KEY).
+ * - POST /api/images/unsplash — proxy Unsplash (UNSPLASH_ACCESS_KEY).
+ * - POST /api/images/commons-info — attribution Commons (auteur + licence).
+ * - POST /api/images/resolve — résolution Wikidata + cache image_resolve_cache.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -336,9 +339,9 @@ function geminiLangRuleParagraph(code) {
  */
 function budgetRangeHint(prefs) {
   const tier = prefs?.budget;
-  if (tier === "low")    return "< 50 €/jour (activités économiques, peu de restaurants gastronomiques)";
-  if (tier === "medium") return "50–150 €/jour (restaurants mid-range, quelques musées, transports)";
-  if (tier === "high")   return "150–300 €/jour (restaurants gastronomiques, visites guidées, taxis)";
+  if (tier === "low")    return "< 50 €/jour (activités économiques, entrées modestes, transports locaux)";
+  if (tier === "medium") return "50–150 €/jour (quelques musées payants, transports, visites accessibles)";
+  if (tier === "high")   return "150–300 €/jour (visites guidées, taxis ponctuels, sites payants)";
   if (tier === "luxury") return "> 300 €/jour (expériences premium, hôtels luxueux, excursions privées)";
   return "budget non précisé — estime un coût réaliste pour un touriste moyen";
 }
@@ -356,8 +359,11 @@ function formatPrefsForPrompt(prefs) {
   if (prefs.pace) lines.push(`- Rythme : ${paceLabel[prefs.pace] || prefs.pace}`);
 
   if (Array.isArray(prefs.styles) && prefs.styles.length > 0) {
-    const styleLabel = { cultural: "Culturel & Histoire", gastronomy: "Gastronomie", nature: "Nature & Randonnée", relaxation: "Détente & Bien-être", adventure: "Aventure & Sports", nightlife: "Vie nocturne", shopping: "Shopping" };
-    lines.push(`- Style(s) souhaité(s) : ${prefs.styles.map((s) => styleLabel[s] || s).join(", ")}`);
+    const styles = prefs.styles.filter((s) => s !== "gastronomy");
+    if (styles.length > 0) {
+      const styleLabel = { cultural: "Culturel & Histoire", nature: "Nature & Randonnée", relaxation: "Détente & Bien-être", adventure: "Aventure & Sports", nightlife: "Vie nocturne", shopping: "Shopping" };
+      lines.push(`- Style(s) souhaité(s) : ${styles.map((s) => styleLabel[s] || s).join(", ")}`);
+    }
   }
 
   const travelersLabel = { solo: "Voyage en solo", couple: "Voyage en couple", family: "Voyage en famille (avec enfants)", friends: "Voyage entre amis" };
@@ -385,9 +391,71 @@ function formatError(e) {
   return msg;
 }
 
+async function routeVercelApiHandler(req, res, handler, body) {
+  req.body = body;
+  if (typeof res.status !== "function") {
+    res.status = function status(code) {
+      res.statusCode = code;
+      const self = res;
+      return {
+        json(obj) {
+          self.setHeader("Content-Type", "application/json; charset=utf-8");
+          self.end(JSON.stringify(obj));
+        },
+      };
+    };
+  }
+  await handler(req, res);
+}
+
 function attachGeminiMiddleware(middlewares, mode, envDir) {
   middlewares.use(async (req, res, next) => {
     const pathname = (req.url || "").split("?")[0] || "";
+
+    if (
+      pathname === "/api/images/unsplash" ||
+      pathname === "/api/images/commons-info" ||
+      pathname === "/api/images/resolve"
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") {
+        res.statusCode = 200;
+        res.end();
+        return;
+      }
+      if (req.method !== "POST") {
+        sendJson(res, 405, { error: "Method not allowed" });
+        return;
+      }
+      const unsplashKey =
+        readServerKey(envDir, "UNSPLASH_ACCESS_KEY") || readServerKey(envDir, "VITE_UNSPLASH_ACCESS_KEY");
+      if (unsplashKey) process.env.UNSPLASH_ACCESS_KEY = unsplashKey;
+      const supabaseUrl =
+        readServerKey(envDir, "VITE_SUPABASE_URL") || readServerKey(envDir, "SUPABASE_URL");
+      if (supabaseUrl) process.env.VITE_SUPABASE_URL = supabaseUrl;
+      const supabaseServiceKey = readServerKey(envDir, "SUPABASE_SERVICE_ROLE_KEY");
+      if (supabaseServiceKey) process.env.SUPABASE_SERVICE_ROLE_KEY = supabaseServiceKey;
+      let body = {};
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      try {
+        const file = pathname.endsWith("resolve")
+          ? "resolve"
+          : pathname.endsWith("commons-info")
+            ? "commons-info"
+            : "unsplash";
+        const mod = await import(`./api/images/${file}.js`);
+        await routeVercelApiHandler(req, res, mod.default, body);
+      } catch (e) {
+        sendJson(res, 502, { ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
 
     if (pathname === "/api/send-invite") {
       res.setHeader("Access-Control-Allow-Origin", "*");
@@ -711,12 +779,12 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           `${prefsBlock}\n` +
           enrichBlock +
           `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-          `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
+          `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : visite …","Après-midi : …"]}, ...]}\n` +
           `Règles STRICTES :\n` +
           `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus.\n` +
-          `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-          `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
-          `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
+          `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville & patrimoine").\n` +
+          `- Chaque objet DOIT avoir exactement 2 bullets (matin + après-midi) : visites concrètes uniquement — pas de repas, pas de « retour à l'hôtel / repos ».\n` +
+          `- "costEur" : entier JSON — coût total estimé de la journée en euros (entrées + transports locaux), cohérent avec le budget : ${budgetHint}.\n` +
           `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
           `${langRule}\n` +
           `Lieux réels pour cette destination (pas de lieux inventés).`;
@@ -726,6 +794,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           "Les chaînes ne contiennent jamais de guillemet double non échappé. " +
           "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
           "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+          "Ne planifie aucun repas ni retour à l'hôtel pour se reposer ; uniquement des visites. " +
           "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
         try {
           const data = await runGroqJson({
@@ -802,7 +871,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           `Exactement 6 objets avec title, location, estimatedCostEur (nombre), costNote, description.\n` +
           `Chaque "title" DOIT être le NOM PROPRE d'un lieu réel et concret.\n` +
           `Les activités doivent correspondre à la géographie réelle de « ${destination} ».\n` +
-          `Variété : mélange monuments, musées, quartiers, nature, gastronomie locale.`;
+          `Variété : mélange monuments, musées, quartiers, nature, espaces extérieurs — aucun lieu de restauration comme title.`;
         const systemPrompt =
           "Tu produis uniquement un objet JSON valide UTF-8. Chaque title doit être un nom propre de lieu réel.";
         try {
@@ -893,12 +962,12 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         `${prefsBlock}\n` +
         enrichBlock +
         `Réponds UNIQUEMENT avec un JSON UTF-8 valide, sans markdown, sans texte avant ou après, de la forme:\n` +
-        `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : phrase courte","Après-midi : phrase courte","Soir : phrase courte"]}, ...]}\n` +
+        `{"dayIdeas":[{"day":1,"title":"titre court descriptif","costEur":95,"bullets":["Matin : visite …","Après-midi : …"]}, ...]}\n` +
         `Règles STRICTES pour que le JSON soit valide :\n` +
         `- Exactement ${days} objets dans dayIdeas, day = 1 … ${days}, alignés sur le calendrier ci-dessus.\n` +
-        `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville et gastronomie").\n` +
-        `- Chaque objet DOIT avoir un champ "bullets" NON VIDE avec 2-3 phrases courtes décrivant les activités (jour de la semaine, fermetures typiques, jours fériés si listés).\n` +
-        `- "costEur" : entier JSON — coût total estimé de la journée en euros, cohérent avec le budget : ${budgetHint}. Inclure repas, entrées, transports locaux.\n` +
+        `- Chaque objet DOIT avoir un champ "title" NON VIDE (thème du jour, ex: "Vieille ville & patrimoine").\n` +
+        `- Chaque objet DOIT avoir exactement 2 bullets (matin + après-midi) : visites concrètes uniquement — pas de repas, pas de « retour à l'hôtel / repos ».\n` +
+        `- "costEur" : entier JSON — coût total estimé de la journée en euros (entrées + transports locaux), cohérent avec le budget : ${budgetHint}.\n` +
         `- Pas de guillemet double non échappé ni de retour à la ligne à l'intérieur d'une chaîne JSON.\n` +
         `${langRule}\n` +
         `Lieux réels pour cette destination (pas de lieux inventés).`;
@@ -909,6 +978,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         "Les chaînes ne contiennent jamais de caractère guillemet double non échappé ; n'emploie pas de citations avec des guillemets. " +
         "Le champ costEur est toujours un entier JSON (jamais une chaîne). " +
         "Tu respectes le calendrier et les règles de fermetures ; tu ne inventes pas d'horaires précis non vérifiables. " +
+        "Ne planifie aucun repas ni retour à l'hôtel pour se reposer ; uniquement des visites. " +
         "Chaque jour = un quartier/zone principal cohérent ; ne répète jamais le même lieu nommé sur un autre jour.";
 
       try {
@@ -950,15 +1020,15 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         `Tableau "suggestedActivities" : exactement 6 objets (pas de simples chaînes), chacun avec :\n` +
         `- "title" : le NOM PROPRE d'un lieu, monument, musée, sentier, rue ou site CONCRET et RÉEL.\n` +
         `  Exemples de bons titres : "Musée du Louvre", "Sentier des douaniers (GR34)", "Quartier Shibuya", "Brooklyn Bridge".\n` +
-        `  Exemples de MAUVAIS titres (INTERDIT) : "Visite des musées", "Balade en ville", "Tour culinaire", "Point de vue".\n` +
+        `  Exemples de MAUVAIS titres (INTERDIT) : "Visite des musées", "Balade en ville", "Tour culinaire", "Restaurant Le …", "Point de vue".\n` +
         `- "location" : quartier ou adresse précise dans « ${destination} ».\n` +
         `- "estimatedCostEur" : nombre JSON uniquement (jamais une chaîne), estimation en euros ; 0 si gratuit avéré.\n` +
-        `- "costNote" : courte précision dans la même langue (ex. billet adulte, gratuit, déjeuner moyen).\n` +
+        `- "costNote" : courte précision dans la même langue (ex. billet adulte, gratuit, transport local).\n` +
         `- "description" : une phrase utile dans la même langue (durée, horaire type, conseil).\n` +
         `Les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
         `Ne propose PAS d'activités liées à la mer si la ville est dans les terres. ` +
         `Ne propose PAS de ski si la ville n'est pas en zone montagneuse.\n` +
-        `Variété : mélange monuments, musées, quartiers, nature, gastronomie locale.`;
+        `Variété : mélange monuments, musées, quartiers, nature, espaces extérieurs — aucun lieu de restauration comme title.`;
       const systemInstruction =
         "Tu réponds uniquement par un objet JSON valide UTF-8. Chaque title doit être un nom propre de lieu réel et concret, jamais une description générique.";
       try {

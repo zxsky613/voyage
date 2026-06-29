@@ -26,14 +26,14 @@ export default async function handler(req, res) {
     `RÈGLES IMPORTANTES :\n` +
     `- Chaque "title" DOIT être le NOM PROPRE d'un lieu, monument, musée, sentier, rue ou site CONCRET et RÉEL.\n` +
     `  Exemples de bons titres : "Musée du Louvre", "Sentier des douaniers (GR34)", "Quartier Shibuya", "Brooklyn Bridge".\n` +
-    `  Exemples de MAUVAIS titres (INTERDIT) : "Visite des musées", "Balade en ville", "Tour culinaire", "Point de vue".\n` +
+    `  Exemples de MAUVAIS titres (INTERDIT) : "Visite des musées", "Balade en ville", "Tour culinaire", "Restaurant Le …", "Point de vue".\n` +
     `- "location" : quartier ou adresse précise dans « ${destination} ».\n` +
     `- "description" : 1 phrase courte et utile (durée, horaire, conseil pratique).\n` +
     `- Pas de guillemet double non échappé dans les chaînes.\n` +
     `- Les activités doivent correspondre à la géographie réelle de « ${destination} ». ` +
     `Ne propose PAS d'activités liées à la mer si la ville est dans les terres. ` +
     `Ne propose PAS de ski si la ville n'est pas en zone montagneuse.\n` +
-    `- Variété : mélange monuments, musées, quartiers, nature, gastronomie locale.`;
+    `- Variété : mélange monuments, musées, quartiers, nature, espaces extérieurs — aucun lieu de restauration ni adresse de repas comme "title".`;
 
   const systemInstruction =
     "Tu produis uniquement un objet JSON valide UTF-8. Chaque title doit être un nom propre de lieu réel et concret, jamais une description générique. Les chaînes ne contiennent jamais de guillemet double non échappé.";

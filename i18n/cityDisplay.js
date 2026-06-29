@@ -64,6 +64,7 @@ const NAMES = {
   vienne: { fr: "Vienne", en: "Vienna", de: "Wien", es: "Viena", it: "Vienna", zh: "维也纳" },
   budapest: { fr: "Budapest", en: "Budapest", de: "Budapest", es: "Budapest", it: "Budapest", zh: "布达佩斯" },
   athenes: { fr: "Athènes", en: "Athens", de: "Athen", es: "Atenas", it: "Atene", zh: "雅典" },
+  crete: { fr: "Crète", en: "Crete", de: "Kreta", es: "Creta", it: "Creta", zh: "克里特岛" },
   istanbul: { fr: "Istanbul", en: "Istanbul", de: "Istanbul", es: "Estambul", it: "Istanbul", zh: "伊斯坦布尔" },
   dubai: { fr: "Dubaï", en: "Dubai", de: "Dubai", es: "Dubái", it: "Dubai", zh: "迪拜" },
   doha: { fr: "Doha", en: "Doha", de: "Doha", es: "Doha", it: "Doha", zh: "多哈" },
@@ -107,6 +108,10 @@ const KEY_ALIASES = {
   lisbon: "lisbonne",
   vienna: "vienne",
   athens: "athenes",
+  kreta: "crete",
+  /** Variantes courtes (UI zh, etc.) → clé hero / affichage. */
+  "克里特": "crete",
+  "克里特岛": "crete",
   algiers: "alger",
   marrakesh: "marrakech",
   myconos: "mykonos",
@@ -160,6 +165,7 @@ const KEY_TO_CATALOG_CITY = {
   vienne: "Vienne",
   budapest: "Budapest",
   athenes: "Athènes",
+  crete: "Crete",
   istanbul: "Istanbul",
   dubai: "Dubai",
   doha: "Doha",
@@ -204,8 +210,7 @@ function registerLocalizedCityLabel(label, catalogCity) {
 
 (function buildLocalizedCitySearchIndex() {
   for (const key of Object.keys(NAMES)) {
-    const catalog = KEY_TO_CATALOG_CITY[key];
-    if (!catalog) continue;
+    const catalog = KEY_TO_CATALOG_CITY[key] || NAMES[key].en || key;
     const row = NAMES[key];
     for (const label of Object.values(row)) {
       registerLocalizedCityLabel(label, catalog);
@@ -240,7 +245,54 @@ function resolveNameKey(raw) {
   if (NAMES[k]) return k;
   const alias = KEY_ALIASES[k];
   if (alias && NAMES[alias]) return alias;
+  const trimmed = String(raw || "").trim();
+  const aliasRaw = KEY_ALIASES[trimmed] || KEY_ALIASES[normalizeLocalSearchQuery(trimmed)];
+  if (aliasRaw && NAMES[aliasRaw]) return aliasRaw;
   return k;
+}
+
+/** Segment en alphabet latin (ex. « Crete » dans « 克里特, Crete, 希腊 »). */
+const LATIN_HERO_SEGMENT_RE = /^[\p{Script=Latin}\p{M}\s0-9'.-]+$/u;
+
+function trySegmentToHeroLookupLabel(seg) {
+  const s = String(seg || "").trim();
+  if (!s || s.length < 2) return "";
+  const row = resolveCityRow(s);
+  if (row) return row.en || row.fr || s;
+  const hits = catalogCityHitsForLocalizedQuery(s);
+  if (hits.length === 1) return hits[0];
+  return "";
+}
+
+/**
+ * Libellé stable pour images héros / Wikipedia / Unsplash — indépendant de la langue UI.
+ * Ex. « 克里特, Crete, 希腊 » → « Crete » ; « Crète » → « Crete » (via catalogue NAMES).
+ */
+export function resolveHeroLookupLabel(destination) {
+  const full = String(destination || "").trim();
+  if (!full) return "";
+
+  const segments = full.includes(",")
+    ? full
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : [];
+
+  if (segments.length > 1) {
+    for (const seg of segments) {
+      const hit = trySegmentToHeroLookupLabel(seg);
+      if (hit) return hit;
+    }
+    const latin = segments.find((s) => LATIN_HERO_SEGMENT_RE.test(s) && s.length >= 2);
+    if (latin) return latin;
+    return segments[0] || full;
+  }
+
+  const primary = full.split(",")[0]?.trim() || full;
+  const hit = trySegmentToHeroLookupLabel(primary);
+  if (hit) return hit;
+  return primary;
 }
 
 /**
@@ -253,11 +305,17 @@ function resolveCityRow(trimmed) {
   if (NAMES[k]) return NAMES[k];
   const q = normalizeLocalSearchQuery(t);
   const hits = LOCALIZED_LABEL_TO_CATALOG.get(q);
-  if (!hits || hits.size !== 1) return null;
-  const catalog = [...hits][0];
-  const nk = CATALOG_TO_NAME_KEY.get(normalizeLocalSearchQuery(catalog));
-  if (!nk || !NAMES[nk]) return null;
-  return NAMES[nk];
+  if (hits && hits.size === 1) {
+    const catalog = [...hits][0];
+    const nk = CATALOG_TO_NAME_KEY.get(normalizeLocalSearchQuery(catalog));
+    if (nk && NAMES[nk]) return NAMES[nk];
+  }
+  for (const row of Object.values(NAMES)) {
+    if (Object.values(row).some((label) => normalizeLocalSearchQuery(label) === q)) {
+      return row;
+    }
+  }
+  return null;
 }
 
 function titleCaseForLocale(raw, lang) {

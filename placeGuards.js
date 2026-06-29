@@ -1,6 +1,9 @@
 /** Thaï + lao (alphasyllabaires) : titres OSM/WP souvent dans la langue locale alors que l’UI est FR/EN… */
 const THAI_LAO_SCRIPT_RE = /[\u0E00-\u0EFF]/;
 
+/** Grec (OSM / églises locales en Crète, etc.) : à filtrer quand l’UI n’est pas el. */
+const GREEK_SCRIPT_RE = /[\u0370-\u03FF\u1F00-\u1FFF]/;
+
 /** Hiragana/katakana/CJC/Hangul : souvent mélangés au français/anglais dans les tips si l’UI est en alphabet latin. */
 const LATIN_UI_EXCLUDE_CJK_HANGUL_RE = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af]/;
 
@@ -17,11 +20,21 @@ export function dropPlacesWrongScriptForUiLang(places, uiLanguage = "fr") {
     .split("-")[0]
     .slice(0, 2);
   if (lang === "th" || lang === "lo") {
-    return places.map((p) => String(p || "").trim()).filter(Boolean);
+    return places
+      .map((p) => String(p || "").trim())
+      .filter((s) => s.length >= 2 && !GREEK_SCRIPT_RE.test(s));
+  }
+  if (lang === "el") {
+    return places
+      .map((p) => String(p || "").trim())
+      .filter((s) => s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s));
   }
   return places
     .map((p) => String(p || "").trim())
-    .filter((s) => s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s));
+    .filter(
+      (s) =>
+        s.length >= 2 && !THAI_LAO_SCRIPT_RE.test(s) && !GREEK_SCRIPT_RE.test(s)
+    );
 }
 
 /**
@@ -36,7 +49,7 @@ export function pickPlacesListAfterScriptFilter(sanitized, uiLanguage = "fr") {
     .toLowerCase()
     .split("-")[0]
     .slice(0, 2);
-  if (lang === "th" || lang === "lo") {
+  if (lang === "th" || lang === "lo" || lang === "el") {
     return sanitized.map((p) => String(p || "").trim()).filter((s) => s.length >= 2);
   }
   return [];

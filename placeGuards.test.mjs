@@ -34,6 +34,22 @@ test("sanitize + script filter does not resurrect Thai via fallback", () => {
   assert.deepEqual(forFr, []);
 });
 
+test("dropPlacesWrongScriptForUiLang removes Greek when UI is Chinese", () => {
+  const mixed = ["Folk Museum of Ano Asites", "Ι.Ν. Αγίου Νικολάου", "Church"];
+  const zh = dropPlacesWrongScriptForUiLang(mixed, "zh");
+  assert.deepEqual(zh, ["Folk Museum of Ano Asites", "Church"]);
+});
+
+test("pickPlacesListAfterScriptFilter returns [] when all Greek and UI is FR", () => {
+  const greek = ["Ι.Ν. Αγίου Νικολάου", "Αγίας Βαρβάρας"];
+  assert.deepEqual(pickPlacesListAfterScriptFilter(greek, "fr"), []);
+});
+
+test("pickPlacesListAfterScriptFilter keeps Greek when UI is Greek", () => {
+  const greek = ["Ι.Ν. Αγίου Νικολάου"];
+  assert.deepEqual(pickPlacesListAfterScriptFilter(greek, "el"), greek);
+});
+
 test("filterTipLinesForUiLang drops mixed French+Thai tip lines when UI is FR", () => {
   const line =
     "À Bangkok, pour พิพิธภัณฑ์ศิลปะไทยร่วมสมัย et พิพิธภัณฑ์ธนาคารแห่งประเทศไทย, réserve sur les sites officiels.";

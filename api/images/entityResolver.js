@@ -1,0 +1,463 @@
+import { wikiUserAgent } from "./headCheck.js";
+
+const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
+
+/** @type {Record<string, Set<string>>} */
+const P31_BY_KIND = {
+  hero: new Set([
+    "Q515",
+    "Q23442",
+    "Q3957",
+    "Q15284",
+    "Q486972",
+    "Q35657",
+    "Q8502",
+    "Q1549591",
+    "Q7275",
+    "Q6256",
+    "Q82794",
+    "Q13220204",
+    "Q182676",
+    "Q19723451",
+    "Q207524",
+    "Q33837",
+    "Q532",
+  ]),
+  landmark: new Set([
+    "Q33506",
+    "Q41176",
+    "Q40080",
+    "Q46169",
+    "Q16917",
+    "Q16560",
+    "Q570116",
+    "Q839954",
+    "Q12280",
+    "Q16970",
+    "Q22698",
+    "Q3918",
+    "Q483453",
+    "Q124734",
+  ]),
+  activity: new Set([
+    "Q33506",
+    "Q41176",
+    "Q40080",
+    "Q46169",
+    "Q16917",
+    "Q16560",
+    "Q570116",
+    "Q839954",
+    "Q12280",
+    "Q22698",
+    "Q3918",
+    "Q483453",
+    "Q124734",
+    "Q182676",
+    "Q747074",
+  ]),
+};
+
+const REJECTED_P31 = new Set(["Q5", "Q16521", "Q4167410", "Q13406463", "Q186165", "Q1914636"]);
+
+function normalizeForLookup(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function claimValues(entity, propId) {
+  const claims = entity?.claims?.[propId];
+  if (!Array.isArray(claims)) return [];
+  return claims.map((c) => c?.mainsnak?.datavalue?.value).filter(Boolean);
+}
+
+function entityP31Ids(entity) {
+  return claimValues(entity, "P31")
+    .map((v) => String(v?.id || ""))
+    .filter(Boolean);
+}
+
+function entityP279Ids(entity) {
+  return claimValues(entity, "P279")
+    .map((v) => String(v?.id || ""))
+    .filter(Boolean);
+}
+
+function entityClaimQids(entity, propId) {
+  return claimValues(entity, propId)
+    .map((v) => String(v?.id || ""))
+    .filter(Boolean);
+}
+
+function isHomonymEntity(entity, label, context) {
+  const blob = `${normalizeForLookup(label)} ${normalizeForLookup(context)}`;
+  const id = String(entity?.id || "");
+  const labelEn = normalizeForLookup(entity?.labels?.en?.value || entity?.labels?.fr?.value || "");
+  if (/crete|heraklion|rethymno|phalasarna|greece|grec/i.test(blob)) {
+    if (id === "Q4646" || (labelEn === "bali" && id !== "Q804679")) return true;
+    if (/indonesia|denpasar|java/.test(labelEn)) return true;
+  }
+  if (/ammodramus|kastoria/i.test(labelEn) && /ammoudara|amoudara|heraklion|crete|beach/i.test(blob)) {
+    return true;
+  }
+  return false;
+}
+
+function matchesKindType(p31Ids, kind, expandedP279) {
+  const allowed = P31_BY_KIND[kind] || P31_BY_KIND.landmark;
+  const all = [...p31Ids, ...expandedP279];
+  if (all.some((id) => REJECTED_P31.has(id))) return false;
+  return all.some((id) => allowed.has(id));
+}
+
+/** @returns {string[]} */
+function parseContextTokens(context) {
+  const c = String(context || "").trim();
+  if (!c) return [];
+  return c
+    .split(/[,;|]/)
+    .map((s) => normalizeForLookup(s))
+    .filter((s) => s.length >= 2);
+}
+
+/** Groupes de synonymes région/pays pour le matching contexte (FR/EN/DE/ES). */
+const GEO_TOKEN_ALIAS_GROUPS = [
+  ["italy", "italie", "italia", "italien", "italiana"],
+  ["honduras", "hondure", "hondureno"],
+  ["greece", "grece", "greek", "hellas", "hellenic", "grecia", "griechenland"],
+  ["campania", "campanie", "campana"],
+  ["gracias a dios", "gracias ad dios"],
+  ["nebraska", "saline county"],
+];
+
+function expandTokenAliases(token) {
+  const t = normalizeForLookup(token);
+  if (!t) return [];
+  const out = new Set([t]);
+  for (const group of GEO_TOKEN_ALIAS_GROUPS) {
+    if (group.some((g) => g === t || t.includes(g) || g.includes(t))) {
+      for (const g of group) out.add(g);
+    }
+  }
+  return [...out];
+}
+
+function tokenMatchesLabel(token, labelNorm) {
+  if (!token || !labelNorm) return false;
+  const aliases = expandTokenAliases(token);
+  for (const a of aliases) {
+    if (a === labelNorm) return true;
+    if (labelNorm.includes(a) || a.includes(labelNorm)) return true;
+    const tokenWords = a.split(/\s+/).filter((w) => w.length >= 4);
+    if (tokenWords.some((w) => labelNorm.includes(w))) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {object} entity
+ * @param {string[]} contextTokens
+ * @param {Record<string, string[]>} geoLabelMap — QID → libellés (P17, P131)
+ */
+function entityContextMatchScore(entity, contextTokens, geoLabelMap) {
+  if (!contextTokens.length) return { matched: true, score: 0 };
+
+  const geoIds = [...entityClaimQids(entity, "P17"), ...entityClaimQids(entity, "P131")];
+  const geoLabels = geoIds.flatMap((id) => geoLabelMap[id] || []).map(normalizeForLookup);
+  const entityLabels = Object.values(entity.labels || {})
+    .map((l) => normalizeForLookup(l?.value || ""))
+    .filter(Boolean);
+  const desc = normalizeForLookup(
+    entity?.descriptions?.en?.value || entity?.descriptions?.fr?.value || ""
+  );
+
+  let score = 0;
+  let matched = false;
+  for (const token of contextTokens) {
+    const pools = [...geoLabels, ...entityLabels];
+    if (pools.some((l) => tokenMatchesLabel(token, l))) {
+      matched = true;
+      score += token.length >= 6 ? 55 : 40;
+    }
+    if (tokenMatchesLabel(token, desc)) {
+      matched = true;
+      score += 25;
+    }
+  }
+  return { matched, score };
+}
+
+async function fetchEntities(ids) {
+  const list = ids.filter((id) => /^Q\d+$/.test(id)).slice(0, 20);
+  if (!list.length) return {};
+  const params = new URLSearchParams({
+    action: "wbgetentities",
+    ids: list.join("|"),
+    props: "claims",
+    format: "json",
+    origin: "*",
+  });
+  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (!r.ok) return {};
+  const j = await r.json();
+  return j?.entities || {};
+}
+
+async function expandP279(directP279) {
+  const out = new Set(directP279);
+  if (!directP279.length) return out;
+  const level1 = await fetchEntities(directP279);
+  const level2Ids = [];
+  for (const ent of Object.values(level1)) {
+    for (const id of entityP279Ids(ent)) {
+      if (!out.has(id)) {
+        out.add(id);
+        level2Ids.push(id);
+      }
+    }
+  }
+  if (level2Ids.length) {
+    const level2 = await fetchEntities(level2Ids.slice(0, 10));
+    for (const ent of Object.values(level2)) {
+      for (const id of entityP279Ids(ent)) out.add(id);
+    }
+  }
+  return out;
+}
+
+async function wbSearchEntities(search, language, limit = 8) {
+  const q = String(search || "").trim();
+  if (q.length < 2) return [];
+  const params = new URLSearchParams({
+    action: "wbsearchentities",
+    search: q,
+    language: String(language || "en").slice(0, 2),
+    uselang: String(language || "en").slice(0, 2),
+    type: "item",
+    limit: String(Math.min(limit, 12)),
+    format: "json",
+    origin: "*",
+  });
+  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (!r.ok) return [];
+  const j = await r.json();
+  return Array.isArray(j?.search) ? j.search : [];
+}
+
+async function wbGetEntitiesFull(ids) {
+  const list = ids.filter((id) => /^Q\d+$/.test(id)).slice(0, 12);
+  if (!list.length) return {};
+  const params = new URLSearchParams({
+    action: "wbgetentities",
+    ids: list.join("|"),
+    props: "labels|descriptions|claims|sitelinks",
+    languages: "en|fr|de|es|it|zh",
+    format: "json",
+    origin: "*",
+  });
+  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (!r.ok) return {};
+  const j = await r.json();
+  return j?.entities || {};
+}
+
+async function fetchGeoLabelMap(entities) {
+  /** @type {Set<string>} */
+  const geoIds = new Set();
+  for (const ent of entities) {
+    if (!ent || ent.missing) continue;
+    for (const id of entityClaimQids(ent, "P17")) geoIds.add(id);
+    for (const id of entityClaimQids(ent, "P131")) geoIds.add(id);
+  }
+
+  let list = [...geoIds].slice(0, 40);
+  if (!list.length) return {};
+
+  /** Inclure le parent administratif (ex. Campanie via Naples métropolitaine). */
+  const firstPass = await wbGetEntityLabelsOnly(list);
+  const parentIds = [];
+  for (const id of list) {
+    const ent = firstPass[id];
+    if (!ent || ent.missing) continue;
+    for (const pid of entityClaimQids(ent, "P131")) {
+      if (!geoIds.has(pid)) parentIds.push(pid);
+    }
+  }
+  if (parentIds.length) {
+    const parents = await wbGetEntityLabelsOnly(parentIds.slice(0, 15));
+    Object.assign(firstPass, parents);
+  }
+
+  /** @type {Record<string, string[]>} */
+  const map = {};
+  for (const [id, ent] of Object.entries(firstPass)) {
+    if (!ent || ent.missing) continue;
+    map[id] = Object.values(ent.labels || {})
+      .map((l) => String(l?.value || "").trim())
+      .filter(Boolean);
+  }
+  return map;
+}
+
+async function wbGetEntityLabelsOnly(ids) {
+  const list = ids.filter((id) => /^Q\d+$/.test(id)).slice(0, 40);
+  if (!list.length) return {};
+  const params = new URLSearchParams({
+    action: "wbgetentities",
+    ids: list.join("|"),
+    props: "labels|claims",
+    languages: "en|fr|de|es|it|zh",
+    format: "json",
+    origin: "*",
+  });
+  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (!r.ok) return {};
+  const j = await r.json();
+  return j?.entities || {};
+}
+
+function scoreEntityBase(entity, searchLabel) {
+  if (!entity?.id) return -999;
+  const p31 = entityP31Ids(entity);
+  if (p31.some((id) => REJECTED_P31.has(id))) return -500;
+  let score = 0;
+  if (claimValues(entity, "P18").length) score += 30;
+  if (claimValues(entity, "P373").length) score += 25;
+  const labelNorm = normalizeForLookup(searchLabel);
+  const labels = Object.values(entity.labels || {}).map((l) => normalizeForLookup(l?.value || ""));
+  if (labels.some((l) => l === labelNorm || l.startsWith(labelNorm))) score += 15;
+  return score;
+}
+
+/** Score si l'entité provient d'une requête wbsearch incluant le contexte. */
+function searchQueryMatchesContext(searchQuery, contextTokens) {
+  if (!contextTokens.length) return false;
+  const q = normalizeForLookup(searchQuery);
+  if (!q) return false;
+  let hits = 0;
+  for (const token of contextTokens) {
+    if (token.length < 3) continue;
+    if (q.includes(token)) hits += 1;
+  }
+  return hits >= Math.min(2, contextTokens.length) || contextTokens.some((t) => t.length >= 5 && q.includes(t));
+}
+
+/**
+ * @param {string} searchLabel
+ * @param {string} uiLang
+ * @param {import('../../lib/images/types.js').ImageKind} kind
+ * @param {string} [context]
+ */
+export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
+  const lang = String(uiLang || "fr").slice(0, 2);
+  const contextTokens = parseContextTokens(context);
+  const queries = [];
+  const add = (s) => {
+    const t = String(s || "").trim();
+    if (t.length >= 2 && !queries.includes(t)) queries.push(t);
+  };
+  /** Requêtes avec contexte en premier pour le provenance scoring. */
+  if (context) {
+    add(`${searchLabel}, ${context}`);
+    add(`${searchLabel} ${context}`);
+  }
+  add(searchLabel);
+
+  /** @type {{ id: string, searchQuery: string }[]} */
+  const hits = [];
+  const seen = new Set();
+
+  for (const q of queries.slice(0, 4)) {
+    for (const langTry of lang !== "en" ? [lang, "en"] : [lang]) {
+      const batch = await wbSearchEntities(q, langTry, 10);
+      for (const hit of batch) {
+        const id = String(hit?.id || "").trim();
+        if (!id) continue;
+        if (!seen.has(id)) {
+          seen.add(id);
+          hits.push({ id, searchQuery: q });
+        } else if (searchQueryMatchesContext(q, contextTokens)) {
+          const row = hits.find((h) => h.id === id);
+          if (row) row.searchQuery = q;
+        }
+      }
+    }
+  }
+  if (!hits.length) return null;
+
+  const entities = await wbGetEntitiesFull(hits.map((h) => h.id));
+  const hitById = Object.fromEntries(hits.map((h) => [h.id, h]));
+
+  const candidateEntities = hits
+    .map((h) => entities[h.id])
+    .filter((ent) => ent && !ent.missing && !isHomonymEntity(ent, searchLabel, context));
+
+  const geoLabelMap = await fetchGeoLabelMap(candidateEntities);
+
+  let best = null;
+  let bestScore = -9999;
+  for (const ent of candidateEntities) {
+    const base = scoreEntityBase(ent, searchLabel);
+    if (base <= -500) continue;
+
+    const hit = hitById[ent.id];
+    const { matched: geoMatched, score: ctxScore } = entityContextMatchScore(
+      ent,
+      contextTokens,
+      geoLabelMap
+    );
+    const searchMatched = searchQueryMatchesContext(hit?.searchQuery || "", contextTokens);
+    const contextOk = !contextTokens.length || geoMatched || searchMatched;
+
+    if (contextTokens.length && !contextOk) continue;
+
+    const provenanceBonus = searchMatched ? 45 : 0;
+    const sc = base + ctxScore + provenanceBonus;
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = ent;
+    }
+  }
+
+  if (!best?.id) return null;
+
+  const p31Ids = entityP31Ids(best);
+  const p279Direct = entityP279Ids(best);
+  const expandedP279 = await expandP279(p279Direct);
+  if (!matchesKindType(p31Ids, kind, expandedP279)) return null;
+
+  const p18Filenames = claimValues(best, "P18")
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  const p373 = claimValues(best, "P373")
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  const commonsCategory = p373[0] || "";
+
+  const sitelinks = [];
+  const links = best.sitelinks || {};
+  for (const l of [lang, "en", "fr", "de", "es", "it", "zh"]) {
+    const title = String(links[`${l}wiki`]?.title || "").trim();
+    if (title) sitelinks.push({ lang: l, title });
+  }
+
+  return {
+    qid: String(best.id),
+    p18Filenames,
+    commonsCategory,
+    sitelinks,
+    p31Ids,
+  };
+}

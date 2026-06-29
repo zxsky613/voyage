@@ -4,6 +4,7 @@
  */
 
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
+import { resolveHeroLookupLabel } from "./i18n/cityDisplay.js";
 
 export const STYLE_TECHNIQUE_FR =
   "Style technique : photographie de voyage haut de gamme, vue drone, résolution 8k, lumière cinématique, prise type DJI Mavic 3 Pro f/2.8, hyper-réaliste, couleurs vives mais naturelles, sans déformation des bâtiments.";
@@ -823,6 +824,8 @@ const HERO_QUERY_CITY_EN = Object.freeze({
   koln: "Cologne",
   athenes: "Athens",
   athens: "Athens",
+  crete: "Crete",
+  crète: "Crete",
   "le caire": "Cairo",
   cairo: "Cairo",
   canton: "Guangzhou",
@@ -855,7 +858,9 @@ const HERO_QUERY_CITY_EN = Object.freeze({
  * @param {string} cityInput — « Ville » ou « Ville, Pays »
  */
 export function buildCityHeroUnsplashQuery(cityInput) {
-  const rawCity = String(cityInput || "")
+  const rawCity = String(
+    resolveHeroLookupLabel(cityInput) || cityInput || ""
+  )
     .split(",")[0]
     .trim();
   if (!rawCity) return "";

@@ -77,6 +77,13 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   milano: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Milano%2C_Duomo_with_Milan_Cathedral_and_Galleria_Vittorio_Emanuele_II%2C_2016.jpg/1920px-Milano%2C_Duomo_with_Milan_Cathedral_and_Galleria_Vittorio_Emanuele_II%2C_2016.jpg",
   ],
+  /** Maschio Angioino + baie — même visuel que pageimages en.wiki « Naples » (2024). */
+  naples: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Napoli_-_Maschio_Angioino_-_202209302342_3.jpg/1920px-Napoli_-_Maschio_Angioino_-_202209302342_3.jpg",
+  ],
+  napoli: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Napoli_-_Maschio_Angioino_-_202209302342_3.jpg/1920px-Napoli_-_Maschio_Angioino_-_202209302342_3.jpg",
+  ],
   venise: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Panorama_of_Canal_Grande_and_Ponte_di_Rialto%2C_Venice_-_September_2017.jpg/1920px-Panorama_of_Canal_Grande_and_Ponte_di_Rialto%2C_Venice_-_September_2017.jpg",
     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a3/Canal_Grande_Chiesa_della_Salute_e_Dogana_dal_ponte_dell_Accademia.jpg/1920px-Canal_Grande_Chiesa_della_Salute_e_Dogana_dal_ponte_dell_Accademia.jpg",
@@ -226,6 +233,12 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   ],
   athens: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Attica_06-13_Athens_50_View_from_Philopappos_-_Acropolis_Hill.jpg/1920px-Attica_06-13_Athens_50_View_from_Philopappos_-_Acropolis_Hill.jpg",
+  ],
+  crete: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Island_of_Crete%2C_Greece.JPG/1920px-Island_of_Crete%2C_Greece.JPG",
+  ],
+  crète: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Island_of_Crete%2C_Greece.JPG/1920px-Island_of_Crete%2C_Greece.JPG",
   ],
   chicago: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg/1920px-Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg",
@@ -391,6 +404,93 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
   ],
   alger: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Notre_Dame_d%27Afrique.jpg/1920px-Notre_Dame_d%27Afrique.jpg",
+  ],
+  stockholm: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/Riddarholmen_from_Stockholm_City_Hall_tower.jpg/1920px-Riddarholmen_from_Stockholm_City_Hall_tower.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/View_of_Stockholm-201185.jpg/1920px-View_of_Stockholm-201185.jpg",
+  ],
+  visby: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/Visby_ringmur.jpg/1920px-Visby_ringmur.jpg",
+  ],
+  gotland: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/Visby_ringmur.jpg/1920px-Visby_ringmur.jpg",
+  ],
+  copenhague: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Nyhavn_Copenhagen.jpg/1920px-Nyhavn_Copenhagen.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Copenhagen_Opera_House.jpg/1920px-Copenhagen_Opera_House.jpg",
+  ],
+  copenhagen: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Nyhavn_Copenhagen.jpg/1920px-Nyhavn_Copenhagen.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Copenhagen_Opera_House.jpg/1920px-Copenhagen_Opera_House.jpg",
+  ],
+  kobenhavn: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Nyhavn_Copenhagen.jpg/1920px-Nyhavn_Copenhagen.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Copenhagen_Opera_House.jpg/1920px-Copenhagen_Opera_House.jpg",
+  ],
+  "københavn": [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Nyhavn_Copenhagen.jpg/1920px-Nyhavn_Copenhagen.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Copenhagen_Opera_House.jpg/1920px-Copenhagen_Opera_House.jpg",
+  ],
+  oslo: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Oslo_skyline.jpg/1920px-Oslo_skyline.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Oslo_Opera_house.jpg/1920px-Oslo_Opera_house.jpg",
+  ],
+  helsinki: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Helsinki_Cathedral.jpg/1920px-Helsinki_Cathedral.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Helsinki_panorama.jpg/1920px-Helsinki_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Suomenlinna_Helsinki.jpg/1920px-Suomenlinna_Helsinki.jpg",
+  ],
+  dublin: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Ha'penny_Bridge_Dublin.jpg/1920px-Ha'penny_Bridge_Dublin.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Samuel_Beckett_Bridge_Dublin.jpg/1920px-Samuel_Beckett_Bridge_Dublin.jpg",
+  ],
+  seville: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Plaza_de_Espana_Sevilla.jpg/1920px-Plaza_de_Espana_Sevilla.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/28/Giralda_Seville.jpg/1920px-Giralda_Seville.jpg",
+  ],
+  sevilla: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Plaza_de_Espana_Sevilla.jpg/1920px-Plaza_de_Espana_Sevilla.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/28/Giralda_Seville.jpg/1920px-Giralda_Seville.jpg",
+  ],
+  palermo: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Palermo_skyline.jpg/1920px-Palermo_skyline.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Teatro_Massimo_Palermo.jpg/1920px-Teatro_Massimo_Palermo.jpg",
+  ],
+  edinburgh: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Edinburgh_panorama.jpg/1920px-Edinburgh_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Edinburgh_Castle.jpg/1920px-Edinburgh_Castle.jpg",
+  ],
+  edimbourg: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Edinburgh_panorama.jpg/1920px-Edinburgh_panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Edinburgh_Castle.jpg/1920px-Edinburgh_Castle.jpg",
+  ],
+  warsaw: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Warsaw_Old_Town.jpg/1920px-Warsaw_Old_Town.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Warsaw_skyline.jpg/1920px-Warsaw_skyline.jpg",
+  ],
+  varsovie: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Warsaw_Old_Town.jpg/1920px-Warsaw_Old_Town.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Warsaw_skyline.jpg/1920px-Warsaw_skyline.jpg",
+  ],
+  warszawa: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Warsaw_Old_Town.jpg/1920px-Warsaw_Old_Town.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Warsaw_skyline.jpg/1920px-Warsaw_skyline.jpg",
+  ],
+  krakow: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Wawel_Castle_Krakow.jpg/1920px-Wawel_Castle_Krakow.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Krakow_Rynek.jpg/1920px-Krakow_Rynek.jpg",
+  ],
+  cracovie: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Wawel_Castle_Krakow.jpg/1920px-Wawel_Castle_Krakow.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Krakow_Rynek.jpg/1920px-Krakow_Rynek.jpg",
+  ],
+  turin: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Mole_Antonelliana.jpg/1920px-Mole_Antonelliana.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Turin_skyline.jpg/1920px-Turin_skyline.jpg",
+  ],
+  torino: [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Mole_Antonelliana.jpg/1920px-Mole_Antonelliana.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Turin_skyline.jpg/1920px-Turin_skyline.jpg",
   ],
   istanbul: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Hagia_Sophia_Mars_2013.jpg/1920px-Hagia_Sophia_Mars_2013.jpg",
