@@ -444,13 +444,13 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         body = {};
       }
       try {
-        const file = pathname.endsWith("resolve")
+        const action = pathname.endsWith("resolve")
           ? "resolve"
           : pathname.endsWith("commons-info")
             ? "commons-info"
             : "unsplash";
-        const mod = await import(`./api/images/${file}.js`);
-        await routeVercelApiHandler(req, res, mod.default, body);
+        const mod = await import(`./api/images/${action}.js`);
+        await routeVercelApiHandler(req, res, mod.handler, body);
       } catch (e) {
         sendJson(res, 502, { ok: false, error: String(e?.message || e) });
       }

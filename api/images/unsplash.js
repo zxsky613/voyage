@@ -5,7 +5,7 @@ import { handleCors, sendJson, parseBody, getUnsplashKey } from "../_helpers.js"
  * POST { query, per_page?, content_filter?, orientation? }
  * → { ok, results: UnsplashPhoto[] }
  */
-export default async function handler(req, res) {
+export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
   const key = getUnsplashKey();

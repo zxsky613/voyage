@@ -21,7 +21,7 @@ function checkRateLimit(ip) {
  * POST { kind, label, context?, uiLang? }
  * → ResolvedImage JSON (200 même si vide — le client fallback legacy)
  */
-export default async function handler(req, res) {
+export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
   const ip =

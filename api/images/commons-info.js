@@ -28,7 +28,7 @@ function parseExtMetaValue(raw) {
  * POST { url?, fileTitle? }
  * → { ok, attribution: { author, license, licenseUrl, sourceUrl } }
  */
-export default async function handler(req, res) {
+export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
   const body = parseBody(req);
