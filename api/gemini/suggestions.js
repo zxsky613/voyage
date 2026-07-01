@@ -7,7 +7,7 @@ import {
 } from "../_helpers.js";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
-export default async function handler(req, res) {
+export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
   const key = getGeminiKey();

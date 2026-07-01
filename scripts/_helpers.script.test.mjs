@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   suggestionsBundleContainsForbiddenNonLatinScript,
   tipsContainForbiddenNonLatinScript,
-} from "./_helpers.js";
+} from "../api/_helpers.js";
 
 test("tipsContainForbiddenNonLatinScript is true for kanji when UI is fr", () => {
   assert.equal(

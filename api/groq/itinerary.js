@@ -6,7 +6,7 @@ import {
   dedupeItineraryDayIdeas,
 } from "../_helpers.js";
 
-export default async function handler(req, res) {
+export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
   const groqKey = getGroqKey();
