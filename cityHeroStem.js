@@ -125,14 +125,29 @@ export function isTrustworthyHeroImageUrl(url) {
   return false;
 }
 
-/** Clé cache image ville — tige hero normalisée (v69 invalide les caches Unsplash v68). */
+/** Clé cache image ville — tige + contexte géo si présent (v70 : homonymes ex. Capri IT vs HN). */
 export function buildCityImageCacheKey(cityInput) {
-  const stem =
-    resolveHeroLookupLabel(cityInput) ||
-    heroImageStemFromDestination(cityInput) ||
-    extractCityPrompt(cityInput) ||
-    String(cityInput || "").trim();
-  return `v69:${normalizeTextForSearch(stem)}`;
+  const raw = String(cityInput || "").trim();
+  if (!raw) return "";
+
+  const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
+  const stemRaw =
+    stripAdministrativeCityPrefix(
+      resolveHeroLookupLabel(raw) ||
+        heroImageStemFromDestination(raw) ||
+        extractCityPrompt(raw) ||
+        raw
+    ) ||
+    parts[0] ||
+    raw;
+  const base = normalizeTextForSearch(
+    heroImageStemFromDestination(stemRaw) || resolveHeroLookupLabel(stemRaw) || stemRaw
+  );
+  if (!base) return "";
+
+  const ctxNorm = parts.length >= 2 ? normalizeTextForSearch(parts.slice(1).join(", ")) : "";
+  const discriminant = ctxNorm ? `${base}|${ctxNorm}` : base;
+  return `v70:${discriminant}`;
 }
 
 /** Guangzhou catalogue / Commons : alias « Canton » ; ne pas confondre avec subdivision CH/BE (canton du …). */

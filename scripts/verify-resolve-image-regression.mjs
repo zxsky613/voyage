@@ -15,6 +15,8 @@ import {
 } from "../lib/images/normalizeLabel.js";
 import { resolveEntity } from "../api/images/entityResolver.js";
 import { resolveImage } from "../api/images/resolveImage.js";
+import { buildCityHeroUnsplashQuery } from "../cityDroneImagePrompt.js";
+import { buildCityImageCacheKey } from "../cityHeroStem.js";
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -65,6 +67,16 @@ assert(
     normalizeLabelKey("Capri, Campania, Italie", ""),
   "Capri HN vs IT cache keys must differ"
 );
+
+assert(
+  buildCityImageCacheKey("Capri, Gracias a Dios, Honduras") !==
+    buildCityImageCacheKey("Capri, Campania, Italie"),
+  "Capri HN vs IT hero image cache keys must differ"
+);
+
+const capriHnQuery = buildCityHeroUnsplashQuery("Capri, Gracias a Dios, Honduras");
+assert(/honduras/i.test(capriHnQuery), "Capri HN Unsplash query must mention Honduras");
+assert(!/faraglioni|amalfi|blue grotto/i.test(capriHnQuery), "Capri HN query must not use IT landmarks");
 
 console.log("verify-resolve-image: unit OK");
 

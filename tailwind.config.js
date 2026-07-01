@@ -9,15 +9,28 @@ export default {
   ],
   theme: {
     extend: {
-      // Avenir (Linotype) : pas de fichier web inclus — s’appuie sur les polices système + repli.
       fontFamily: {
-        /* .font-display : voir index.css (guillemets requis pour « Yeseva One » ; Tailwind ne les émet pas). */
-        sans: [
-          "Poppins",
-          "ui-sans-serif",
-          "system-ui",
-          "sans-serif",
-        ],
+        sans: ["Poppins", "ui-sans-serif", "system-ui", "sans-serif"],
+      },
+      colors: {
+        brand: {
+          blue: "var(--brand-blue)",
+          "blue-deep": "var(--brand-blue-deep)",
+          "blue-tint": "var(--brand-blue-tint)",
+          orange: "var(--brand-orange-solid)",
+          "orange-tint": "var(--brand-orange-tint)",
+          "orange-ink": "var(--brand-orange-ink)",
+        },
+      },
+      backgroundImage: {
+        "brand-gradient": "var(--brand-gradient)",
+        "brand-blue-gradient-h": "var(--brand-blue-gradient-h)",
+      },
+      ringColor: {
+        brand: {
+          blue: "var(--brand-blue)",
+          "blue-tint": "color-mix(in srgb, var(--brand-blue) 25%, transparent)",
+        },
       },
     },
   },

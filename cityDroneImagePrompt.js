@@ -5,6 +5,7 @@
 
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { resolveHeroLookupLabel } from "./i18n/cityDisplay.js";
+import { stripAdministrativeCityPrefix } from "./cityHeroStem.js";
 
 export const STYLE_TECHNIQUE_FR =
   "Style technique : photographie de voyage haut de gamme, vue drone, résolution 8k, lumière cinématique, prise type DJI Mavic 3 Pro f/2.8, hyper-réaliste, couleurs vives mais naturelles, sans déformation des bâtiments.";
@@ -853,23 +854,54 @@ const HERO_QUERY_CITY_EN = Object.freeze({
   "saint petersbourg": "Saint Petersburg",
 });
 
+function explicitGeoTail(fullInput) {
+  const parts = String(fullInput || "")
+    .trim()
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length >= 2 ? parts.slice(1).join(" ") : "";
+}
+
+/** Homonyme célèbre avec suffixe géo explicite non-Italie (ex. Capri, Honduras). */
+function isFamousPlaceHomonymWithForeignGeo(fullInput) {
+  const parts = String(fullInput || "")
+    .trim()
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return false;
+  const head = normalizeKey(stripAdministrativeCityPrefix(parts[0]) || parts[0]);
+  const geo = normalizeKey(parts.slice(1).join(" "));
+  if (!geo) return false;
+  if (head === "capri") {
+    return !/(italy|italie|italia|campania|campanie)/.test(geo);
+  }
+  return false;
+}
+
 /**
  * Requête Unsplash « photographe d’architecture » : monument + ville, lumière dorée, sans insister sur le ciel vide.
  * @param {string} cityInput — « Ville » ou « Ville, Pays »
  */
 export function buildCityHeroUnsplashQuery(cityInput) {
+  const full = String(cityInput || "").trim();
+  const parts = full.split(",").map((p) => p.trim()).filter(Boolean);
   const rawCity = String(
-    resolveHeroLookupLabel(cityInput) || cityInput || ""
+    resolveHeroLookupLabel(full) || parts[0] || full
   )
     .split(",")[0]
     .trim();
   if (!rawCity) return "";
   const cityNorm = normalizeKey(rawCity);
   const city = HERO_QUERY_CITY_EN[cityNorm] || rawCity;
-  const kind = kindForCity(cityInput);
-  const monument = resolveHeroLandmarkEnglish(cityInput);
-  const lead = monument ? `${monument}, ${city}` : `${city} iconic landmark`;
-  const tail = kind === "coastal" ? CITY_HERO_ARCH_TAIL_COASTAL : CITY_HERO_ARCH_TAIL_URBAN;
+  const geoTail = explicitGeoTail(full);
+  const skipFamousLandmark = isFamousPlaceHomonymWithForeignGeo(full);
+  const kind = kindForCity(full);
+  const monument = skipFamousLandmark ? "" : resolveHeroLandmarkEnglish(full);
+  const placeLabel = geoTail ? `${city} ${geoTail}` : city;
+  const lead = monument ? `${monument}, ${placeLabel}` : `${placeLabel} travel destination landscape`;
+  const tail = kind === "coastal" && !skipFamousLandmark ? CITY_HERO_ARCH_TAIL_COASTAL : CITY_HERO_ARCH_TAIL_URBAN;
   return `${lead} ${tail}`.replace(/\s+/g, " ").trim();
 }
 

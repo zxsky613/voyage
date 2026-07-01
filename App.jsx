@@ -16,7 +16,7 @@ import {
   Trash2,
   Plane,
   Mail,
-  MessageCircle,
+  BedDouble,
   UserRound,
   ChevronDown,
   ChevronRight,
@@ -25,12 +25,14 @@ import {
   Sparkles,
   Lightbulb,
   Lock,
-  Wallet,
   Receipt,
   ArrowRight,
   ArrowLeft,
-  ThumbsUp,
   AlertTriangle,
+  Sunrise,
+  Sun,
+  ImageOff,
+  RefreshCw,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
@@ -102,6 +104,23 @@ import {
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
 import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
 import { formatNoticeForEndUser } from "./devUiNotices.js";
+import { openItineraryActivityMap } from "./lib/maps/itineraryActivityMap.js";
+import StaysView from "./StaysView.jsx";
+import {
+  BRAND_BLUE,
+  BRAND_BLUE_DEEP,
+  BRAND_BLUE_GRADIENT_H,
+  BRAND_BLUE_BTN_CLASS,
+  BRAND_CTA_STYLE,
+} from "./lib/brandColors.js";
+import {
+  EXPENSE_SOURCE,
+  computeTripBudgetSummary,
+  expenseCategory,
+  findExpenseForActivity,
+  filterExpensesForTrip,
+} from "./lib/budget/expenseSources.js";
+import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -419,7 +438,9 @@ const UNSPLASH_HERO_CONFLICT_AVOID = Object.freeze({
 });
 
 function getUnsplashHeroConflictAvoidKeywords(cityInput) {
-  const stem = heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || String(cityInput || "").trim();
+  const full = String(cityInput || "").trim();
+  const fullNorm = normalizeTextForSearch(full);
+  const stem = heroImageStemFromDestination(cityInput) || extractCityPrompt(cityInput) || full;
   if (stem.length < 2) return [];
   const safe = String(resolveCanonicalCity(stem) || stem).trim();
   const first = String(stem.split(",")[0] || "").trim();
@@ -430,6 +451,27 @@ function getUnsplashHeroConflictAvoidKeywords(cityInput) {
   ].filter(Boolean);
   const seen = new Set();
   const out = [];
+  if (/\bcapri\b/.test(normalizeTextForSearch(first)) && /honduras|gracias a dios/.test(fullNorm)) {
+    for (const term of [
+      "italy",
+      "italie",
+      "italia",
+      "campania",
+      "campanie",
+      "amalfi",
+      "faraglioni",
+      "positano",
+      "naples",
+      "napoli",
+      "mediterranean",
+      "blue grotto",
+    ]) {
+      if (!seen.has(term)) {
+        seen.add(term);
+        out.push(term);
+      }
+    }
+  }
   for (const k of keys) {
     const arr = UNSPLASH_HERO_CONFLICT_AVOID[k];
     if (!Array.isArray(arr)) continue;
@@ -446,166 +488,8 @@ function getUnsplashHeroConflictAvoidKeywords(cityInput) {
 /** Bucket Supabase Storage (public) pour la couche 3 — fichiers {slug}.webp ex. tokyo.webp */
 const CITY_HERO_STORAGE_BUCKET = import.meta.env.VITE_CITY_HERO_STORAGE_BUCKET || "";
 const cityImageMemoryCache = {};
-const CHAT_CACHE_KEY = "tp_chat_cache_v1";
-const CHAT_READ_STATE_KEY_PREFIX = "tp_chat_read_v1";
 const baseDocumentTitle = "Justtrip";
 const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
-
-function chatReadStorageKey(userId) {
-  const u = String(userId || "").trim();
-  if (!u) return null;
-  return `${CHAT_READ_STATE_KEY_PREFIX}:${u}`;
-}
-
-function loadChatReadState(userId) {
-  const k = chatReadStorageKey(userId);
-  if (!k || typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(k);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
-  } catch (_e) {
-    return {};
-  }
-}
-
-function saveChatReadState(userId, state) {
-  const k = chatReadStorageKey(userId);
-  if (!k || typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(k, JSON.stringify(state || {}));
-  } catch (_e) {
-    /* ignore */
-  }
-}
-
-/** Compare deux messages (created_at, id) pour l’ordre d’affichage et le curseur « lu ». */
-function compareChatMessagesByTime(a, b) {
-  const c = String(a?.created_at || "").localeCompare(String(b?.created_at || ""));
-  if (c !== 0) return c;
-  return String(a?.id || "").localeCompare(String(b?.id || ""));
-}
-
-/** vrai si `msg` est strictement plus récent que le point de lecture. */
-function chatMessageIsAfterReadPoint(msg, read) {
-  if (!read) return true;
-  const t = String(read.t || read.created_at || "");
-  const id = String(read.id || "");
-  const c = String(msg?.created_at || "").localeCompare(t);
-  if (c > 0) return true;
-  if (c < 0) return false;
-  return String(msg?.id || "").localeCompare(id) > 0;
-}
-
-function isPeerChatMessage(msg, currentUserId, userEmailLower) {
-  if (!msg) return false;
-  const mineById = currentUserId && String(msg?.author_id || "") === String(currentUserId);
-  const mineByEmail =
-    userEmailLower &&
-    String(msg?.author_email || "")
-      .trim()
-      .toLowerCase() === userEmailLower;
-  return !mineById && !mineByEmail;
-}
-
-function countChatUnreadForTrip(messages, currentUserId, userEmailLower, readCursor) {
-  const list = (Array.isArray(messages) ? messages : []).filter(Boolean);
-  let n = 0;
-  for (const m of list) {
-    if (!isPeerChatMessage(m, currentUserId, userEmailLower)) continue;
-    if (chatMessageIsAfterReadPoint(m, readCursor)) n += 1;
-  }
-  return n;
-}
-
-function formatUnreadCountBadge(n) {
-  if (n <= 0) return "";
-  if (n > 99) return "99+";
-  return String(n);
-}
-
-/** Au chargement, synchronise le curseur « lu » avec le cache disque (historique = lu). */
-function coalesceReadStateWithMessageCache(loaded, messageCache) {
-  const out = { ...(loaded || {}) };
-  const cache = messageCache && typeof messageCache === "object" ? messageCache : {};
-  for (const [tid, arr] of Object.entries(cache)) {
-    if (out[tid] || !Array.isArray(arr) || arr.length === 0) continue;
-    const sorted = arr.slice().sort(compareChatMessagesByTime);
-    const last = sorted[sorted.length - 1];
-    if (last) {
-      out[tid] = { t: String(last.created_at || ""), id: String(last.id || "") };
-    }
-  }
-  return out;
-}
-
-function setFaviconHref(url) {
-  if (typeof document === "undefined") return;
-  const link = document.querySelector('link[rel="icon"]');
-  if (link) link.href = url;
-}
-
-function applyTabNotification(totalUnread) {
-  if (typeof document === "undefined") return;
-  const n = Math.max(0, Number(totalUnread) || 0);
-  const label = n > 0 ? `(${n > 99 ? "99+" : String(n)}) ${baseDocumentTitle}` : baseDocumentTitle;
-  if (document.title !== label) document.title = label;
-
-  if (n <= 0) {
-    setFaviconHref("/logo-justtrip.png");
-    return;
-  }
-  const prevImg = new Image();
-  prevImg.crossOrigin = "anonymous";
-  prevImg.onload = () => {
-    const w = 32;
-    const h = 32;
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setFaviconHref("/logo-justtrip.png");
-      return;
-    }
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(prevImg, 0, 0, w, h);
-    const txt = n > 99 ? "99+" : String(n);
-    ctx.save();
-    ctx.font = n > 99 ? "bold 7px Poppins,system-ui,sans-serif" : "bold 10px Poppins,system-ui,sans-serif";
-    const tw = ctx.measureText(txt).width;
-    const padX = n > 99 ? 2 : 3;
-    const ph = 10;
-    const pillW = Math.min(w - 1, tw + padX * 2);
-    const x = w - pillW - 1;
-    const y = 1;
-    const r = 4;
-    ctx.fillStyle = "rgba(220, 38, 38, 0.98)";
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + pillW - r, y);
-    ctx.quadraticCurveTo(x + pillW, y, x + pillW, y + r);
-    ctx.lineTo(x + pillW, y + ph - r);
-    ctx.quadraticCurveTo(x + pillW, y + ph, x + pillW - r, y + ph);
-    ctx.lineTo(x + r, y + ph);
-    ctx.quadraticCurveTo(x, y + ph, x, y + ph - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(txt, x + pillW / 2, y + ph / 2);
-    ctx.restore();
-    const blob = canvas.toDataURL("image/png");
-    setFaviconHref(blob);
-  };
-  prevImg.onerror = () => setFaviconHref("/logo-justtrip.png");
-  prevImg.src = "/logo-justtrip.png";
-}
 
 /** Date locale du jour (AAAA-MM-JJ). Toujours recalculée — évite une date « figée » au chargement du bundle. */
 function getTodayStr() {
@@ -625,6 +509,32 @@ function formatDate(value) {
     : new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleDateString(getAppDateLocale(), { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Plage lisible pour l'en-tête itinéraire (ex. « 21–28 août 2026 »). */
+function formatItineraryDateRange(startYmd, endYmd) {
+  const start = String(startYmd || "").slice(0, 10);
+  const end = String(endYmd || "").slice(0, 10);
+  if (!start) return "";
+  if (!end || start === end) return formatDate(start);
+  const parseYmd = (ymd) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || "").slice(0, 10));
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  };
+  const ds = parseYmd(start);
+  const de = parseYmd(end);
+  if (!ds || !de || Number.isNaN(ds.getTime()) || Number.isNaN(de.getTime())) {
+    return `${formatDate(start)} – ${formatDate(end)}`;
+  }
+  const locale = getAppDateLocale();
+  if (ds.getFullYear() === de.getFullYear() && ds.getMonth() === de.getMonth()) {
+    const dayStart = ds.toLocaleDateString(locale, { day: "numeric" });
+    const dayEnd = de.toLocaleDateString(locale, { day: "numeric" });
+    const rest = de.toLocaleDateString(locale, { month: "long", year: "numeric" });
+    return `${dayStart}–${dayEnd} ${rest}`;
+  }
+  return `${formatDate(start)} – ${formatDate(end)}`;
 }
 
 function getInviteApiUrl() {
@@ -878,49 +788,6 @@ async function tryMarkInviteeJoinedTrips(supabaseClient) {
   } catch (_e) {
     /* RPC absente tant que la migration SQL n’est pas appliquée */
   }
-}
-
-function loadChatCacheFromStorage() {
-  try {
-    const raw = window.localStorage.getItem(CHAT_CACHE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
-  } catch (_e) {
-    return {};
-  }
-}
-
-function saveChatCacheToStorage(cache) {
-  try {
-    window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(cache || {}));
-  } catch (_e) {
-    // ignore storage errors
-  }
-}
-
-/** Fusionne cache local + serveur (même id = une entrée), tri par created_at — évite d’effacer l’historique si le serveur renvoie []. */
-function mergeChatMessageLists(existing, server) {
-  const map = new Map();
-  const add = (m) => {
-    if (!m || typeof m !== "object") return;
-    const id = String(m.id ?? "");
-    if (!id) return;
-    const cur = map.get(id);
-    if (!cur) {
-      map.set(id, m);
-      return;
-    }
-    const tNew = String(m.created_at || "");
-    const tOld = String(cur.created_at || "");
-    map.set(id, tNew >= tOld ? m : cur);
-  };
-  for (const m of existing || []) add(m);
-  for (const m of server || []) add(m);
-  return Array.from(map.values()).sort((a, b) =>
-    String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
-  );
 }
 
 function loadActivityDescriptionCache() {
@@ -1903,8 +1770,6 @@ async function resolveValidatedDestination(raw, uiLanguage = "fr") {
 const BG = "#eef3f8";
 /** Fond écran d’accueil connexion (paysage large, même scène que l’ancien portrait — `bg-cover` web / mobile). */
 const AUTH_LANDING_BG = "/auth-landing-bg-wide.jpg";
-/** Bleu foncé bouton principal landing (lisibilité sur photo). */
-const AUTH_LANDING_PRIMARY = "#1B2A4A";
 
 function authHasInviteLink() {
   try {
@@ -1915,11 +1780,18 @@ function authHasInviteLink() {
   }
 }
 const TEXT = "#0B1220";
-/** Bleu logo Justtrip (aligné sur le fond du PNG). */
-const ACCENT = "#002B4F";
-/** Nuance plus foncée (dégradés boutons, coh. OnboardingTour). */
-const ACCENT_MID = "#001F3B";
+/** Bleu cobalt — structure (nav, pastilles, liens). */
+const ACCENT = BRAND_BLUE;
+const ACCENT_MID = BRAND_BLUE_DEEP;
 const slots = ["09:30", "14:00", "18:30", "21:00"];
+
+/** CTA principal orange (un seul par écran). */
+const BRAND_CTA_BTN_CLASS =
+  "rounded-xl bg-brand-gradient font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60";
+
+/** Pastille / badge structure bleu cobalt. */
+const BRAND_BLUE_PILL_CLASS =
+  "inline-flex items-center rounded-full bg-brand-blue font-bold text-white shadow-sm";
 
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
 const TRIPS_SELECT_ATTEMPTS = [
@@ -1929,13 +1801,6 @@ const TRIPS_SELECT_ATTEMPTS = [
   "id,title,start_date,end_date,owner_id,invited_emails",
   "id,title,start_date,end_date,owner_id",
 ];
-
-const GLASS_BUTTON_CLASS =
-  "font-normal tracking-[0.03em] border border-white/20 bg-white/10 backdrop-blur-xl shadow-[0_14px_35px_rgba(0,43,79,0.32)] transition hover:brightness-110";
-const GLASS_ACCENT_STYLE = {
-  background:
-    "linear-gradient(135deg, rgba(0,43,79,0.96) 0%, rgba(0,31,59,0.92) 55%, rgba(0,43,79,0.96) 100%)",
-};
 
 /** Grille 2 colonnes dans modales : évite le débordement des inputs (date, montant…) sur mobile. */
 const MODAL_GRID_2 = "grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3";
@@ -2090,6 +1955,86 @@ async function fetchFrenchWikiSummaryThumb(safeCity) {
   } catch (_e) {
     return "";
   }
+}
+
+/** Recherche Wikipedia (EN) — lieux obscurs avec contexte géo explicite. */
+async function fetchWikiSearchHeroUrl(query) {
+  const q = String(query || "").trim();
+  if (q.length < 3) return "";
+  try {
+    const apiUrl = `https://en.wikipedia.org/w/api.php?${new URLSearchParams({
+      action: "query",
+      generator: "search",
+      gsrsearch: q,
+      gsrlimit: "4",
+      prop: "pageimages",
+      piprop: "thumbnail",
+      pithumbsize: "1600",
+      format: "json",
+      origin: "*",
+    })}`;
+    const r = await fetch(apiUrl);
+    if (!r.ok) return "";
+    const j = await r.json();
+    const pages = j?.query?.pages;
+    if (!pages || typeof pages !== "object") return "";
+    const qNorm = normalizeTextForSearch(q);
+    const qTokens = qNorm.split(/\s+/).filter((t) => t.length >= 4);
+    const ranked = Object.values(pages).sort((a, b) => (a.index || 99) - (b.index || 99));
+    for (const p of ranked) {
+      const tl = String(p?.title || "").toLowerCase();
+      if (/disambiguation|homonymie|disambigua/.test(tl)) continue;
+      const titleNorm = normalizeTextForSearch(p?.title || "");
+      if (qTokens.length >= 2 && !qTokens.some((tok) => titleNorm.includes(tok))) continue;
+      const thumb = String(p?.thumbnail?.source || "").trim();
+      if (thumb && !isBlockedHeroImageUrl(thumb)) return upgradeLandscapeImageUrl(thumb);
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  return "";
+}
+
+/** Carte OSM statique — dernier repli quand Unsplash / Wikipedia échouent (ex. quota API). */
+function buildOsmStaticMapHeroUrl(lat, lon) {
+  const la = Number(lat);
+  const lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return "";
+  const center = `${la},${lo}`;
+  return (
+    `https://staticmap.openstreetmap.de/staticmap.php?center=${encodeURIComponent(center)}` +
+    `&zoom=10&size=1200x600&scale=2&maptype=mapnik&markers=${encodeURIComponent(center)},lightblue1`
+  );
+}
+
+/** Repli héros quand resolve / Unsplash échouent — Unsplash géo + Wikipedia search + carte OSM. */
+async function resolveGeoHeroFallback(cityInput, uiLang = "fr") {
+  const ctx = String(cityInput || "").trim();
+  if (!ctx) return "";
+  const nominatimQ = buildNominatimCityQuery(ctx) || ctx;
+  const unsplash = await getCityHeroImage(nominatimQ);
+  if (unsplash && !isBlockedHeroImageUrl(unsplash)) return upgradeLandscapeImageUrl(unsplash);
+  const wiki = await fetchWikiSearchHeroUrl(nominatimQ);
+  if (wiki && !isBlockedHeroImageUrl(wiki)) return wiki;
+  const { context: geoCtx } = splitResolveImageLabelContext(ctx, "");
+  if (geoCtx) {
+    const country = geoCtx.split(",").map((s) => s.trim()).filter(Boolean).pop() || "";
+    if (country) {
+      const countryImg = await getCityHeroImage(`${country} landscape travel destination`);
+      if (countryImg && !isBlockedHeroImageUrl(countryImg)) return upgradeLandscapeImageUrl(countryImg);
+    }
+  }
+  try {
+    const stem = extractCityPrompt(ctx) || normalizeCityInput(ctx);
+    const geo = await fetchNominatimCityGeo(stem, uiLang, ctx);
+    if (Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon))) {
+      const mapUrl = buildOsmStaticMapHeroUrl(geo.lat, geo.lon);
+      if (mapUrl) return mapUrl;
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  return "";
 }
 
 function getBundledCityHeroPath(cityInput) {
@@ -2368,6 +2313,15 @@ function firstAllowedHeroUrl(candidates) {
   return "";
 }
 
+/** URL héros figeable en cache — Commons/bundle, ou toute URL HTTPS en mode resolve (Unsplash inclus). */
+function isPersistableHeroUrl(url) {
+  const s = String(url || "").trim();
+  if (!s || isBlockedHeroImageUrl(s)) return false;
+  if (isTrustworthyHeroImageUrl(s)) return true;
+  if (isResolveHeroEnabled() && /^https?:\/\//i.test(s)) return true;
+  return false;
+}
+
 /**
  * Bandeau ville — ordre figé : Commons curés → Wikipedia → bundle / Storage → cache fiable → Unsplash validé.
  * Évite les photos Unsplash hors lieu mises en cache (ex. Bakou pour Crète).
@@ -2384,6 +2338,14 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
 
   /** Resolve + Unsplash seulement — jamais Commons curés / wiki satellite. */
   if (resolveHeroOn) {
+    const cachedRaw =
+      prefetched.cachedCityImage != null
+        ? String(prefetched.cachedCityImage || "")
+        : await getCachedCityImage(ctx);
+    if (cachedRaw && isPersistableHeroUrl(cachedRaw)) {
+      return upgradeLandscapeImageUrl(cachedRaw);
+    }
+
     const fromResolve = await getResolvedImageUrl({
       kind: "hero",
       label: searchLabel || ctx,
@@ -2393,14 +2355,13 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
     if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
       return upgradeLandscapeImageUrl(fromResolve);
     }
-    /** Contexte géo explicite + resolve échoué : pas de repli Unsplash (homonymes, ex. Capri IT). */
-    if (geoCtx) return "";
+    /** Repli Unsplash / Wikipedia / pays — requête Nominatim complète pour homonymes. */
     const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
-    const unsplash =
-      unsplashPref || (await getCityHeroImage(buildNominatimCityQuery(ctx) || ctx));
-    if (unsplash && !isBlockedHeroImageUrl(unsplash)) {
-      return upgradeLandscapeImageUrl(unsplash);
+    if (unsplashPref && !isBlockedHeroImageUrl(unsplashPref)) {
+      return upgradeLandscapeImageUrl(unsplashPref);
     }
+    const geoFallback = await resolveGeoHeroFallback(ctx, uiLang);
+    if (geoFallback) return geoFallback;
     return "";
   }
 
@@ -2468,29 +2429,20 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
  */
 function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
   if (!guide || typeof guide !== "object") return guide;
-  if (isResolveHeroEnabled()) {
-    const cur = String(guide.landscapeImageUrl || guide.imageUrl || "").trim();
-    if (cur && isBlockedHeroImageUrl(cur)) {
-      const { imageUrl: _i, landscapeImageUrl: _l, heroImageCandidates: _h, ...rest } = guide;
-      return rest;
-    }
-    return guide;
-  }
   const city = String(guide.city || "").trim();
   if (!city) return guide;
   const cacheProbeFull = [guide.city, guide.country, guide.adminRegion].filter(Boolean).join(", ").trim();
-  const cacheProbes = dedupeImageUrlChain([cacheProbeFull || city, city].filter(Boolean));
+  const hasGeoDisambig = Boolean(String(guide.country || guide.adminRegion || "").trim());
+  const cacheProbes =
+    hasGeoDisambig && cacheProbeFull
+      ? [cacheProbeFull]
+      : dedupeImageUrlChain([cacheProbeFull || city, city].filter(Boolean));
   let fast = "";
   let ck = "";
   for (const probe of cacheProbes) {
     ck = getCityImageCacheKey(probe);
     const mem = ck && cityImageMemoryCache[ck] ? String(cityImageMemoryCache[ck]) : "";
-    if (
-      mem &&
-      isTrustworthyHeroImageUrl(mem) &&
-      !isLikelyWikiFlagOrSealThumb(mem) &&
-      !isBlockedHeroImageUrl(mem)
-    ) {
+    if (mem && isPersistableHeroUrl(mem) && !isLikelyWikiFlagOrSealThumb(mem)) {
       fast = upgradeLandscapeImageUrl(mem);
       break;
     }
@@ -2500,18 +2452,20 @@ function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
       for (const probe of cacheProbes) {
         ck = getCityImageCacheKey(probe);
         const v = window.localStorage.getItem(`tp_city_img_${ck}`);
-        if (
-          v &&
-          isTrustworthyHeroImageUrl(String(v)) &&
-          !isLikelyWikiFlagOrSealThumb(String(v)) &&
-          !isBlockedHeroImageUrl(String(v))
-        ) {
+        if (v && isPersistableHeroUrl(String(v)) && !isLikelyWikiFlagOrSealThumb(String(v))) {
           fast = upgradeLandscapeImageUrl(String(v).trim());
           break;
         }
       }
     } catch (_e) {
       /* ignore */
+    }
+  }
+  if (!fast) {
+    const cur = String(guide.landscapeImageUrl || guide.imageUrl || "").trim();
+    if (cur && isPersistableHeroUrl(cur)) {
+      fast = upgradeLandscapeImageUrl(cur);
+      void persistCityImage(cacheProbeFull || city, fast);
     }
   }
   if (fast) {
@@ -2522,7 +2476,14 @@ function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
       heroImageCandidates: dedupeImageUrlChain([fast]).map((u) => upgradeLandscapeImageUrl(String(u || ""))),
     };
   }
-  /* Pas de cache Unsplash : garder les URLs du guide (Commons / fetch) — ne pas vider l’image. */
+  if (isResolveHeroEnabled()) {
+    const cur = String(guide.landscapeImageUrl || guide.imageUrl || "").trim();
+    if (cur && isBlockedHeroImageUrl(cur)) {
+      const { imageUrl: _i, landscapeImageUrl: _l, heroImageCandidates: _h, ...rest } = guide;
+      return rest;
+    }
+  }
+  /* Pas de cache : garder les URLs du guide (Commons / fetch) — ne pas vider l’image. */
   return guide;
 }
 
@@ -2533,8 +2494,7 @@ async function getCachedCityImage(cityInput) {
 
   const acceptCached = (url) => {
     const s = String(url || "").trim();
-    if (!s || !isTrustworthyHeroImageUrl(s)) return "";
-    if (isBlockedHeroImageUrl(s)) return "";
+    if (!s || !isPersistableHeroUrl(s)) return "";
     return s;
   };
 
@@ -2582,7 +2542,7 @@ async function getCachedCityImage(cityInput) {
 async function persistCityImage(cityInput, urlInput) {
   const cacheKey = getCityImageCacheKey(cityInput);
   const url = String(urlInput || "").trim();
-  if (!cacheKey || !url || !isTrustworthyHeroImageUrl(url) || isBlockedHeroImageUrl(url)) return;
+  if (!cacheKey || !url || !isPersistableHeroUrl(url)) return;
   const localStorageKey = `tp_city_img_${cacheKey}`;
   cityImageMemoryCache[cacheKey] = url;
   try {
@@ -5060,7 +5020,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   );
   const landscapeImageUrl = imageUrl;
 
-  if (imageUrl && isTrustworthyHeroImageUrl(imageUrl) && !isBlockedHeroImageUrl(imageUrl)) {
+  if (imageUrl && isPersistableHeroUrl(imageUrl)) {
     try {
       await persistCityImage(imageCtx, imageUrl);
     } catch (_e) {
@@ -5668,7 +5628,7 @@ async function fetchItineraryBulletImage(bullet, cityLabel, uiLang = "fr", dayTi
 
   if (isResolveActivityEnabled()) {
     const hit = await getResolvedImage({ kind: "activity", label, context, uiLang });
-    return hit?.url || "";
+    if (hit?.url) return hit.url;
   }
 
   const placeHint = extractItineraryBulletPlaceHint(bullet, dayTitle);
@@ -5727,6 +5687,112 @@ function isItineraryMealOrRestBulletClient(bullet) {
   return false;
 }
 
+/** Matin / après-midi / autre — même logique que stripItineraryBulletTimePrefix. */
+function parseItineraryBulletPeriod(bullet) {
+  const s = String(bullet || "").trim();
+  if (!s) return "other";
+  if (/^(matin|morning|morgen|vormittag|上午|午前)\s*[:：\-–—]/iu.test(s)) return "morning";
+  if (/^(apr[eè]s[- ]midi|afternoon|nachmittag|下午|午後)\s*[:：\-–—]/iu.test(s)) return "afternoon";
+  return "other";
+}
+
+function normalizeItineraryDayBullets(day) {
+  return (Array.isArray(day?.bullets) ? day.bullets : Array.isArray(day?.activities) ? day.activities : [])
+    .map((b) => String(b || "").trim())
+    .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
+    .slice(0, 2);
+}
+
+function getItineraryDayBulletsRaw(day) {
+  return (Array.isArray(day?.bullets) ? day.bullets : Array.isArray(day?.activities) ? day.activities : [])
+    .map((b) => String(b || "").trim())
+    .filter((b) => b && !isItineraryMealOrRestBulletClient(b));
+}
+
+function itineraryBulletActivityKey(bullet) {
+  return normalizeTextForSearch(stripItineraryBulletTimePrefix(bullet));
+}
+
+function getItineraryPeriodPrefix(period, language) {
+  const lang = String(language || "fr").toLowerCase().split("-")[0];
+  if (period === "morning") {
+    return ({ fr: "Matin", en: "Morning", de: "Vormittag", es: "Mañana", it: "Mattina", zh: "上午" })[lang] || "Matin";
+  }
+  if (period === "afternoon") {
+    return ({ fr: "Après-midi", en: "Afternoon", de: "Nachmittag", es: "Tarde", it: "Pomeriggio", zh: "下午" })[lang] || "Après-midi";
+  }
+  return "";
+}
+
+function formatItineraryActivityBullet(period, activityTitle, language) {
+  const body = String(activityTitle || "").trim();
+  if (!body) return "";
+  const prefix = getItineraryPeriodPrefix(period, language);
+  return prefix ? `${prefix} : ${body}` : body;
+}
+
+function collectUsedItineraryActivityKeys(dayIdeas) {
+  const used = new Set();
+  for (const day of Array.isArray(dayIdeas) ? dayIdeas : []) {
+    for (const b of getItineraryDayBulletsRaw(day)) {
+      const k = itineraryBulletActivityKey(b);
+      if (k) used.add(k);
+    }
+  }
+  return used;
+}
+
+function getLocalSuggestedActivityTitles(guide, city) {
+  const fromGuide = normalizeSuggestedActivitiesList(guide?.suggestedActivities || [], city);
+  const titles = fromGuide.map((a) => a.title).filter(Boolean);
+  if (titles.length >= 4) return titles;
+  const fillers = normalizeSuggestedActivitiesList(buildSuggestedActivitiesForCity(city), city);
+  const merged = [...titles, ...fillers.map((f) => f.title)].filter(Boolean);
+  return [...new Set(merged)];
+}
+
+function pickNextActivityTitle(pool, usedKeys, excludeKey, seed) {
+  const candidates = pool
+    .map((t) => String(t || "").trim())
+    .filter((t) => {
+      const k = normalizeTextForSearch(t);
+      return k && k !== excludeKey && !usedKeys.has(k);
+    });
+  if (!candidates.length) return "";
+  return candidates[Math.abs(Number(seed) || 0) % candidates.length];
+}
+
+function updateItineraryDayBullet(dayIdeas, dayIndex, bulletIndex, newBullet) {
+  return (Array.isArray(dayIdeas) ? dayIdeas : []).map((d, i) => {
+    if (i !== dayIndex) return d;
+    const src = getItineraryDayBulletsRaw(d);
+    if (bulletIndex < 0 || bulletIndex >= src.length) return d;
+    const bullets = [...src];
+    bullets[bulletIndex] = newBullet;
+    return { ...d, bullets };
+  });
+}
+
+async function fetchFreshSuggestedActivityTitles(dest, language) {
+  const city = String(dest || "").trim();
+  if (!city) return [];
+  try {
+    const res = await fetchGroqSuggestedActivities({ destination: city, language });
+    return normalizeGeminiSuggestedActivitiesPayload(res?.data, city)
+      .map((a) => normalizeSuggestedActivityShape(a, city).title)
+      .filter(Boolean);
+  } catch {
+    try {
+      const res = await fetchGeminiSuggestedActivities({ destination: city, language });
+      return normalizeGeminiSuggestedActivitiesPayload(res?.data, city)
+        .map((a) => normalizeSuggestedActivityShape(a, city).title)
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+}
+
 const itineraryBulletImageCache = Object.create(null);
 let itineraryBulletImageFetchChain = Promise.resolve();
 
@@ -5736,12 +5802,54 @@ function scheduleItineraryBulletImageFetch(task) {
   return run;
 }
 
-function ItineraryBulletRow({ bullet, cityLabel, dayTitle, dayNum, bulletIndex }) {
-  const { language } = useI18n();
+function ItineraryBulletRow({
+  bullet,
+  cityLabel,
+  dayTitle,
+  dayNum,
+  bulletIndex,
+  variant = "compact",
+  onSwapActivity,
+  onMap,
+  onRemove,
+}) {
+  const { t, language } = useI18n();
   const text = String(bullet || "").trim();
   const cacheKey = `v5|${String(cityLabel || "").trim()}|${dayNum}|${bulletIndex}|${text}`;
   const [src, setSrc] = useState(() => itineraryBulletImageCache[cacheKey] || "");
   const [loading, setLoading] = useState(() => !itineraryBulletImageCache[cacheKey]);
+  const [imgBroken, setImgBroken] = useState(false);
+  const [mapOpening, setMapOpening] = useState(false);
+  const [swapLoading, setSwapLoading] = useState(false);
+
+  const handleSwapActivity = async () => {
+    if (swapLoading || !onSwapActivity) return;
+    setSwapLoading(true);
+    try {
+      await onSwapActivity();
+    } finally {
+      setSwapLoading(false);
+    }
+  };
+
+  const handleOpenMap = async () => {
+    if (mapOpening) return;
+    setMapOpening(true);
+    try {
+      await openItineraryActivityMap({
+        bullet: text,
+        cityLabel,
+        dayTitle,
+        language,
+      });
+    } finally {
+      setMapOpening(false);
+    }
+  };
+
+  useEffect(() => {
+    setImgBroken(false);
+  }, [cacheKey, src]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5770,29 +5878,105 @@ function ItineraryBulletRow({ bullet, cityLabel, dayTitle, dayNum, bulletIndex }
 
   if (!text) return null;
 
-  const placeholderBg = resolveImagePlaceholder(`${text}|${cityLabel}|${dayNum}|${bulletIndex}`);
+  const isCard = variant === "card";
+  const displayText = stripItineraryBulletTimePrefix(text) || text;
+  const period = parseItineraryBulletPeriod(text);
+  const placeLabel = extractItineraryBulletPlaceHint(text, dayTitle) || displayText.slice(0, 48);
+
+  const periodChip =
+    period === "morning" ? (
+      <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
+        <Sunrise className="h-3 w-3 text-brand-orange-ink" strokeWidth={2} aria-hidden />
+        {t("destination.itineraryPeriodMorning")}
+      </span>
+    ) : period === "afternoon" ? (
+      <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
+        <Sun className="h-3 w-3 text-brand-orange-ink" strokeWidth={2} aria-hidden />
+        {t("destination.itineraryPeriodAfternoon")}
+      </span>
+    ) : null;
+
+  const imageBoxClass = isCard
+    ? "relative h-28 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/90 sm:h-32 sm:w-48"
+    : "relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-lg bg-slate-200 ring-1 ring-slate-200/90 sm:h-14 sm:w-14 sm:rounded-xl";
+
+  const imageInner = loading ? (
+    <div className="h-full w-full animate-pulse bg-slate-200" aria-hidden />
+  ) : src && !imgBroken ? (
+    <img
+      src={src}
+      alt=""
+      className="h-full w-full object-cover"
+      loading="lazy"
+      decoding="async"
+      onError={() => {
+        delete itineraryBulletImageCache[cacheKey];
+        setImgBroken(true);
+        setSrc("");
+      }}
+    />
+  ) : (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-slate-100 px-2 text-center" aria-hidden>
+      <ImageOff className="h-5 w-5 text-slate-300 sm:h-6 sm:w-6" strokeWidth={1.75} />
+      <span className="line-clamp-2 text-[9px] leading-tight text-slate-400 sm:text-[10px]">{placeLabel}</span>
+    </div>
+  );
+
+  const actionBtnClass =
+    "rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800";
+
+  const hoverActions = isCard ? (
+    <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+      <button type="button" className={actionBtnClass} title={t("destination.itineraryActivitySwap")} aria-label={t("destination.itineraryActivitySwap")} disabled={swapLoading} onClick={handleSwapActivity}>
+        {swapLoading ? (
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" aria-hidden />
+        ) : (
+          <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+        )}
+      </button>
+      <button
+        type="button"
+        className={actionBtnClass}
+        title={t("destination.itineraryActivityMap")}
+        aria-label={t("destination.itineraryActivityMap")}
+        disabled={mapOpening}
+        onClick={handleOpenMap}
+      >
+        {mapOpening ? (
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" aria-hidden />
+        ) : (
+          <MapPin className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+        )}
+      </button>
+      <button type="button" className={actionBtnClass} title={t("destination.itineraryActivityRemove")} aria-label={t("destination.itineraryActivityRemove")} onClick={() => onRemove?.()}>
+        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      </button>
+    </div>
+  ) : null;
+
+  if (!isCard) {
+    return (
+      <li className="flex gap-3 rounded-xl bg-slate-50/80 p-2 ring-1 ring-slate-100">
+        <div className={imageBoxClass}>{imageInner}</div>
+        <span className="min-w-0 flex-1 self-center text-[12px] leading-relaxed text-slate-600">{text}</span>
+      </li>
+    );
+  }
 
   return (
-    <li className="flex gap-3 rounded-xl bg-slate-50/80 p-2 ring-1 ring-slate-100">
-      <div className="relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-lg bg-slate-200 ring-1 ring-slate-200/90 sm:h-14 sm:w-14 sm:rounded-xl">
-        {loading ? (
-          <div className="h-full w-full animate-pulse bg-slate-200" aria-hidden />
-        ) : src ? (
-          <img
-            src={src}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            decoding="async"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : (
-          <div className="h-full w-full" style={{ background: placeholderBg }} aria-hidden />
-        )}
+    <li className="group rounded-2xl bg-white p-3 ring-1 ring-slate-100 transition hover:ring-slate-200/90 sm:p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className={imageBoxClass}>{imageInner}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 space-y-2">
+              {periodChip}
+              <p className="text-[13px] leading-relaxed text-slate-700 sm:text-[14px]">{displayText}</p>
+            </div>
+            {hoverActions}
+          </div>
+        </div>
       </div>
-      <span className="min-w-0 flex-1 self-center text-[12px] leading-relaxed text-slate-600">{text}</span>
     </li>
   );
 }
@@ -6026,12 +6210,13 @@ async function fetchUnsplashImageByQuery(queryInput, options = {}) {
     });
     scored.sort((a, b) => b.score - a.score);
     const minCityBoost = Number(options.minCityBoostScore) || 0;
+    const acceptAny = Boolean(options.acceptAnyResult);
     let candidates = scored;
     if (requirePlaceRelevance && placeRelevance.length > 0) {
       candidates = scored.filter((row) => row.placeHitCount > 0);
     }
     const best = candidates[0] || (requirePlaceRelevance ? null : scored[0]);
-    if (minCityBoost > 0 && best) {
+    if (minCityBoost > 0 && best && !acceptAny) {
       const cityBoostScore = cityBoost.reduce(
         (acc, tok) => (tok && normalizeTextForSearch(
           `${best.item?.description || ""} ${best.item?.alt_description || ""}`
@@ -6068,7 +6253,7 @@ async function resolveDestinationHeroFirstPaint(cityRaw) {
   const cityStem = heroImageStemFromDestination(cityRaw) || extractCityPrompt(cityRaw) || String(cityRaw || "").trim();
   if (cityStem.length < 2) return "";
   const url = await pickCityHeroImageUrl(cityRaw);
-  if (url && isTrustworthyHeroImageUrl(url)) {
+  if (url && isPersistableHeroUrl(url)) {
     void persistCityImage(cityRaw, url);
   }
   return url;
@@ -6081,12 +6266,21 @@ async function resolveDestinationHeroFirstPaint(cityRaw) {
 async function getCityHeroImage(cityInput) {
   const raw = String(cityInput || "").trim();
   if (!raw) return "";
-  const stem = heroImageStemFromDestination(raw);
-  const q = buildCityHeroUnsplashQuery(stem);
+  const nominatimQ = buildNominatimCityQuery(raw) || raw;
+  const stem = heroImageStemFromDestination(nominatimQ);
+  const q = buildCityHeroUnsplashQuery(nominatimQ);
   if (!q) return "";
   const cityTok = normalizeCityDroneKey(stem).split(/\s+/).filter((t) => t.length > 2);
+  const contextTok = nominatimQ
+    .split(",")
+    .slice(1)
+    .join(" ")
+    .split(/\s+/)
+    .map((t) => normalizeTextForSearch(t))
+    .filter((t) => t.length >= 4);
   const landmarkDescBoostTokens = getHeroUnsplashDescBoostTokens(stem).map((t) => normalizeTextForSearch(t));
-  const isCoastal = inferAestheticCityQueryType(raw) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
+  const isCoastal = inferAestheticCityQueryType(nominatimQ) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
+  const hasGeoCtx = nominatimQ.split(",").map((p) => p.trim()).filter(Boolean).length >= 2;
   const preferredKeywords = isCoastal
     ? [
         "beach", "turquoise", "ocean", "sea", "coast", "tropical",
@@ -6104,12 +6298,13 @@ async function getCityHeroImage(cityInput) {
         "harbor", "harbour", "bay", "river", "canal",
         "daylight", "golden hour",
       ];
-  return fetchUnsplashImageByQuery(q, {
+  const unsplashOpts = {
     pickFirst: true,
     perPage: 30,
     contentFilter: "high",
     heroPenalizeSkyOnly: true,
-    minCityBoostScore: 80,
+    minCityBoostScore: hasGeoCtx ? 0 : 80,
+    acceptAnyResult: hasGeoCtx,
     landmarkDescBoostTokens,
     preferredKeywords,
     avoidKeywords: [
@@ -6126,10 +6321,26 @@ async function getCityHeroImage(cityInput) {
       "person", "couple", "group", "crowd",
       "black and white", "black white", "monochrome", "grayscale", "greyscale",
       "noir et blanc", "noir blanc", "sepia", "desaturated", "bw photo",
-      ...getUnsplashHeroConflictAvoidKeywords(stem),
+      ...getUnsplashHeroConflictAvoidKeywords(nominatimQ),
     ],
-    cityBoostTokens: [...cityTok, normalizeTextForSearch(stem).split(/\s+/)[0]].filter(Boolean),
-  });
+    cityBoostTokens: [...cityTok, ...contextTok, normalizeTextForSearch(stem).split(/\s+/)[0]].filter(Boolean),
+  };
+  let out = await fetchUnsplashImageByQuery(q, unsplashOpts);
+  if (!out && hasGeoCtx) {
+    const geoTail = nominatimQ
+      .split(",")
+      .slice(1)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .join(" ");
+    if (geoTail) {
+      out = await fetchUnsplashImageByQuery(`${geoTail} landscape travel destination`, {
+        ...unsplashOpts,
+        minCityBoostScore: 0,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -6543,7 +6754,7 @@ async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
   const url = await pickCityHeroImageUrl(c);
-  if (url && isTrustworthyHeroImageUrl(url)) {
+  if (url && isPersistableHeroUrl(url)) {
     void persistCityImage(c, url);
   }
   return url;
@@ -6753,7 +6964,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
 
   return (
     <div
-      className={`relative h-full w-full overflow-hidden bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ${frameClassName}`.trim()}
+      className={`relative h-full w-full overflow-hidden bg-gradient-to-br from-slate-200 via-brand-blue-tint to-slate-300 ${frameClassName}`.trim()}
     >
       {displaySrc ? (
         <img
@@ -6860,7 +7071,7 @@ function JusttripBrand({ size = "md", className = "" }) {
 function TopNav({ onMenu, onAdd, title }) {
   return (
     <header className="sticky top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
-      <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(30,58,95,0.09)] backdrop-blur-xl ring-1 ring-sky-100/55 sm:px-6 sm:py-4">
+      <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(2,6,23,0.08)] backdrop-blur-xl sm:px-6 sm:py-4">
         <button
           type="button"
           onClick={onMenu}
@@ -6877,7 +7088,7 @@ function TopNav({ onMenu, onAdd, title }) {
           type="button"
           onClick={onAdd}
           data-tour-id="plus-button"
-          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(0,43,79,0.22)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
+          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(29,78,216,0.22)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
           style={{ backgroundColor: ACCENT }}
         >
           <Plus size={20} className="shrink-0" aria-hidden />
@@ -6998,8 +7209,8 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
     { id: "trips", key: "nav.trips" },
     { id: "planner", key: "nav.planner" },
     { id: "destination", key: "nav.search" },
+    { id: "stays", key: "nav.stays" },
     { id: "budget", key: "nav.budget" },
-    { id: "chat", key: "nav.chat" },
   ];
   return (
     <div className={`fixed inset-0 z-40 transition ${open ? "pointer-events-auto" : "pointer-events-none"}`}>
@@ -7073,7 +7284,7 @@ function SideMenu({ open, onClose, user, onOpenAccount, onSignOut, activeTab, on
                 onClose();
                 onShowTour?.();
               }}
-              className="w-full flex items-center gap-2.5 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-normal tracking-[0.03em] text-indigo-700 hover:bg-indigo-100 transition-colors"
+              className="w-full flex items-center gap-2.5 rounded-2xl border border-brand-blue/15 bg-brand-blue-tint px-4 py-3 text-sm font-normal tracking-[0.03em] text-brand-blue-deep hover:bg-brand-blue-tint transition-colors"
             >
               <span className="text-base leading-none">🧭</span>
               {t("menu.howItWorks")}
@@ -7134,6 +7345,8 @@ function AuthView() {
   const [inviteStartDate, setInviteStartDate] = useState("");
   const [inviteEndDate, setInviteEndDate] = useState("");
   const [inviteAccepted, setInviteAccepted] = useState(false);
+  /** Étape 2 modal invitation : création ou connexion (e-mail invité figé). */
+  const [inviteStep2Mode, setInviteStep2Mode] = useState("signup");
   const [emailExistsModalOpen, setEmailExistsModalOpen] = useState(false);
   const [awaitingEmailConfirm, setAwaitingEmailConfirm] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState("");
@@ -7168,6 +7381,7 @@ function AuthView() {
         }
         if (cancelled) return;
         setMode(hasAccount ? "signin" : "signup");
+        setInviteStep2Mode(hasAccount ? "signin" : "signup");
       } catch (_e) {
         // ignore malformed URL params
       }
@@ -7249,6 +7463,11 @@ function AuthView() {
         if (error) throw error;
         setAwaitingEmailConfirm(false);
         setConfirmationEmail("");
+        if (invitePromptOpen) {
+          setInvitePromptOpen(false);
+          setInviteAccepted(false);
+          clearInviteParams();
+        }
       }
     } catch (e) {
       if (mode === "signup") clearSignupOnboardingMarkers();
@@ -7298,6 +7517,51 @@ function AuthView() {
     }
   };
 
+  const finishInviteFlowAfterAuth = () => {
+    setInvitePromptOpen(false);
+    setInviteAccepted(false);
+    clearInviteParams();
+  };
+
+  const completeInviteSignIn = async () => {
+    const safeInviteEmail = String(inviteEmail || "").trim();
+    const safePassword = String(invitePassword || "");
+    if (!safeInviteEmail || !safePassword) {
+      setMsg(t("auth.errEmailPassword"));
+      return;
+    }
+
+    setLoading(true);
+    setMsg("");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: safeInviteEmail,
+        password: safePassword,
+      });
+      if (error) throw error;
+      finishInviteFlowAfterAuth();
+    } catch (e) {
+      const code = String(e?.code || "");
+      const raw = String(e?.message || "");
+      const low = raw.toLowerCase();
+      if (
+        code === "email_not_confirmed" ||
+        low.includes("email not confirmed") ||
+        low.includes("not confirmed")
+      ) {
+        setAwaitingEmailConfirm(true);
+        setConfirmationEmail(safeInviteEmail);
+        setMsg(t("auth.emailNotConfirmed"));
+      } else if (low.includes("invalid login credentials")) {
+        setMsg(t("auth.invalidCredentials"));
+      } else {
+        setMsg(raw || t("auth.errGeneric"));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const completeInviteSignup = async () => {
     const safeFirst = String(inviteFirstName || "").trim();
     const safeLast = String(inviteLastName || "").trim();
@@ -7337,8 +7601,7 @@ function AuthView() {
       setLastName(safeLast);
       setEmail(safeInviteEmail);
       setPassword("");
-      setInvitePromptOpen(false);
-      clearInviteParams();
+      finishInviteFlowAfterAuth();
       if (!inviteSignupData?.session) {
         setAwaitingEmailConfirm(true);
         setConfirmationEmail(safeInviteEmail);
@@ -7352,8 +7615,8 @@ function AuthView() {
     } catch (e) {
       clearSignupOnboardingMarkers();
       if (isAuthSignupDuplicateEmailError(e)) {
-        setEmailExistsModalOpen(true);
-        setMsg("");
+        setInviteStep2Mode("signin");
+        setMsg(t("auth.inviteExistingAccountHint"));
       } else {
         setMsg(String(e?.message || t("auth.inviteErr")));
       }
@@ -7446,8 +7709,8 @@ function AuthView() {
                     setMode("signup");
                     setMsg("");
                   }}
-                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl px-5 py-3 text-center text-[17px] font-semibold leading-tight text-white shadow-[0_12px_28px_rgba(0,0,0,0.25)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3rem]"
-                  style={{ backgroundColor: AUTH_LANDING_PRIMARY }}
+                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl px-5 py-3 text-center text-[17px] font-semibold leading-tight text-white shadow-[0_12px_28px_rgba(249,115,22,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3rem]"
+                  style={BRAND_CTA_STYLE}
                 >
                   {t("auth.landingSignUp")}
                 </button>
@@ -7459,7 +7722,7 @@ function AuthView() {
                     setMsg("");
                   }}
                   className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl border border-black/10 bg-white/[0.95] px-5 py-3 text-center text-base font-medium leading-tight shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition hover:bg-white active:scale-[0.99] sm:min-h-[3rem]"
-                  style={{ color: AUTH_LANDING_PRIMARY }}
+                  style={{ color: BRAND_BLUE }}
                 >
                   {t("auth.landingSignIn")}
                 </button>
@@ -7502,14 +7765,14 @@ function AuthView() {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder={t("auth.firstName")}
-                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
               />
               <input
                 type="text"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder={t("auth.lastName")}
-                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
               />
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("auth.profilePhotoOptional")}</p>
@@ -7551,21 +7814,21 @@ function AuthView() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={t("auth.email")}
-            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
           />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("auth.password")}
-            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(0,43,79,0.12)]"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
           />
           <button
             type="button"
             onClick={submit}
             disabled={loading}
-            className={`mt-1 flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-5 py-3.5 text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_10px_26px_rgba(0,43,79,0.22)] transition hover:brightness-105 active:scale-[0.99] disabled:opacity-60 sm:min-h-[3.5rem] sm:text-base ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`mt-1 flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-5 py-3.5 text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_10px_28px_rgba(249,115,22,0.28)] transition hover:brightness-105 active:scale-[0.99] disabled:opacity-60 sm:min-h-[3.5rem] sm:text-base`}
+            style={BRAND_CTA_STYLE}
           >
             {loading
               ? t("auth.loading")
@@ -7685,7 +7948,7 @@ function AuthView() {
                 <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100 space-y-2.5">
                   {inviteTripName && (
                     <div className="flex items-center gap-2.5">
-                      <MapPin size={14} className="shrink-0 text-indigo-500" />
+                      <MapPin size={14} className="shrink-0 text-brand-blue" />
                       <div>
                         <p className="text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
                           {t("auth.inviteDestination")}
@@ -7698,7 +7961,7 @@ function AuthView() {
                   )}
                   {inviteStartDate && inviteEndDate && (
                     <div className="flex items-center gap-2.5">
-                      <Calendar size={14} className="shrink-0 text-indigo-500" />
+                      <Calendar size={14} className="shrink-0 text-brand-blue" />
                       <div>
                         <p className="text-[10px] font-normal uppercase tracking-[0.16em] text-slate-400">
                           Dates
@@ -7735,17 +7998,12 @@ function AuthView() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (mode === "signin") {
-                        setInvitePromptOpen(false);
-                        setInviteAccepted(false);
-                        clearInviteParams();
-                        setMsg(t("auth.inviteConnectHint"));
-                        return;
-                      }
                       setInviteAccepted(true);
+                      setInviteStep2Mode(mode === "signin" ? "signin" : "signup");
+                      setMsg("");
                     }}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
-                    style={{ background: `linear-gradient(90deg, ${ACCENT} 0%, ${ACCENT_MID} 100%)` }}
+                    style={{ background: BRAND_BLUE_GRADIENT_H }}
                   >
                     {mode === "signin" ? null : <span>🎉</span>}
                     {mode === "signin" ? t("auth.inviteAcceptSignIn") : t("auth.inviteAccept")}
@@ -7772,22 +8030,34 @@ function AuthView() {
                 <h3 className="mb-1 text-[10px] font-normal uppercase tracking-[0.22em] text-slate-400">
                   {t("auth.inviteTitle")}
                 </h3>
-                <p className="mb-4 text-[15px] font-bold text-slate-900">{t("auth.inviteSignupStep")}</p>
-                <div className={`space-y-3`}>
-                  <div className="grid grid-cols-2 gap-3">
+                <p className="mb-4 text-[15px] font-bold text-slate-900">
+                  {inviteStep2Mode === "signin" ? t("auth.inviteSignInStep") : t("auth.inviteSignupStep")}
+                </p>
+                <div className="space-y-3">
+                  {inviteStep2Mode === "signup" ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        value={inviteFirstName}
+                        onChange={(e) => setInviteFirstName(e.target.value)}
+                        placeholder={t("auth.firstName")}
+                        className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
+                      />
+                      <input
+                        value={inviteLastName}
+                        onChange={(e) => setInviteLastName(e.target.value)}
+                        placeholder={t("auth.lastName")}
+                        className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
+                      />
+                    </div>
+                  ) : (
                     <input
-                      value={inviteFirstName}
-                      onChange={(e) => setInviteFirstName(e.target.value)}
-                      placeholder={t("auth.firstName")}
-                      className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
+                      type="email"
+                      readOnly
+                      value={String(inviteEmail || "")}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-700"
+                      aria-readonly="true"
                     />
-                    <input
-                      value={inviteLastName}
-                      onChange={(e) => setInviteLastName(e.target.value)}
-                      placeholder={t("auth.lastName")}
-                      className="min-w-0 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[13px]"
-                    />
-                  </div>
+                  )}
                   <input
                     type="password"
                     value={invitePassword}
@@ -7795,15 +8065,52 @@ function AuthView() {
                     placeholder={t("auth.password")}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[13px]"
                   />
+                  {inviteStep2Mode === "signin" ? (
+                    <button
+                      type="button"
+                      onClick={forgotPassword}
+                      disabled={loading}
+                      className="w-full py-1 text-center text-[12px] font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-800 disabled:opacity-60"
+                    >
+                      {t("auth.forgotPassword")}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    onClick={completeInviteSignup}
+                    onClick={inviteStep2Mode === "signin" ? completeInviteSignIn : completeInviteSignup}
                     disabled={loading}
                     className="w-full rounded-xl py-3 text-[13px] font-normal tracking-[0.03em] text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
-                    style={{ background: `linear-gradient(90deg, ${ACCENT} 0%, ${ACCENT_MID} 100%)` }}
+                    style={{ background: BRAND_BLUE_GRADIENT_H }}
                   >
-                    {loading ? t("auth.inviteCreating") : t("auth.inviteSubmit")}
+                    {loading
+                      ? t("auth.inviteCreating")
+                      : inviteStep2Mode === "signin"
+                        ? t("auth.inviteSubmitSignIn")
+                        : t("auth.inviteSubmit")}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInviteStep2Mode((m) => (m === "signin" ? "signup" : "signin"));
+                      setMsg("");
+                    }}
+                    className="w-full py-2 text-center text-[12px] font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-900"
+                  >
+                    {inviteStep2Mode === "signin" ? t("auth.inviteToggleSignUp") : t("auth.inviteToggleSignIn")}
+                  </button>
+                  {msg ? (
+                    <div className="rounded-2xl bg-slate-100 px-4 py-3 text-[12px] text-slate-700">{String(msg)}</div>
+                  ) : null}
+                  {awaitingEmailConfirm && inviteStep2Mode === "signin" && String(confirmationEmail || inviteEmail || "").trim() ? (
+                    <button
+                      type="button"
+                      onClick={resendConfirmationEmail}
+                      disabled={resendLoading || loading}
+                      className="flex min-h-[2.75rem] w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-[12px] font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {resendLoading ? t("auth.loading") : t("auth.confirmEmailResend")}
+                    </button>
+                  ) : null}
                 </div>
                 <footer className="mt-5 border-t border-slate-100 pt-4">
                   <div className="flex flex-col items-center gap-3">
@@ -7850,9 +8157,12 @@ function AuthView() {
                 className="order-1 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 sm:order-2 sm:w-auto"
                 onClick={() => {
                   setEmailExistsModalOpen(false);
-                  setInvitePromptOpen(false);
-                  clearInviteParams();
+                  setInvitePromptOpen(true);
+                  setInviteAccepted(true);
+                  setInviteStep2Mode("signin");
                   setMode("signin");
+                  setEmail(String(inviteEmail || email || "").trim());
+                  setMsg(t("auth.inviteExistingAccountHint"));
                 }}
               >
                 {t("auth.emailAlreadyUsedGoSignIn")}
@@ -8031,8 +8341,7 @@ function TripFormModal({ open, onClose, onCreate }) {
                 setSubmitting(false);
               }
             }}
-            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
-            style={GLASS_ACCENT_STYLE}
+            className={`w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
           >
             {submitting ? t("tripForm.creating") : t("tripForm.create")}
           </button>
@@ -8086,8 +8395,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
           />
           <button
             onClick={addEmail}
-            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${BRAND_BLUE_BTN_CLASS}`}
           >
             {t("common.add")}
           </button>
@@ -8109,8 +8417,7 @@ function InviteEmailsModal({ open, onClose, title, initialEmails, onSave }) {
 
         <button
           onClick={() => onSave(Array.isArray(emails) ? emails : [])}
-          className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-          style={GLASS_ACCENT_STYLE}
+          className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS}`}
         >
           {t("modals.saveInvitations")}
         </button>
@@ -8242,8 +8549,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
                 invited_emails: emailsToSave,
               });
             }}
-            className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS}`}
           >
             {t("modals.editTripSave")}
           </button>
@@ -8405,7 +8711,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
       >
         <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-4">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-sm">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-blue text-white shadow-sm">
               <Mail size={16} strokeWidth={2.5} />
             </span>
             <h2 className="text-[15px] font-bold text-slate-900">{t("modals.shareInviteEmailTitle")}</h2>
@@ -8414,7 +8720,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
         </div>
         <div className="px-5 pb-6 space-y-4">
           <div className="flex items-center gap-2 rounded-2xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-100">
-            <MapPin size={13} className="shrink-0 text-indigo-500" />
+            <MapPin size={13} className="shrink-0 text-brand-blue" />
             <div className="min-w-0">
               <p className="truncate text-[12px] font-semibold text-slate-800">{tripTitle}</p>
               <p className="text-[11px] text-slate-400">{dateRange}</p>
@@ -8437,11 +8743,11 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
               }}
               onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
               placeholder={t("modals.shareInviteEmailPlaceholder")}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
               autoFocus
             />
           </div>
-          <p className="flex gap-2 rounded-xl bg-sky-50 px-3.5 py-2.5 text-[11px] leading-relaxed text-sky-700 ring-1 ring-sky-100">
+          <p className="flex gap-2 rounded-xl bg-brand-blue-tint px-3.5 py-2.5 text-[11px] leading-relaxed text-brand-blue-deep ring-1 ring-brand-blue/15">
             <span className="mt-0.5 shrink-0">ℹ️</span>
             <span>{t("modals.shareInviteEmailHint")}</span>
           </p>
@@ -8483,7 +8789,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
                 type="button"
                 onClick={handleSend}
                 disabled={state === "sending"}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                className={`w-full rounded-xl py-3 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
               >
                 {t("modals.shareInviteEmailRetry")}
               </button>
@@ -8493,7 +8799,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
               type="button"
               onClick={handleSend}
               disabled={state === "sending" || state === "sent"}
-              className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-3 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+              className={`w-full rounded-xl py-3 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
             >
               {state === "sent"
                 ? `\u2713 ${t("modals.shareInviteEmailSent")}`
@@ -8597,7 +8903,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
                   {dayEntries.map(([date, acts], di) => (
                     <li key={date}>
                       <div className="mb-2 flex items-center gap-2">
-                        <span className="inline-flex items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">
+                        <span className={`${BRAND_BLUE_PILL_CLASS} px-2.5 py-0.5 text-[11px]`}>
                           {t("modals.shareDay", { n: di + 1 })}
                         </span>
                         <span className="text-[12px] font-semibold text-slate-600">{formatDate(date)}</span>
@@ -8653,7 +8959,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
             </button>
             <button
               onClick={() => setInviteOpen(true)}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 py-2.5 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 px-4 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
             >
               <Mail size={15} strokeWidth={2.5} />
               {t("modals.shareInviteByEmail")}
@@ -8812,8 +9118,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
               setList((prev) => [...prev, v]);
               setName("");
             }}
-            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${BRAND_BLUE_BTN_CLASS}`}
           >
             Ajouter
           </button>
@@ -8835,8 +9140,7 @@ function TripParticipantsModal({ open, onClose, trip, onSave }) {
         </div>
         <button
           onClick={() => onSave(list.length > 0 ? list : ["Moi"])}
-          className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-          style={GLASS_ACCENT_STYLE}
+          className={`mt-4 w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS}`}
         >
           Enregistrer
         </button>
@@ -9056,8 +9360,7 @@ function AccountModal({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`w-full rounded-2xl px-4 py-3 text-white disabled:opacity-60 ${BRAND_BLUE_BTN_CLASS}`}
           >
             {saving ? t("accountModal.saving") : t("accountModal.saveProfile")}
           </button>
@@ -9281,11 +9584,11 @@ function CitySearchBox({
       style={dropdownReserve ? { marginBottom: dropdownReserve } : undefined}
     >
       <div
-        className={`flex min-w-0 items-center gap-2 rounded-2xl px-4 py-3 ring-1 ring-sky-100/70 shadow-[0_2px_12px_rgba(30,58,95,0.04)] ${
+        className={`flex min-w-0 items-center gap-2 rounded-2xl px-4 py-3 shadow-[0_2px_12px_rgba(2,6,23,0.05)] ${
           readOnly ? "bg-slate-50/90" : "bg-white"
         }`}
       >
-        <Search size={16} className="shrink-0 text-sky-400/80" />
+        <Search size={16} className="shrink-0 text-brand-blue/60" />
         <input
           value={value}
           onChange={(e) => {
@@ -9425,7 +9728,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
 
   return (
     <section className="space-y-8">
-      <div className="rounded-[2.2rem] bg-white/92 px-6 py-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
+      <div className="rounded-[2.2rem] bg-white/92 px-6 py-5 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <p className="text-xs font-normal uppercase tracking-[0.3em] text-slate-500">{t("home.label")}</p>
         <h2 className="text-3xl font-semibold text-slate-900">
           {t("home.greeting", { name: String(greetingName || t("common.traveler")) })}{" "}
@@ -9433,7 +9736,7 @@ function HomeView({ trips, query, onQuery, onPickDestination, onOpenTrip, onShar
         </h2>
       </div>
 
-      <div className="rounded-[2.2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/70">
+      <div className="rounded-[2.2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <CitySearchBox
           value={query}
           onChange={onQuery}
@@ -9606,7 +9909,6 @@ function ItineraryErrorNotice({ raw }) {
 const TRIP_PREFS_WIZARD_STEPS = 5;
 
 function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
-  useScrollLock(true);
   const { t } = useI18n();
   const [step, setStep] = useState(0);
   const [pace, setPace] = useState("moderate");
@@ -9628,11 +9930,11 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
       onClick={() => setter(val)}
       className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-[13px] transition-all ${
         current === val
-          ? "border-indigo-400 bg-indigo-50 font-semibold text-indigo-700 shadow-sm ring-1 ring-indigo-300"
+          ? "border-brand-blue bg-brand-blue-tint font-semibold text-brand-blue-deep shadow-sm ring-1 ring-brand-blue/30"
           : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
       }`}
     >
-      <span className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 ${current === val ? "border-indigo-500 bg-indigo-500" : "border-slate-300"}`} />
+      <span className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 ${current === val ? "border-brand-blue bg-brand-blue" : "border-slate-300"}`} />
       {label}
     </button>
   );
@@ -9644,11 +9946,11 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
       onClick={() => toggleStyle(val)}
       className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] transition-all ${
         styles.includes(val)
-          ? "border-sky-400 bg-sky-50 font-semibold text-sky-700 ring-1 ring-sky-300"
+          ? "border-brand-blue bg-brand-blue-tint font-semibold text-brand-blue-deep ring-1 ring-brand-blue/30"
           : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
       }`}
     >
-      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 text-[10px] ${styles.includes(val) ? "border-sky-500 bg-sky-500 text-white" : "border-slate-300"}`}>
+      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 text-[10px] ${styles.includes(val) ? "border-brand-blue bg-brand-blue text-white" : "border-slate-300"}`}>
         {styles.includes(val) ? "✓" : ""}
       </span>
       {label}
@@ -9687,7 +9989,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
               <p className="mt-0.5 text-[11px] text-slate-400 font-medium">{cityLabel}</p>
             )}
             <p className="mt-1 text-xs text-slate-500">{t("destination.prefsSubtitle")}</p>
-            <p className="mt-2 text-[11px] font-medium text-indigo-600/90" aria-live="polite">
+            <p className="mt-2 text-[11px] font-medium text-brand-blue/90" aria-live="polite">
               {progressLabel}
             </p>
             <div className="mt-2 flex max-w-[11rem] gap-1.5" aria-hidden="true">
@@ -9695,7 +9997,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
                 <span
                   key={i}
                   className={`h-1.5 rounded-full transition-all duration-200 ${
-                    i === step ? "w-7 bg-gradient-to-r from-sky-500 to-indigo-600" : "w-2 bg-slate-200"
+                    i === step ? "w-7 bg-brand-blue" : "w-2 bg-slate-200"
                   }`}
                 />
               ))}
@@ -9765,7 +10067,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
                 value={wishes}
                 onChange={(e) => setWishes(e.target.value)}
                 placeholder={t("destination.prefsWishesPlaceholder")}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-[13px] text-slate-700 placeholder-slate-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 resize-none"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-[13px] text-slate-700 placeholder-slate-400 focus:border-brand-blue/30 focus:outline-none focus:ring-2 focus:ring-brand-blue/15 resize-none"
               />
             </section>
           ) : null}
@@ -9797,7 +10099,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
               <button
                 type="button"
                 onClick={handleConfirm}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 sm:w-auto sm:shrink-0"
+                className={`w-full rounded-xl px-6 py-2.5 text-sm sm:w-auto sm:shrink-0 ${BRAND_CTA_BTN_CLASS}`}
               >
                 {t("destination.prefsGenerate")}
               </button>
@@ -9805,7 +10107,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.min(lastStepIndex, s + 1))}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/80 px-6 py-2.5 text-sm font-semibold text-indigo-800 shadow-sm hover:bg-indigo-100 sm:w-auto sm:shrink-0"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-brand-blue/20 bg-brand-blue-tint/80 px-6 py-2.5 text-sm font-semibold text-brand-blue-deep shadow-sm hover:bg-brand-blue-tint sm:w-auto sm:shrink-0"
               >
                 {t("destination.prefsWizardNext")}
                 <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
@@ -9828,17 +10130,29 @@ function ItineraryResultModal({
   onClose,
   onRegenerate,
   onSaveToCalendar,
+  onSwapActivity,
   regenerating = false,
   fetchError = "",
 }) {
-  useScrollLock(true);
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
+  const [activeDayIndex, setActiveDayIndex] = useState(0);
+  const daySectionRefs = useRef([]);
+  const dayRailButtonRefs = useRef([]);
+  const detailScrollRef = useRef(null);
+  const railScrollRef = useRef(null);
   const days = Array.isArray(dayIdeas) ? dayIdeas : [];
   const errLine = String(fetchError || "").trim();
 
   const totalCost = days.reduce((sum, d) => sum + (Number(d?.costEur) || 0), 0);
   const hasCostData = days.some((d) => Number(d?.costEur) > 0);
+
+  useEffect(() => {
+    setActiveDayIndex((i) => {
+      if (days.length === 0) return 0;
+      return i >= days.length ? 0 : i;
+    });
+  }, [days.length]);
 
   const budgetTierLabel = (() => {
     const tier = prefs?.budget;
@@ -9847,15 +10161,92 @@ function ItineraryResultModal({
     return t(key);
   })();
 
-  const dateRange = startDate && endDate && startDate !== endDate
-    ? `${startDate} – ${endDate}`
-    : startDate || "";
+  const dateRange = formatItineraryDateRange(startDate, endDate);
+
+  const hasContent =
+    days.length > 0
+    && days.some(
+      (d) =>
+        String(d?.title || "").trim()
+        || (Array.isArray(d?.bullets) && d.bullets.length > 0)
+        || (Array.isArray(d?.activities) && d.activities.length > 0),
+    );
+
+  const scrollToDay = useCallback((idx) => {
+    const safeIdx = Math.max(0, Math.min(idx, days.length - 1));
+    setActiveDayIndex(safeIdx);
+    const section = daySectionRefs.current[safeIdx];
+    const container = detailScrollRef.current;
+    if (!section || !container) return;
+    const top = section.offsetTop - container.offsetTop;
+    container.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+  }, [days.length]);
+
+  const syncRailToActiveDay = useCallback((idx) => {
+    const rail = railScrollRef.current;
+    const btn = dayRailButtonRefs.current[idx];
+    if (!rail || !btn) return;
+    const pad = 10;
+    const railRect = rail.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    let top = rail.scrollTop;
+    let left = rail.scrollLeft;
+    const relTop = btnRect.top - railRect.top + top;
+    const relBottom = relTop + btn.offsetHeight;
+    const viewBottom = top + rail.clientHeight;
+    if (relTop < top + pad) top = Math.max(0, relTop - pad);
+    else if (relBottom > viewBottom - pad) top = relBottom - rail.clientHeight + pad;
+    const relLeft = btnRect.left - railRect.left + left;
+    const relRight = relLeft + btn.offsetWidth;
+    const viewRight = left + rail.clientWidth;
+    if (relLeft < left + pad) left = Math.max(0, relLeft - pad);
+    else if (relRight > viewRight - pad) left = relRight - rail.clientWidth + pad;
+    if (top !== rail.scrollTop || left !== rail.scrollLeft) {
+      rail.scrollTo({ top, left, behavior: "smooth" });
+    }
+  }, []);
+
+  useEffect(() => {
+    syncRailToActiveDay(activeDayIndex);
+  }, [activeDayIndex, syncRailToActiveDay, days.length]);
+
+  useEffect(() => {
+    const container = detailScrollRef.current;
+    if (!container || !hasContent || days.length === 0) return undefined;
+
+    let ticking = false;
+    const updateActiveFromScroll = () => {
+      const sections = daySectionRefs.current;
+      if (!sections.length) return;
+      const anchor = container.scrollTop + Math.min(120, container.clientHeight * 0.2);
+      let nextIdx = 0;
+      for (let i = 0; i < sections.length; i++) {
+        const el = sections[i];
+        if (el && el.offsetTop <= anchor + 6) nextIdx = i;
+      }
+      setActiveDayIndex((cur) => (cur !== nextIdx ? nextIdx : cur));
+      ticking = false;
+    };
+
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(updateActiveFromScroll);
+    };
+
+    container.addEventListener("scroll", onScroll, { passive: true });
+    updateActiveFromScroll();
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [days.length, hasContent]);
 
   const handleSave = async () => {
     if (!onSaveToCalendar || saving) return;
     setSaving(true);
     try { await onSaveToCalendar(); } finally { setSaving(false); }
   };
+
+  const noopActivityAction = () => {};
+  const handleRegenerateDay = () => {};
 
   return (
     <div
@@ -9865,8 +10256,7 @@ function ItineraryResultModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[1.75rem]"
-        style={{ maxHeight: "92svh" }}
+        className="flex h-[92svh] max-h-[92svh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[1.75rem]"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Handle (mobile) ── */}
@@ -9874,12 +10264,12 @@ function ItineraryResultModal({
           <div className="h-1 w-10 rounded-full bg-slate-200" />
         </div>
 
-        {/* ── Header iOS-style ── */}
+        {/* ── Header ── */}
         <div className="shrink-0 px-5 pb-4 pt-4 sm:px-6 sm:pt-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                <span className={`${BRAND_BLUE_PILL_CLASS} gap-1 px-2.5 py-0.5 text-[10px] font-semibold`}>
                   <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
                   {t("destination.itineraryResultSubtitle")}
                 </span>
@@ -9906,7 +10296,7 @@ function ItineraryResultModal({
                 {hasCostData && totalCost > 0 && (
                   <>
                     <span className="text-slate-300">·</span>
-                    <span className="bg-gradient-to-r from-sky-600 to-indigo-700 bg-clip-text text-[12px] font-bold text-transparent">~{totalCost}€</span>
+                    <span className="text-brand-gradient text-[12px] font-bold">~{totalCost}€</span>
                   </>
                 )}
               </div>
@@ -9922,11 +10312,10 @@ function ItineraryResultModal({
           </div>
         </div>
 
-        {/* ── Divider ── */}
         <div className="h-px shrink-0 bg-slate-100 mx-5" />
 
-        {/* ── Liste des jours ── */}
-        <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {/* ── Rail jours + détail ── */}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
           {regenerating ? (
             <div
               className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[2px]"
@@ -9935,7 +10324,7 @@ function ItineraryResultModal({
             >
               <div className="flex flex-col items-center gap-2 px-4">
                 <span
-                  className="h-9 w-9 animate-spin rounded-full border-2 border-sky-600 border-t-transparent"
+                  className="h-9 w-9 animate-spin rounded-full border-2 border-brand-blue border-t-transparent"
                   aria-hidden
                 />
                 <span className="text-center text-xs font-medium text-slate-600">
@@ -9944,61 +10333,125 @@ function ItineraryResultModal({
               </div>
             </div>
           ) : null}
-          {(() => {
-            const hasContent = days.length > 0 && days.some((d) => String(d?.title || "").trim() || (Array.isArray(d?.bullets) && d.bullets.length > 0) || (Array.isArray(d?.activities) && d.activities.length > 0));
-            if (days.length === 0 || !hasContent) {
-              return (
-                <div className="flex flex-col items-center justify-center gap-3 px-6 py-16">
-                  <span className="h-9 w-9 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" aria-hidden />
-                  <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
-                </div>
-              );
-            }
-            return (
-              <ol className="divide-y divide-slate-100">
-                {days.map((d, idx) => {
-                  const dayNum = Number(d?.day) || idx + 1;
-                  const cost = Number(d?.costEur) || 0;
-                  const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
-                  const bullets = (Array.isArray(d?.bullets) ? d.bullets : (Array.isArray(d?.activities) ? d.activities : []))
-                    .map((b) => String(b || "").trim())
-                    .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
-                    .slice(0, 2);
-                  return (
-                    <li key={`day-${dayNum}`} className="px-5 py-4 sm:px-6">
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex shrink-0 items-center rounded-full bg-gradient-to-r from-sky-600 to-indigo-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">
+          {!hasContent ? (
+            <div className="flex flex-col items-center justify-center gap-3 px-6 py-16">
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-brand-blue border-t-transparent" aria-hidden />
+              <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
+            </div>
+          ) : (
+            <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[11rem_minmax(0,1fr)]">
+              <nav
+                ref={railScrollRef}
+                className="itinerary-day-rail min-h-0 max-h-[9.5rem] overflow-x-auto overflow-y-auto overscroll-contain border-b border-slate-100 p-3 [-webkit-overflow-scrolling:touch] md:max-h-none md:overflow-x-hidden md:border-b-0 md:border-r md:p-0 lg:w-44"
+                aria-label={t("destination.itineraryDayLabel")}
+              >
+                <div className="flex gap-2 md:flex-col md:p-4">
+                  {days.map((d, idx) => {
+                    const dayNum = Number(d?.day) || idx + 1;
+                    const isActive = idx === activeDayIndex;
+                    const title = String(d?.title || "").trim();
+                    return (
+                      <button
+                        key={`rail-${dayNum}`}
+                        ref={(el) => {
+                          dayRailButtonRefs.current[idx] = el;
+                        }}
+                        type="button"
+                        onClick={() => scrollToDay(idx)}
+                        aria-current={isActive ? "true" : undefined}
+                        className={`shrink-0 rounded-xl px-3 py-2.5 text-left transition md:w-full ${
+                          isActive
+                            ? "bg-brand-blue text-white shadow-sm"
+                            : "bg-slate-50 text-slate-700 ring-1 ring-slate-100 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="block text-[11px] font-bold uppercase tracking-wide">
                           {t("destination.itineraryDayLabel")} {dayNum}
                         </span>
-                        <p className="min-w-0 flex-1 text-[13px] font-semibold text-slate-900">
-                          {title}
-                        </p>
-                        {cost > 0 && (
-                          <span className="shrink-0 text-[12px] font-semibold text-slate-500">
-                            ~{cost}€
+                        {title ? (
+                          <span className={`mt-0.5 block line-clamp-2 text-[11px] leading-snug ${isActive ? "text-white/90" : "text-slate-500"}`}>
+                            {title}
                           </span>
-                        )}
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </nav>
+
+              <div
+                ref={detailScrollRef}
+                className="itinerary-day-rail min-h-0 overflow-y-auto overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
+              >
+                {days.map((d, idx) => {
+                  const dayNum = Number(d?.day) || idx + 1;
+                  const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
+                  const bullets = normalizeItineraryDayBullets(d);
+                  const cost = Number(d?.costEur) || 0;
+                  return (
+                    <section
+                      key={`detail-${dayNum}`}
+                      ref={(el) => {
+                        daySectionRefs.current[idx] = el;
+                      }}
+                      data-day-idx={idx}
+                      id={`itinerary-day-${dayNum}`}
+                      className={idx > 0 ? "mt-8 border-t border-slate-100 pt-8" : ""}
+                      aria-labelledby={`itinerary-day-heading-${dayNum}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`${BRAND_BLUE_PILL_CLASS} shrink-0 px-2.5 py-1 text-[11px]`}>
+                              {t("destination.itineraryDayLabel")} {dayNum}
+                            </span>
+                            <h3
+                              id={`itinerary-day-heading-${dayNum}`}
+                              className="font-display text-lg font-normal leading-snug tracking-[0.02em] text-slate-900"
+                            >
+                              {title}
+                            </h3>
+                          </div>
+                          {cost > 0 ? (
+                            <p className="mt-1 text-[12px] text-slate-500">
+                              {t("destination.itineraryDayCost", { amount: cost })}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRegenerateDay}
+                          disabled={regenerating}
+                          className="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {t("destination.itineraryRegenerateDay")}
+                        </button>
                       </div>
-                      {bullets.length > 0 && (
-                        <ul className="mt-3 space-y-2 pl-0 sm:pl-1">
+                      {bullets.length > 0 ? (
+                        <ul className="mt-4 space-y-3">
                           {bullets.map((b, j) => (
                             <ItineraryBulletRow
                               key={`${dayNum}-${j}`}
+                              variant="card"
                               bullet={b}
                               cityLabel={cityLabel}
                               dayTitle={title}
                               dayNum={dayNum}
                               bulletIndex={j}
+                              onSwapActivity={() => onSwapActivity?.(idx, j)}
+                              onRemove={noopActivityAction}
                             />
                           ))}
                         </ul>
+                      ) : (
+                        <p className="mt-4 text-sm text-slate-500">{t("destination.itineraryEmptyResult")}</p>
                       )}
-                    </li>
+                    </section>
                   );
                 })}
-              </ol>
-            );
-          })()}
+              </div>
+            </div>
+          )}
         </div>
 
         {errLine ? (
@@ -10010,34 +10463,24 @@ function ItineraryResultModal({
         ) : null}
 
         {/* ── Footer ── */}
-        <div className="shrink-0">
-          {/* Total */}
-          {hasCostData && totalCost > 0 && (
-            <div className="mx-5 mb-3 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-2.5 ring-1 ring-slate-100">
-              <span className="text-[12px] font-medium text-slate-500">{t("destination.itineraryTotalCost")}</span>
-              <span className="bg-gradient-to-r from-sky-600 to-indigo-700 bg-clip-text text-[13px] font-bold text-transparent">~{totalCost}€</span>
-            </div>
-          )}
-          {/* Boutons */}
-          <div className="flex items-center gap-2.5 border-t border-slate-100 px-5 pb-6 pt-3 sm:pb-4">
-            <button
-              type="button"
-              onClick={onRegenerate}
-              disabled={regenerating || saving}
-              className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || regenerating}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-700 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
-            >
-              <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
-              {saving ? t("destination.itineraryAdding") : t("destination.itineraryAddToCalendar")}
-            </button>
-          </div>
+        <div className="shrink-0 flex items-center gap-2.5 border-t border-slate-100 px-5 pb-6 pt-3 sm:pb-4">
+          <button
+            type="button"
+            onClick={onRegenerate}
+            disabled={regenerating || saving}
+            className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || regenerating}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
+          >
+            <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
+            {saving ? t("destination.itineraryAdding") : t("destination.itineraryAddToCalendar")}
+          </button>
         </div>
       </div>
     </div>
@@ -10136,7 +10579,6 @@ function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, gemini
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 function MustSeePlaceModal({ open, onClose, rawName, city, language }) {
-  useScrollLock(open);
   const { t } = useI18n();
   const { text: displayName } = useUiTranslatedText(rawName, language);
   const titleId = useId();
@@ -10367,7 +10809,7 @@ function MustSeePlaceModal({ open, onClose, rawName, city, language }) {
             <>
               {!imgRendered ? (
                 <div className="absolute inset-0 z-[1] flex h-44 flex-col items-center justify-center gap-2.5 bg-gradient-to-br from-slate-100 to-slate-200 sm:h-52">
-                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" aria-hidden />
+                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-brand-blue border-t-transparent" aria-hidden />
                   <span className="animate-pulse text-xs font-medium text-slate-400">{t("destination.mustSeePlaceLoading")}</span>
                 </div>
               ) : null}
@@ -10401,7 +10843,7 @@ function MustSeePlaceModal({ open, onClose, rawName, city, language }) {
           ) : null}
           {!imageUrl && imageLoading ? (
             <div className="flex h-44 flex-col items-center justify-center gap-2.5 bg-gradient-to-br from-slate-100 to-slate-200 sm:h-52">
-              <span className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" aria-hidden />
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-brand-blue border-t-transparent" aria-hidden />
               <span className="animate-pulse text-xs font-medium text-slate-400">{t("destination.mustSeePlaceLoading")}</span>
             </div>
           ) : null}
@@ -10509,10 +10951,6 @@ function DestinationGuideView({
   const [lastItineraryRequest, setLastItineraryRequest] = useState(null);
   const [itineraryRegenerating, setItineraryRegenerating] = useState(false);
 
-  useScrollLock(addModalOpen);
-  useScrollLock(itineraryModalOpen);
-  useScrollLock(itineraryMaxDaysModalOpen);
-
   // ── sessionStorage helpers ────────────────────────────────────────────────
   const ITIN_SS_KEY = "tp_last_itinerary_result";
   const ssNorm = (s) => String(s || "").trim().toLowerCase();
@@ -10548,6 +10986,7 @@ function DestinationGuideView({
   });
 
   const [heroVideoFailed, setHeroVideoFailed] = useState(false);
+  const [heroFetchSettled, setHeroFetchSettled] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
   useEffect(() => {
@@ -10742,8 +11181,11 @@ function DestinationGuideView({
     if (cityStem.length < 2) {
       setGuide(null);
       setGuideError("");
+      setHeroFetchSettled(true);
       return;
     }
+
+    setHeroFetchSettled(false);
 
     const instant = buildInstantDestinationGuide(confirmedDestination, language);
     if (!instant) {
@@ -10759,21 +11201,20 @@ function DestinationGuideView({
         ? String(cityImageMemoryCache[cacheKeyFast])
         : "";
     const heroFromMemory =
-      memFast && !isLikelyWikiFlagOrSealThumb(memFast) && !isBlockedHeroImageUrl(memFast)
+      memFast && isPersistableHeroUrl(memFast) && !isLikelyWikiFlagOrSealThumb(memFast)
         ? upgradeLandscapeImageUrl(memFast)
         : "";
     let heroFromDisk = "";
     try {
       const lsKey = `tp_city_img_${cacheKeyFast}`;
       const v = window.localStorage.getItem(lsKey);
-      if (v && !isLikelyWikiFlagOrSealThumb(String(v)) && !isBlockedHeroImageUrl(String(v))) {
+      if (v && isPersistableHeroUrl(String(v)) && !isLikelyWikiFlagOrSealThumb(String(v))) {
         heroFromDisk = upgradeLandscapeImageUrl(String(v).trim());
       }
     } catch (_e) {
       /* ignore */
     }
-    const useInstantHeroCache = !isResolveGuideCleanupEnabled() && !isResolveHeroEnabled();
-    const fastHero = useInstantHeroCache ? heroFromMemory || heroFromDisk : "";
+    const fastHero = heroFromMemory || heroFromDisk;
 
     /** Toute URL héros déjà en cache (Commons, bundle, Unsplash…) — ne pas exiger la clé Unsplash. */
     const heroOverlay =
@@ -10942,6 +11383,8 @@ function DestinationGuideView({
         if (!cancelled) {
           setGuideError(t("destination.guideLoadError"));
         }
+      } finally {
+        if (!cancelled) setHeroFetchSettled(true);
       }
     })();
 
@@ -10969,6 +11412,31 @@ function DestinationGuideView({
 
     (async () => {
       try {
+        const cached = await getCachedCityImage(confirmedDestination);
+        if (cancelled) return;
+        if (cached) {
+          const hero = upgradeLandscapeImageUrl(cached);
+          setGuide((prev) => {
+            if (!prev) return prev;
+            if (normalizeTextForSearch(String(prev.city || "")) !== normalizeTextForSearch(cityKey)) return prev;
+            const cur = String(prev.landscapeImageUrl || prev.imageUrl || "").trim();
+            if (cur === hero) return prev;
+            return {
+              ...prev,
+              imageUrl: hero,
+              landscapeImageUrl: hero,
+              ...(isResolveGuideCleanupEnabled()
+                ? {}
+                : {
+                    heroImageCandidates: dedupeImageUrlChain([hero]).map((u) =>
+                      upgradeLandscapeImageUrl(String(u || ""))
+                    ),
+                  }),
+            };
+          });
+          return;
+        }
+
         const { searchLabel, context: geoCtx } = splitResolveImageLabelContext(confirmedDestination, "");
         const resolveContext = geoCtx || inferDefaultHeroResolveContext(confirmedDestination);
         let url = await getResolvedImageUrl({
@@ -10978,7 +11446,7 @@ function DestinationGuideView({
           uiLang: language,
         });
         if (!url || isBlockedHeroImageUrl(url)) {
-          url = await getCityHeroImage(buildNominatimCityQuery(confirmedDestination) || confirmedDestination);
+          url = await resolveGeoHeroFallback(confirmedDestination, language);
         }
         if (cancelled || !url || isBlockedHeroImageUrl(url)) return;
         const hero = upgradeLandscapeImageUrl(url);
@@ -10987,8 +11455,7 @@ function DestinationGuideView({
           if (!prev) return prev;
           if (normalizeTextForSearch(String(prev.city || "")) !== normalizeTextForSearch(cityKey)) return prev;
           const cur = String(prev.landscapeImageUrl || prev.imageUrl || "").trim();
-          if (cur && cur === hero) return prev;
-          if (cur && !isBlockedHeroImageUrl(cur)) return prev;
+          if (cur === hero) return prev;
           return {
             ...prev,
             imageUrl: hero,
@@ -11004,6 +11471,8 @@ function DestinationGuideView({
         });
       } catch (_e) {
         /* non bloquant */
+      } finally {
+        if (!cancelled) setHeroFetchSettled(true);
       }
     })();
 
@@ -11291,6 +11760,44 @@ function DestinationGuideView({
     await runItineraryGenerationWithDates(dest, startDate, endDate, lastItineraryPrefs, "regenerate");
   }
 
+  function persistGeneratedDayIdeas(nextIdeas) {
+    const ideas = Array.isArray(nextIdeas) ? nextIdeas : [];
+    setGeneratedDayIdeas(ideas);
+    const req = lastItineraryRequest || pendingTripRequest;
+    const dest = String(req?.dest || displayGuide?.city || confirmedDestination || "").trim();
+    const startDate = String(req?.startDate || programStartDate || "").trim();
+    const endDate = String(req?.endDate || programEndDate || "").trim();
+    if (dest && startDate && endDate) {
+      saveItineraryToSession(dest, ideas, lastItineraryPrefs, startDate, endDate, true);
+    }
+  }
+
+  async function handleSwapItineraryActivity(dayIndex, bulletIndex) {
+    if (!Array.isArray(generatedDayIdeas) || generatedDayIdeas.length === 0) return;
+    const day = generatedDayIdeas[dayIndex];
+    if (!day) return;
+    const bullets = getItineraryDayBulletsRaw(day);
+    const current = bullets[bulletIndex];
+    if (!current) return;
+    const dest = String(displayGuide?.city || confirmedDestination || lastItineraryRequest?.dest || "").trim();
+    if (!dest) return;
+    setItineraryError("");
+    const freshPool = await fetchFreshSuggestedActivityTitles(dest, language);
+    const localPool = getLocalSuggestedActivityTitles(displayGuide, dest);
+    const pool = [...new Set([...freshPool, ...localPool].filter(Boolean))];
+    const used = collectUsedItineraryActivityKeys(generatedDayIdeas);
+    const exclude = itineraryBulletActivityKey(current);
+    const seed = Date.now() + dayIndex * 17 + bulletIndex;
+    const nextTitle = pickNextActivityTitle(pool, used, exclude, seed);
+    if (!nextTitle) {
+      setItineraryError(t("destination.itineraryActivitySwapFailed"));
+      return;
+    }
+    const period = parseItineraryBulletPeriod(current);
+    const newBullet = formatItineraryActivityBullet(period, nextTitle, language);
+    persistGeneratedDayIdeas(updateItineraryDayBullet(generatedDayIdeas, dayIndex, bulletIndex, newBullet));
+  }
+
   const saveProgramToCalendar = useCallback(
     async (rangeStartRaw, rangeEndRaw) => {
       const rangeStart = toYMD(String(rangeStartRaw || getTodayStr()), getTodayStr());
@@ -11354,15 +11861,32 @@ function DestinationGuideView({
     [trips, generatedDayIdeas, displayGuide, confirmedDestination, onCreateTrip]
   );
 
+  const destinationOverlayOpen =
+    addModalOpen
+    || itineraryModalOpen
+    || itineraryMaxDaysModalOpen
+    || tripPrefsOpen
+    || itineraryPremiumGateOpen
+    || itineraryQuotaModalOpen
+    || !!itineraryCalendarConflict
+    || !!mustSeePlaceModalRaw
+    || (itineraryLoading && !itineraryResultOpen)
+    || (
+      itineraryResultOpen
+      && Array.isArray(generatedDayIdeas)
+      && generatedDayIdeas.length > 0
+    );
+  useScrollLock(visible && destinationOverlayOpen);
+
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-sky-900/45">
+        <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-brand-blue-deep/45">
           {t("destination.guideHeading")}
         </h2>
       </div>
 
-      <div className="rounded-[2.2rem] bg-white/93 p-4 shadow-[0_14px_40px_rgba(30,58,95,0.08)] ring-1 ring-sky-100/55">
+      <div className="rounded-[2.2rem] bg-white/93 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <CitySearchBox
           value={searchInput}
           onChange={onSearchInputChange}
@@ -11372,13 +11896,13 @@ function DestinationGuideView({
         />
       </div>
 
-      <div className="overflow-hidden rounded-[2.2rem] bg-white/93 shadow-[0_18px_48px_rgba(30,58,95,0.1)] ring-1 ring-sky-100/50">
+      <div className="overflow-hidden rounded-[2.2rem] bg-white/93 shadow-[0_18px_48px_rgba(2,6,23,0.08)]">
         {guideError ? (
           <div className="p-6 text-sm text-rose-600">{String(guideError)}</div>
         ) : guide && displayGuide ? (
           <>
             <div className="relative p-4">
-              <div className="relative h-[15.5rem] w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-sky-50 to-slate-300 ring-1 ring-white/25 sm:h-[17.5rem]">
+              <div className="relative h-[15.5rem] w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-brand-blue-tint to-slate-300 ring-1 ring-white/25 sm:h-[17.5rem]">
                 {(() => {
                   const heroCtx = [displayGuide.city, displayGuide.country, displayGuide.adminRegion]
                     .filter(Boolean)
@@ -11406,12 +11930,34 @@ function DestinationGuideView({
                             buildCityImageUrl(heroCtx || displayGuide.city || "") ||
                             ""
                         ).trim();
-                  const heroSrc = (primary || syncFallback).trim();
-                  if (!heroSrc) return (
-                    <div className="flex h-full w-full items-center justify-center">
-                      <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
-                    </div>
-                  );
+                  let heroSrc = (primary || syncFallback).trim();
+                  if (!heroSrc) {
+                    const lat = Number(displayGuide.coordinates?.lat);
+                    const lon = Number(displayGuide.coordinates?.lon);
+                    const mapHero = buildOsmStaticMapHeroUrl(lat, lon);
+                    if (mapHero) heroSrc = mapHero;
+                  }
+                  if (!heroSrc && !heroFetchSettled) {
+                    return (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
+                      </div>
+                    );
+                  }
+                  if (!heroSrc) {
+                    return (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand-blue-tint/80 via-slate-100 to-emerald-50/60 px-6 text-center">
+                        <span className="text-lg font-serif text-slate-700/90">
+                          {displayCityForLocale(String(displayGuide.city), language)}
+                        </span>
+                        {(displayGuide.country || displayGuide.adminRegion) ? (
+                          <span className="text-xs font-medium text-slate-500/80">
+                            {[displayGuide.adminRegion, displayGuide.country].filter(Boolean).join(", ")}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  }
                   return (
                     <img
                       key={`${cityStem || String(displayGuide.city)}|${heroSrc.slice(0, 48)}`}
@@ -11451,13 +11997,13 @@ function DestinationGuideView({
                 ) : null}
               </div>
             </div>
-            <div className="space-y-6 bg-gradient-to-b from-slate-50/90 via-white to-sky-50/30 px-4 py-6 sm:px-7 sm:py-8">
+            <div className="space-y-6 bg-gradient-to-b from-slate-50/90 via-white to-brand-blue-tint/30 px-4 py-6 sm:px-7 sm:py-8">
               <div className="relative overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] ring-1 ring-slate-100/80 sm:p-6">
                 <div
-                  className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/25 blur-3xl"
+                  className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand-blue-tint/40 blur-3xl"
                   aria-hidden
                 />
-                <p className="text-[11px] font-normal uppercase tracking-[0.3em] text-sky-700/90">
+                <p className="text-[11px] font-normal uppercase tracking-[0.3em] text-brand-blue-deep/90">
                   {t("destination.badgeDestination")}
                 </p>
                 <h3 className="mt-2 font-display text-[1.65rem] font-normal leading-tight tracking-[0.04em] text-slate-900 sm:text-3xl">
@@ -11531,8 +12077,7 @@ function DestinationGuideView({
                     setEndDate(getTodayStr());
                     setAddModalOpen(true);
                   }}
-                  className={`mt-5 rounded-2xl px-5 py-2.5 text-sm text-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] ${GLASS_BUTTON_CLASS}`}
-                  style={GLASS_ACCENT_STYLE}
+                  className={`mt-5 rounded-2xl px-5 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
                 >
                   {t("destination.addToTrips")}
                 </button>
@@ -11545,7 +12090,7 @@ function DestinationGuideView({
 
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white/95 p-5 shadow-[0_8px_32px_rgba(30,58,95,0.05)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-sky-700 ring-1 ring-sky-200/60">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-blue-tint text-brand-blue-deep ring-1 ring-brand-blue/20">
                     <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
@@ -11577,7 +12122,7 @@ function DestinationGuideView({
                               key={`place-${i}-${raw.slice(0, 24)}`}
                               type="button"
                               onClick={() => setMustSeePlaceModalRaw(raw)}
-                              className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-sky-200/90 hover:bg-sky-50/40 hover:ring-sky-100/80 active:scale-[0.98]"
+                              className="inline-flex max-w-full cursor-pointer items-center rounded-full border border-slate-200/90 bg-white px-3.5 py-1.5 text-left text-xs font-normal leading-snug tracking-[0.02em] text-slate-800 shadow-sm ring-1 ring-slate-100/80 transition hover:border-brand-blue/20 hover:bg-brand-blue-tint/40 hover:ring-brand-blue/15 active:scale-[0.98]"
                             >
                               <UiTranslatedActivityTitle raw={raw} />
                             </button>
@@ -11667,9 +12212,9 @@ function DestinationGuideView({
                 );
               })()}
 
-              <section className="rounded-[1.75rem] border border-indigo-200/50 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/40 p-5 shadow-[0_8px_32px_rgba(67,56,202,0.06)] sm:p-6">
-                <div className="flex items-center gap-2.5 border-b border-indigo-100/80 pb-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200/60">
+              <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
+                <div className="flex items-center gap-2.5 border-b border-brand-blue/15/80 pb-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-blue-tint text-brand-blue-deep ring-1 ring-brand-blue/20">
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
@@ -11693,7 +12238,7 @@ function DestinationGuideView({
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
-                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-indigo-200/70 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-indigo-950 shadow-sm ring-1 ring-white/80"
+                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-brand-blue/20 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-brand-blue-deep shadow-sm ring-1 ring-white/80"
                       >
                         <span>
                           <UiTranslatedActivityTitle raw={cell.title} />
@@ -11720,7 +12265,7 @@ function DestinationGuideView({
                   const gygHref = buildGetYourGuideAffiliateUrl(cityToken, gygPid);
                   if (!gygHref) return null;
                   return (
-                    <div className="mt-4 rounded-2xl border border-indigo-100/90 bg-white/95 px-4 py-3 ring-1 ring-indigo-50/80">
+                    <div className="mt-4 rounded-2xl border border-brand-blue/15 bg-white/95 px-4 py-3 ring-1 ring-brand-blue/10">
                       <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
                         {t("destination.gygWidgetTitle")}
                       </p>
@@ -11729,7 +12274,7 @@ function DestinationGuideView({
                         href={gygHref}
                         target="_blank"
                         rel="sponsored noopener noreferrer"
-                        className="inline-flex max-w-full items-center justify-center rounded-xl border border-indigo-200/80 bg-white px-4 py-2.5 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+                        className="inline-flex max-w-full items-center justify-center rounded-xl border border-brand-blue/20 bg-white px-4 py-2.5 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue"
                         aria-label={t("destination.gygLinkAria", { city: displayCityForLocale(cityToken, language) })}
                       >
                         <img
@@ -11778,7 +12323,7 @@ function DestinationGuideView({
                       setItineraryModalOpen(true);
                     }}
                     disabled={itineraryLoading}
-                    className="shrink-0 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-xs font-normal tracking-[0.04em] text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                    className={`shrink-0 rounded-2xl px-4 py-2.5 text-xs font-normal tracking-[0.04em] ${BRAND_CTA_BTN_CLASS}`}
                   >
                     {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
                   </button>
@@ -11789,7 +12334,7 @@ function DestinationGuideView({
                 {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
                   <div className="mt-5">
                     {/* Aperçu condensé — invite à ouvrir le popup */}
-                    <div className="overflow-hidden rounded-2xl border border-indigo-200/60 bg-gradient-to-br from-slate-900 via-indigo-950 to-sky-950 p-5 shadow-[0_8px_32px_rgba(99,102,241,0.25)]">
+                    <div className="overflow-hidden rounded-2xl border border-brand-blue/20 bg-gradient-to-br from-slate-900 via-brand-blue-deep to-brand-blue-deep p-5 shadow-[0_8px_32px_rgba(29,78,216,0.2)]">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-3">
                         <Sparkles className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2.5} aria-hidden />
                         <p className="text-[10px] font-normal uppercase tracking-[0.22em] text-slate-300">
@@ -11900,7 +12445,7 @@ function DestinationGuideView({
           aria-live="polite"
         >
           <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
-            <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-sky-600 border-t-transparent" aria-hidden />
+            <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-brand-blue border-t-transparent" aria-hidden />
             <p className="text-sm font-normal tracking-[0.03em] text-slate-700">
               {t("destination.itineraryGenerating")}
             </p>
@@ -11928,6 +12473,7 @@ function DestinationGuideView({
             setItineraryResultOpenPersist(false);
           }}
           onRegenerate={handleRegenerateItinerary}
+          onSwapActivity={handleSwapItineraryActivity}
           onSaveToCalendar={async () => {
             const rangeStart = String(
               lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || ""
@@ -11998,7 +12544,7 @@ function DestinationGuideView({
                 type="button"
                 onClick={handleGenerateItinerary}
                 disabled={itineraryLoading}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2.5 text-sm font-normal tracking-[0.04em] text-white shadow-md hover:brightness-110 disabled:opacity-50 sm:w-auto"
+                className={`w-full rounded-xl px-4 py-2.5 text-sm font-normal tracking-[0.04em] sm:w-auto ${BRAND_CTA_BTN_CLASS}`}
               >
                 {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryNext")}
               </button>
@@ -12042,8 +12588,7 @@ function DestinationGuideView({
               <button
                 type="button"
                 onClick={() => setItineraryMaxDaysModalOpen(false)}
-                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 {t("common.ok")}
               </button>
@@ -12092,8 +12637,7 @@ function DestinationGuideView({
                   setItineraryPremiumGateOpen(false);
                   setItineraryError("");
                 }}
-                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 J’ai compris
               </button>
@@ -12118,10 +12662,10 @@ function DestinationGuideView({
             aria-labelledby="itinerary-quota-modal-title"
             className="min-w-0 w-full max-w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.12)] ring-1 ring-slate-100/80 sm:max-w-md"
           >
-            <div className="bg-gradient-to-b from-sky-50/90 via-white to-white px-5 pb-8 pt-9 sm:px-9 sm:pb-9 sm:pt-10">
+            <div className="bg-gradient-to-b from-brand-blue-tint/90 via-white to-white px-5 pb-8 pt-9 sm:px-9 sm:pb-9 sm:pt-10">
               <div className="flex flex-col items-center text-center">
                 <span
-                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-100 to-indigo-100 text-sky-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] ring-1 ring-sky-200/70"
+                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-blue-tint to-brand-blue-tint text-brand-blue-deep shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] ring-1 ring-brand-blue/20/70"
                   aria-hidden
                 >
                   <Sparkles className="h-7 w-7" strokeWidth={1.75} />
@@ -12142,8 +12686,7 @@ function DestinationGuideView({
                   setItineraryQuotaModalOpen(false);
                   setItineraryError("");
                 }}
-                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white shadow-[0_8px_24px_rgba(14,116,144,0.35)] transition hover:brightness-105 active:scale-[0.99] ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`mt-8 w-full rounded-2xl py-3.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 J’ai compris
               </button>
@@ -12220,7 +12763,7 @@ function DestinationGuideView({
                         key={`pick-act-${i}-${rawLabel.slice(0, 32)}`}
                         className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 ring-1 transition ${
                           checked
-                            ? "bg-sky-50/80 ring-sky-200"
+                            ? "bg-brand-blue-tint/80 ring-brand-blue/20"
                             : "bg-white ring-slate-100 hover:bg-slate-50/90"
                         }`}
                       >
@@ -12240,7 +12783,7 @@ function DestinationGuideView({
                               return n;
                             });
                           }}
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue focus:ring-brand-blue"
                         />
                         <span className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
                           <UiTranslatedActivityTitle raw={rawLabel} />
@@ -12250,7 +12793,7 @@ function DestinationGuideView({
                             className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                               isFreeBadge
                                 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                                : "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200"
+                                : "bg-brand-blue-tint text-brand-blue ring-1 ring-brand-blue/20"
                             }`}
                           >
                             {costBadge}
@@ -12264,9 +12807,9 @@ function DestinationGuideView({
                 )}
               </div>
               {sortedPickedIndices.length > 0 ? (
-                <div className="mt-4 rounded-2xl border border-sky-100/90 bg-sky-50/40 p-3">
+                <div className="mt-4 rounded-2xl border border-brand-blue/15 bg-brand-blue-tint/40 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-sky-800/90">
+                    <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-brand-blue-deep/90">
                       {t("destination.scheduleTitle")}
                     </p>
                     {(() => {
@@ -12278,7 +12821,7 @@ function DestinationGuideView({
                         return sum + Number(cell.cost || 0);
                       }, 0);
                       return total > 0 ? (
-                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200">
+                        <span className="rounded-full bg-brand-blue-tint px-2.5 py-0.5 text-[10px] font-bold text-brand-blue-deep ring-1 ring-brand-blue/20">
                           {t("destination.activitiesTotalEst")} ~{total}€
                         </span>
                       ) : null;
@@ -12307,14 +12850,14 @@ function DestinationGuideView({
                         return (
                           <li
                             key={`sched-${actIndex}-${rawPick.slice(0, 24)}`}
-                            className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-sky-100/80 sm:flex-row sm:items-center sm:gap-2"
+                            className="flex min-w-0 flex-col gap-2 rounded-xl bg-white/90 px-2.5 py-2 ring-1 ring-brand-blue/15/80 sm:flex-row sm:items-center sm:gap-2"
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-1.5">
                               <span className="min-w-0 flex-1 text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
                                 <UiTranslatedActivityTitle raw={rawPick} />
                               </span>
                               {cell.cost > 0 ? (
-                                <span className="shrink-0 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-600 ring-1 ring-indigo-200">
+                                <span className="shrink-0 rounded-full bg-brand-blue-tint px-1.5 py-0.5 text-[9px] font-semibold text-brand-blue ring-1 ring-brand-blue/20">
                                   ~{cell.cost}€
                                 </span>
                               ) : /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || "")) ? (
@@ -12422,8 +12965,7 @@ function DestinationGuideView({
                   setCreatingVoyage(false);
                 }
               }}
-              className={`mt-5 w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
-              style={GLASS_ACCENT_STYLE}
+              className={`mt-5 w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               {creatingVoyage ? t("destination.creating") : t("destination.createTrip")}
             </button>
@@ -12651,7 +13193,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
   const sections = classifyTrips(trips);
   return (
     <section className="space-y-8">
-      <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
+      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-emerald-700">
             {t("home.now")}
@@ -12678,12 +13220,12 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
         </div>
       </div>
 
-      <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
+      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-sky-700">
+          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-brand-blue-deep">
             {t("home.upcoming")}
           </h2>
-          <span className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-sky-700">
+          <span className="rounded-full bg-brand-blue-tint px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-brand-blue-deep">
             {t("trips.badgeUpcoming")}
           </span>
         </div>
@@ -12705,7 +13247,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
         </div>
       </div>
 
-      <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <div className="mb-2.5 flex items-center justify-between pl-3">
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-600">
             {t("trips.memories")}
@@ -12891,7 +13433,7 @@ function PlannerView({
               const dayClass = selected
                 ? "border-transparent text-white shadow-[0_10px_24px_rgba(15,23,42,0.22)]"
                 : selectedTripDay
-                  ? "border-sky-300 bg-sky-100 text-slate-900"
+                  ? "border-brand-blue/30 bg-brand-blue-tint text-slate-900"
                   : anyTripDay
                     ? "border-slate-300 bg-white text-slate-800"
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
@@ -12941,8 +13483,7 @@ function PlannerView({
               setActivityTime(slots[index % slots.length]);
               setActivityModalOpen(true);
             }}
-            className={`mb-4 rounded-2xl px-4 py-2 text-white ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`mb-4 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
           >
             {t("planner.addActivity")}
           </button>
@@ -13113,8 +13654,7 @@ function PlannerView({
                     setSavingNewActivity(false);
                   }
                 }}
-                className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
-                style={GLASS_ACCENT_STYLE}
+                className={`w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 {savingNewActivity ? t("planner.saving") : t("planner.addButton")}
               </button>
@@ -13278,8 +13818,7 @@ function PlannerView({
                   setCost("");
                   setActivityTime("");
                 }}
-                className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 {t("common.save")}
               </button>
@@ -13344,6 +13883,8 @@ function normalizeTripExpenseRow(row) {
     paid_by: String(row.paid_by || "Moi"),
     split_between: Array.isArray(row.split_between) ? row.split_between.map(String) : [],
     expense_date: row.expense_date ? String(row.expense_date).slice(0, 10) : null,
+    source_type: row.source_type ? String(row.source_type) : "",
+    source_id: row.source_id ? String(row.source_id) : "",
   };
 }
 
@@ -13466,7 +14007,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                   key={p}
                   className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
                     splitSet.has(p)
-                      ? "border-indigo-300 bg-indigo-50 text-indigo-950"
+                      ? "border-brand-blue/30 bg-brand-blue-tint text-brand-blue-deep"
                       : "border-slate-200 bg-slate-50 text-slate-600"
                   }`}
                 >
@@ -13499,8 +14040,7 @@ function GroupExpenseModal({ open, onClose, trip, participants, displayForPartic
                 expense_date: expenseDate.trim() || null,
               });
             }}
-            className={`w-full rounded-2xl px-4 py-3 text-sm text-white disabled:opacity-60 ${GLASS_BUTTON_CLASS}`}
-            style={GLASS_ACCENT_STYLE}
+            className={`w-full rounded-2xl px-4 py-3 text-sm text-white disabled:opacity-60 ${BRAND_BLUE_BTN_CLASS}`}
           >
             {saving ? t("planner.saving") : t("common.save")}
           </button>
@@ -13514,8 +14054,8 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
   const { t, language } = useI18n();
   const acts = (activities || []).filter((a) => String(a.trip_id) === String(trip.id));
   const exps = (groupExpenses || []).filter((e) => String(e.trip_id) === String(trip.id));
-  const totalPlanner = acts.reduce((s, a) => s + Number(a.cost || 0), 0);
-  const totalGroup = exps.reduce((s, e) => s + Number(e.amount || 0), 0);
+  const budgetSummary = computeTripBudgetSummary(exps, acts);
+  const totalTripBudget = budgetSummary.totalTrip;
   const rawLabel = String(trip?.destination || trip?.title || "").trim();
   const { text: labelI18n } = useUiTranslatedCityName(rawLabel, language);
   const label = rawLabel ? labelI18n : t("modals.tripDefault");
@@ -13554,23 +14094,14 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
               </p>
             ) : null}
             {groupExpensesEnabled ? (
-              <div className="mt-2.5 flex flex-col gap-1 text-xs font-normal tracking-[0.02em] text-white/92 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5">
-                <span className="min-w-0">
-                  <span className="text-white/82">{t("budget.sharedExpensesLabel")}</span>{" "}
-                  <span className="tabular-nums text-white">{formatEuroFR(totalGroup)}</span>
-                </span>
-                <span className="hidden text-white/50 sm:inline" aria-hidden>
-                  ·
-                </span>
-                <span className="min-w-0">
-                  <span className="text-white/82">{t("budget.plannerRefLabel")}</span>{" "}
-                  <span className="tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
-                </span>
-              </div>
+              <p className="mt-2.5 text-xs font-normal tracking-[0.02em] text-white/92">
+                <span className="text-white/82">{t("budget.totalTrip")}</span>{" "}
+                <span className="tabular-nums text-white">{formatEuroFR(totalTripBudget)}</span>
+              </p>
             ) : (
               <p className="mt-2.5 text-xs font-normal tracking-[0.02em] text-white/92">
-                <span className="text-white/82">{t("budget.plannerRefLabel")}</span>{" "}
-                <span className="tabular-nums text-white">{formatEuroFR(totalPlanner)}</span>
+                <span className="text-white/82">{t("budget.totalTrip")}</span>{" "}
+                <span className="tabular-nums text-white">{formatEuroFR(totalTripBudget)}</span>
               </p>
             )}
             <p className="mt-2 text-[11px] font-normal tracking-[0.04em] text-white underline decoration-white/50 underline-offset-2">
@@ -13725,6 +14256,7 @@ function TripExpenseDetail({
   onUpdateGroupExpense,
   onDeleteGroupExpense,
   onShareTrip,
+  onSyncPlanner,
 }) {
   const { t, language } = useI18n();
   const [editingActivity, setEditingActivity] = useState(null);
@@ -13734,6 +14266,7 @@ function TripExpenseDetail({
   const [editTime, setEditTime] = useState("");
   const [groupModal, setGroupModal] = useState(null);
   const [groupSaving, setGroupSaving] = useState(false);
+  const [syncingPlanner, setSyncingPlanner] = useState(false);
 
   const budgetEditRawTitle = editingActivity
     ? String(editingActivity?.title || editingActivity?.name || "")
@@ -13757,8 +14290,17 @@ function TripExpenseDetail({
   const participants = useMemo(() => participantsForExpenseSplit(trip, session), [trip, session]);
   const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
 
-  const totalPlanner = safeActivities.reduce((sum, a) => sum + Number(a.cost || 0), 0);
-  const totalGroup = safeGroup.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const budgetSummary = useMemo(
+    () => computeTripBudgetSummary(safeGroup, safeActivities),
+    [safeGroup, safeActivities]
+  );
+  const totalTripBudget = budgetSummary.totalTrip;
+
+  const categoryLabel = (cat) => {
+    if (cat === EXPENSE_SOURCE.LODGING) return t("budget.categoryLodging");
+    if (cat === EXPENSE_SOURCE.ACTIVITY) return t("budget.categoryActivity");
+    return t("budget.categoryManual");
+  };
 
   const balances = useMemo(
     () => computeTricountBalances(participants, groupExpensesEnabled ? safeGroup : []),
@@ -13807,9 +14349,9 @@ function TripExpenseDetail({
                 <button
                   type="button"
                   onClick={() => onShareTrip(trip)}
-                  className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-indigo-900 shadow-sm transition hover:bg-indigo-100 sm:w-auto"
+                  className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-2xl border border-brand-blue/20 bg-brand-blue-tint px-4 py-2.5 text-sm font-normal tracking-[0.03em] text-brand-blue-deep shadow-sm transition hover:bg-brand-blue-tint sm:w-auto"
                 >
-                  <Share2 size={18} className="text-indigo-700" strokeWidth={2} />
+                  <Share2 size={18} className="text-brand-blue-deep" strokeWidth={2} />
                   {t("tripCard.share")}
                 </button>
               ) : null}
@@ -13836,29 +14378,35 @@ function TripExpenseDetail({
 
         {groupExpensesEnabled ? (
           <>
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50/80 px-4 py-3.5 ring-1 ring-indigo-200/50">
-                <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-indigo-800/80">
-                  {t("budget.totalShared")}
+            <div className="mb-4 space-y-3">
+              <div className="rounded-2xl bg-gradient-to-br from-brand-blue-tint to-brand-blue-tint/80 px-4 py-3.5 ring-1 ring-brand-blue/20">
+                <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-brand-blue-deep/80">
+                  {t("budget.totalTrip")}
                 </p>
-                <p className="mt-1.5 text-2xl font-normal tabular-nums tracking-[0.02em] text-indigo-950">
-                  {formatEuroFR(totalGroup)}
+                <p className="mt-1.5 text-2xl font-normal tabular-nums tracking-[0.02em] text-brand-blue-deep">
+                  {formatEuroFR(totalTripBudget)}
                 </p>
-                <p className="mt-1 text-[11px] font-normal leading-snug tracking-[0.02em] text-indigo-900/70">
-                  {t("budget.totalSharedHint")}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-3.5 ring-1 ring-slate-200/60">
-                <p className="text-[10px] font-normal uppercase tracking-[0.18em] text-slate-500">
-                  {t("budget.plannerRefLabel")}
-                </p>
-                <p className="mt-1.5 text-2xl font-normal tabular-nums tracking-[0.02em] text-slate-900">
-                  {formatEuroFR(totalPlanner)}
-                </p>
-                <p className="mt-1 text-[11px] font-normal leading-snug tracking-[0.02em] text-slate-500">
-                  {t("budget.plannerRefHint")}
+                <p className="mt-1 text-[11px] font-normal leading-snug tracking-[0.02em] text-brand-blue-deep/70">
+                  {t("budget.totalTripHint")}
                 </p>
               </div>
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                <span className="rounded-full bg-brand-blue-tint px-2.5 py-1 text-brand-blue-deep">
+                  {t("budget.categoryLodging")} · {formatEuroFR(budgetSummary.lodging)}
+                </span>
+                <span className="rounded-full bg-brand-blue-tint px-2.5 py-1 text-brand-blue-deep">
+                  {t("budget.categoryActivity")} ·{" "}
+                  {formatEuroFR(budgetSummary.activity + budgetSummary.unsyncedActivity)}
+                </span>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">
+                  {t("budget.categoryManual")} · {formatEuroFR(budgetSummary.manual)}
+                </span>
+              </div>
+              {budgetSummary.unsyncedActivity > 0 && typeof onSyncPlanner === "function" ? (
+                <p className="text-xs leading-relaxed text-amber-900/90">
+                  {t("budget.unsyncedPlannerHint", { amount: formatEuroFR(budgetSummary.unsyncedActivity) })}
+                </p>
+              ) : null}
             </div>
 
             <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
@@ -13931,12 +14479,33 @@ function TripExpenseDetail({
               <button
                 type="button"
                 onClick={() => setGroupModal({ mode: "add" })}
-                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm text-white ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 <Plus size={18} />
                 {t("budget.newExpense")}
               </button>
+              {typeof onSyncPlanner === "function" ? (
+                <button
+                  type="button"
+                  disabled={syncingPlanner}
+                  onClick={async () => {
+                    setSyncingPlanner(true);
+                    try {
+                      await onSyncPlanner(trip, safeActivities);
+                    } finally {
+                      setSyncingPlanner(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-brand-blue/20 bg-brand-blue-tint px-4 py-2.5 text-sm text-brand-blue-deep transition hover:bg-brand-blue-tint disabled:opacity-60"
+                >
+                  <RefreshCw size={16} className={syncingPlanner ? "animate-spin" : ""} aria-hidden />
+                  {syncingPlanner
+                    ? t("budget.syncingPlanner")
+                    : t("budget.syncPlanner", {
+                        count: safeActivities.filter((a) => Number(a?.cost) > 0).length,
+                      })}
+                </button>
+              ) : null}
             </div>
 
             <div className="mb-6 border-t border-slate-100 pt-4">
@@ -13959,9 +14528,14 @@ function TripExpenseDetail({
                         className="flex items-start justify-between gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-3.5 py-3"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="break-words font-normal tracking-[0.02em] text-slate-900">
-                            {e.title}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="break-words font-normal tracking-[0.02em] text-slate-900">
+                              {e.title}
+                            </p>
+                            <span className="shrink-0 rounded-md bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                              {categoryLabel(expenseCategory(e))}
+                            </span>
+                          </div>
                           <p className="mt-0.5 break-words text-xs font-normal tracking-[0.02em] text-slate-500">
                             {t("budget.paidBy")}{" "}
                             <span className="text-slate-700">{displayName(e.paid_by)}</span>
@@ -14188,8 +14762,7 @@ function TripExpenseDetail({
                   });
                   setEditingActivity(null);
                 }}
-                className={`w-full rounded-2xl px-4 py-3 text-white ${GLASS_BUTTON_CLASS}`}
-                style={GLASS_ACCENT_STYLE}
+                className={`w-full rounded-2xl px-4 py-3 text-white ${BRAND_BLUE_BTN_CLASS}`}
               >
                 {t("common.save")}
               </button>
@@ -14201,473 +14774,13 @@ function TripExpenseDetail({
   );
 }
 
-function ChatHubView({
-  trips,
-  activities,
-  session,
-  chatTripId,
-  setChatTripId,
-  chatMessages,
-  chatInput,
-  setChatInput,
-  onSendMessage,
-  votes,
-  onVote,
-  peerProfileByEmail = {},
-  peerOwnerByTripId = {},
-  unreadByTrip = {},
-  onMarkThreadRead,
-}) {
-  const { t, language } = useI18n();
-  const messagesContainerRef = useRef(null);
-  const sortedTrips = useMemo(() => {
-    return [...(trips || [])].sort((a, b) => {
-      const as = String(a?.start_date || "");
-      const bs = String(b?.start_date || "");
-      if (as !== bs) return as.localeCompare(bs);
-      return String(a?.end_date || "").localeCompare(String(b?.end_date || ""));
-    });
-  }, [trips]);
-
-  const activeTrip = sortedTrips.find((tr) => String(tr.id) === String(chatTripId)) || null;
-  const tripActivities = (activities || [])
-    .filter((a) => String(a.trip_id) === String(chatTripId))
-    .sort((a, b) => {
-      const ad = String(a?.date || "");
-      const bd = String(b?.date || "");
-      if (ad !== bd) return ad.localeCompare(bd);
-      return String(a?.time || "").localeCompare(String(b?.time || ""));
-    });
-
-  const votesByActivity = useMemo(() => {
-    const map = {};
-    (votes || []).forEach((v) => {
-      const key = String(v?.activity_id || "");
-      if (!key) return;
-      if (!map[key]) map[key] = [];
-      map[key].push(v);
-    });
-    return map;
-  }, [votes]);
-
-  /** Une seule vue à la fois : discussion d’abord, votes via l’onglet (surtout mobile). */
-  const [hubSubView, setHubSubView] = useState("chat");
-
-  const currentUserId = String(session?.user?.id || "");
-
-  useEffect(() => {
-    setHubSubView("chat");
-  }, [chatTripId]);
-
-  useEffect(() => {
-    if (!activeTrip) return;
-    if (hubSubView !== "chat") return;
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [chatMessages, activeTrip, hubSubView]);
-
-  useEffect(() => {
-    if (typeof onMarkThreadRead !== "function") return;
-    if (!activeTrip) return;
-    if (hubSubView !== "chat") return;
-    onMarkThreadRead(String(activeTrip.id), chatMessages);
-  }, [activeTrip, hubSubView, chatMessages, onMarkThreadRead]);
-
-  return (
-    <section className="space-y-5">
-      <div className="rounded-[2rem] bg-white/72 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/60 backdrop-blur-lg sm:p-5">
-        <h2 className="text-xs font-normal uppercase tracking-[0.3em] text-slate-500">
-          {t("chat.groupsTitle")}
-        </h2>
-        <div className="mt-3 grid min-w-0 gap-2 md:grid-cols-2">
-          {sortedTrips.length > 0 ? (
-            sortedTrips.map((trip) => {
-              const active = String(chatTripId) === String(trip.id);
-              const tripUnread = Math.max(0, Number(unreadByTrip?.[String(trip.id)] || 0) || 0);
-              const ownerP = peerOwnerByTripId[String(trip.id)] || null;
-              const participantsRaw = stackOrderedAvatarRaws(trip, session);
-              const participantLabels = participantsRaw.map((p) =>
-                participantDisplayFromRawForTrip(p, session, trip, ownerP)
-              );
-              return (
-                <button
-                  key={String(trip.id)}
-                  type="button"
-                  onClick={() => setChatTripId(String(trip.id))}
-                  className={`relative block w-full overflow-hidden rounded-2xl border-0 bg-transparent p-0 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 ${
-                    active
-                      ? "text-white shadow-[0_16px_34px_rgba(2,6,23,0.24)]"
-                      : "text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)]"
-                  }`}
-                >
-                  {tripUnread > 0 ? (
-                    <span
-                      className="absolute right-2 top-2 z-10 min-w-[1.4rem] rounded-full bg-rose-600 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white ring-2 ring-white/30 tabular-nums"
-                      aria-label={`${tripUnread} non lus`}
-                    >
-                      {formatUnreadCountBadge(tripUnread)}
-                    </span>
-                  ) : null}
-                  <TripLiquidGlassShell
-                    imageTitle={String(trip?.destination || trip?.title || "voyage")}
-                    active={active}
-                    contrast="high"
-                    className={`rounded-2xl border px-4 py-3 shadow-none ring-0 ${
-                      active ? "border-white/55" : "border-white/40"
-                    }`}
-                  >
-                    <div
-                      style={{
-                        textShadow:
-                          "0 1px 2px rgba(0,0,0,0.85), 0 2px 16px rgba(0,0,0,0.55), 0 0 1px rgba(0,0,0,0.9)",
-                      }}
-                    >
-                      <p className="text-base font-normal tracking-[0.05em]">
-                        <UiLocalizedTripTitle raw={String(trip.title || "")} emptyLabel={t("modals.tripDefault")} />
-                      </p>
-                      <p className="text-xs text-white/92">
-                        {formatDate(trip.start_date)} - {formatDate(trip.end_date)}
-                      </p>
-                      <div className="mt-2 flex items-center gap-1.5">
-                        {participantsRaw.slice(0, 4).map((rawParticipant, idx) => {
-                          const label = participantLabels[idx];
-                          return (
-                            <ParticipantCircleAvatar
-                              key={`${String(trip.id)}-${String(rawParticipant)}`}
-                              raw={rawParticipant}
-                              session={session}
-                              trip={trip}
-                              serverPeerProfile={pickServerPeerProfile(
-                                peerProfileByEmail,
-                                String(rawParticipant),
-                                session,
-                                trip,
-                                ownerP
-                              )}
-                              displayLabel={label}
-                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-white/45"
-                            />
-                          );
-                        })}
-                        {participantLabels.length > 4 ? (
-                          <span className="text-[10px] text-white/90">+{participantLabels.length - 4}</span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </TripLiquidGlassShell>
-                </button>
-              );
-            })
-          ) : (
-            <p className="text-sm text-slate-500">{t("chat.noTrips")}</p>
-          )}
-        </div>
-      </div>
-
-      {activeTrip ? (
-        <div className="fixed -inset-1 z-[70] flex items-center justify-center overflow-x-hidden bg-black/40 p-3 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setChatTripId(""); }}>
-          <div
-            className="relative flex max-h-[min(92dvh,100svh)] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-[0_24px_64px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/90 sm:max-h-[88vh]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="tp-chat-hub-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 pb-3 pt-4 sm:px-5 sm:pb-3.5 sm:pt-5">
-              <div className="min-w-0 flex-1 pr-1">
-                <h2
-                  id="tp-chat-hub-title"
-                  className="break-words text-base font-normal leading-snug tracking-[0.04em] text-slate-900 sm:text-lg"
-                >
-                  <UiLocalizedTripTitle
-                    raw={String(activeTrip.title || "")}
-                    emptyLabel={t("modals.tripDefault")}
-                  />
-                </h2>
-                <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-                  {formatDate(activeTrip.start_date)} — {formatDate(activeTrip.end_date)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setChatTripId("")}
-                className="shrink-0 rounded-full p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                title={t("chat.closeShort")}
-                aria-label={t("chat.closeLabel")}
-              >
-                <X size={20} strokeWidth={2} aria-hidden />
-              </button>
-            </div>
-
-            <div className="shrink-0 px-3 pb-2 pt-2 sm:px-4 sm:pt-3">
-              <div
-                role="tablist"
-                aria-label={`${t("chat.tabDiscussion")} / ${t("chat.tabVotesLong")}`}
-                className="flex gap-1.5 rounded-2xl bg-slate-100/95 p-1.5 ring-1 ring-slate-200/80 sm:gap-2"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={hubSubView === "chat"}
-                  onClick={() => setHubSubView("chat")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-normal transition sm:px-4 sm:py-2.5 ${
-                    hubSubView === "chat"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "bg-transparent text-slate-600 hover:bg-slate-100/80"
-                  }`}
-                >
-                  <MessageCircle size={18} className="shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate">{t("chat.tabDiscussion")}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={hubSubView === "votes"}
-                  onClick={() => setHubSubView("votes")}
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-2 py-3 text-sm font-normal transition sm:px-4 sm:py-2.5 ${
-                    hubSubView === "votes"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "bg-transparent text-slate-600 hover:bg-slate-100/80"
-                  }`}
-                >
-                  <ThumbsUp size={18} className="shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate sm:hidden">{t("chat.tabVotesShort")}</span>
-                  <span className="hidden truncate sm:inline">{t("chat.tabVotesLong")}</span>
-                  {tripActivities.length > 0 ? (
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
-                        hubSubView === "votes" ? "bg-white/20 text-white" : "bg-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {tripActivities.length}
-                    </span>
-                  ) : null}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-0 sm:px-4 sm:pb-4">
-              {hubSubView === "chat" ? (
-                <>
-                  <h3 className="break-words text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
-                    {t("chat.messagesHeading")}
-                  </h3>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {(() => {
-                      const activeOwnerP = peerOwnerByTripId[String(activeTrip.id)] || null;
-                      return stackOrderedAvatarRaws(activeTrip, session).map((p) => {
-                      const label = participantDisplayFromRawForTrip(p, session, activeTrip, activeOwnerP);
-                      return (
-                        <ParticipantCircleAvatar
-                          key={`active-${String(p)}`}
-                          raw={p}
-                          session={session}
-                          trip={activeTrip}
-                          serverPeerProfile={pickServerPeerProfile(
-                            peerProfileByEmail,
-                            String(p),
-                            session,
-                            activeTrip,
-                            activeOwnerP
-                          )}
-                          displayLabel={label}
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-slate-200/70"
-                        />
-                      );
-                    });
-                    })()}
-                  </div>
-                    <div
-                      ref={messagesContainerRef}
-                      className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1"
-                    >
-                      {(chatMessages || []).length > 0 ? (
-                        chatMessages.map((msg, idx) => {
-                          const mine =
-                            (currentUserId && String(msg?.author_id || "") === currentUserId) ||
-                            (!!session?.user?.email &&
-                              String(msg?.author_email || "").toLowerCase() ===
-                                String(session?.user?.email || "").toLowerCase());
-                          const authorLabel = String(
-                            msg?.author_name || msg?.author_email || (mine ? "Moi" : "Membre")
-                          );
-                          return (
-                            <div
-                              key={`${String(msg?.id || "m")}-${idx}`}
-                              className={`flex ${mine ? "justify-end" : "justify-start"}`}
-                            >
-                              <div
-                                className={`min-w-0 max-w-[min(78%,100%)] ${mine ? "items-end" : "items-start"} flex flex-col`}
-                              >
-                                <p
-                                  className={`mb-1 max-w-full truncate px-1 text-[11px] ${mine ? "text-slate-500" : "text-slate-500"}`}
-                                >
-                                  {authorLabel}
-                                </p>
-                                <div
-                                  className={`max-w-full break-words rounded-[1.25rem] px-3 py-2 text-sm shadow-sm ${
-                                    mine
-                                      ? "rounded-br-md bg-[#0A84FF] text-white"
-                                      : "rounded-bl-md bg-slate-200 text-slate-900"
-                                  }`}
-                                >
-                                  {String(msg?.content || "")}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p className="text-sm text-slate-500">{t("chat.noMessages")}</p>
-                      )}
-                    </div>
-                    <div className="mt-3 flex min-w-0 shrink-0 gap-2">
-                      <input
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            onSendMessage();
-                          }
-                        }}
-                        placeholder={t("chat.writePlaceholder")}
-                        className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[16px] md:px-4 md:text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={onSendMessage}
-                        className={`shrink-0 rounded-2xl px-3 py-3 text-sm text-white sm:px-4 ${GLASS_BUTTON_CLASS}`}
-                        style={GLASS_ACCENT_STYLE}
-                      >
-                        {t("chat.send")}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <h3 className="text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
-                      {t("chat.votesHeading")}
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-500">{t("chat.votesHint")}</p>
-                    <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
-                      {tripActivities.length > 0 ? (
-                        tripActivities.map((activity) => {
-                          const list = votesByActivity[String(activity.id)] || [];
-                          const score = list.reduce((sum, v) => sum + Number(v?.value || 0), 0);
-                          const mine = list.find((v) => String(v?.voter_id || "") === currentUserId);
-                          const mineValue = Number(mine?.value || 0);
-                          const votedFor = list.filter((v) => Number(v?.value || 0) === 1);
-                          const votedAgainst = list.filter((v) => Number(v?.value || 0) === -1);
-                          const scoreDisplay = score > 0 ? `+${score}` : String(score);
-                          return (
-                            <div
-                              key={String(activity.id)}
-                              className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3"
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className="break-words text-sm font-semibold text-slate-900">
-                                    <UiTranslatedActivityTitle
-                                      raw={String(activity?.title || activity?.name || "")}
-                                      emptyFallback={t("planner.activityNamePlaceholder")}
-                                    />
-                                  </p>
-                                  <p className="text-xs text-slate-500">
-                                    {String(activity?.date || "")} {String(activity?.time || "")}
-                                  </p>
-                                  <p className="mt-0.5 text-xs font-medium text-slate-700">
-                                    {t("chat.activityBudget", {
-                                      amount: Number(activity?.cost || 0).toFixed(2),
-                                      currency: t("planner.currencyEur"),
-                                    })}
-                                  </p>
-                                </div>
-                                <span
-                                  className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                    score > 0
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : score < 0
-                                        ? "bg-rose-100 text-rose-700"
-                                        : "bg-slate-200 text-slate-700"
-                                  }`}
-                                >
-                                  {t("chat.voteScore", { score: scoreDisplay })}
-                                </span>
-                              </div>
-                              <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => onVote(String(activity.id), 1)}
-                                  className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
-                                    mineValue === 1
-                                      ? "bg-emerald-600 text-white shadow-sm"
-                                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
-                                  }`}
-                                >
-                                  {t("chat.voteButtonFor")}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onVote(String(activity.id), -1)}
-                                  className={`min-w-0 rounded-xl px-2 py-2 text-[11px] font-medium leading-snug transition sm:px-3 sm:text-xs ${
-                                    mineValue === -1
-                                      ? "bg-rose-600 text-white shadow-sm"
-                                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
-                                  }`}
-                                >
-                                  {t("chat.voteButtonAgainst")}
-                                </button>
-                              </div>
-                              <p className="mt-2 text-[11px] text-slate-500">
-                                {mineValue === 1
-                                  ? t("chat.yourVoteFor")
-                                  : mineValue === -1
-                                    ? t("chat.yourVoteAgainst")
-                                    : t("chat.notVotedYet")}
-                              </p>
-                              <div className="mt-2 space-y-1 break-words">
-                                <p className="text-[11px] text-emerald-700">
-                                  {t("chat.talliesFor")}{" "}
-                                  {votedFor.length > 0
-                                    ? votedFor.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                    : t("chat.talliesDash")}
-                                </p>
-                                <p className="text-[11px] text-rose-700">
-                                  {t("chat.talliesAgainst")}{" "}
-                                  {votedAgainst.length > 0
-                                    ? votedAgainst.map((v) => resolveVoterLabel(v, session)).join(", ")
-                                    : t("chat.talliesDash")}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p className="text-sm text-slate-500">{t("chat.noActivities")}</p>
-                      )}
-                    </div>
-                  </>
-                )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-[2rem] border border-slate-200/70 bg-white/92 px-5 py-6 text-sm text-slate-600 shadow-[0_10px_30px_rgba(2,6,23,0.06)]">
-          {t("chat.selectTrip")}
-        </div>
-      )}
-    </section>
-  );
-}
-
 const ACTIVE_TAB_STORAGE_KEY = "tp_active_tab_v1";
-const VALID_APP_TABS = new Set(["trips", "planner", "destination", "budget", "chat"]);
+const VALID_APP_TABS = new Set(["trips", "planner", "destination", "budget", "stays"]);
 
 function readStoredActiveTab() {
   try {
     const raw = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
+    if (raw === "chat") return "stays";
     if (raw && VALID_APP_TABS.has(raw)) return raw;
   } catch (_e) {
     // ignore
@@ -14807,20 +14920,7 @@ export default function App() {
     /** @type {Record<string, { email: string, avatarUrl: string, firstName: string, lastName: string, initialsBg: string }>} */ ({})
   );
   const [activities, setActivities] = useState([]);
-  const [chatActivities, setChatActivities] = useState([]);
   const [selectedTripId, setSelectedTripId] = useState(() => readStoredSelectedTripId());
-  const [chatTripId, setChatTripId] = useState("");
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatMessagesByTrip, setChatMessagesByTrip] = useState(() => loadChatCacheFromStorage());
-  const chatMessagesByTripRef = useRef(chatMessagesByTrip);
-  chatMessagesByTripRef.current = chatMessagesByTrip;
-  const [chatInput, setChatInput] = useState("");
-  const [activityVotes, setActivityVotes] = useState([]);
-  const [chatMessagesLocal, setChatMessagesLocal] = useState({});
-  const chatMessagesLocalRef = useRef(chatMessagesLocal);
-  chatMessagesLocalRef.current = chatMessagesLocal;
-  const [chatReadState, setChatReadState] = useState(() => ({}));
-  const [activityVotesLocal, setActivityVotesLocal] = useState({});
   const [selectedDate, setSelectedDate] = useState(() => readStoredPlannerDate() || getTodayStr());
   const [monthCursor, setMonthCursor] = useState(() => {
     const sm = readStoredPlannerMonthCursor();
@@ -14942,25 +15042,9 @@ export default function App() {
     };
   }, [authLoading, session, inviteeProfilesFetchKey]);
 
-  useEffect(() => {
-    if (!session?.user?.id) {
-      setChatReadState({});
-      return;
-    }
-    const uid = String(session.user.id);
-    const loaded = loadChatReadState(uid);
-    const cache = loadChatCacheFromStorage();
-    const next = coalesceReadStateWithMessageCache(loaded, cache);
-    if (JSON.stringify(next) !== JSON.stringify(loaded)) {
-      saveChatReadState(uid, next);
-    }
-    setChatReadState(next);
-  }, [session?.user?.id]);
-
   useScrollLock(menuOpen);
   useScrollLock(accountOpen);
   useScrollLock(!!budgetDetailTrip);
-  useScrollLock(!!chatTripId);
   useScrollLock(tripDateConflictModalOpen);
 
   /** Ids d'activités insérées récemment — fusion avec loadActivities pour éviter l'écrasement par une lecture vide / en retard. */
@@ -14978,6 +15062,8 @@ export default function App() {
   const loadTripExpensesGenRef = useRef(0);
   /** User id déjà connu côté auth — évite de traiter un SIGNED_IN « fantôme » au retour app mobile comme une nouvelle connexion. */
   const authSessionUidRef = useRef(null);
+  /** Session restaurée depuis le stockage (F5) — ne pas réinitialiser l’onglet actif dans ce cas. */
+  const authBootstrapDoneRef = useRef(false);
   /** Évite les appels en double à updateUser pour initials_avatar_bg (StrictMode / re-renders). */
   const ensuredInitialsBgUidRef = useRef(null);
 
@@ -14996,69 +15082,16 @@ export default function App() {
       ? t("nav.trips")
       : activeTab === "planner"
         ? t("nav.planning")
-        : activeTab === "chat"
-          ? t("nav.chat")
-          : activeTab === "destination"
-            ? t("nav.search")
+        : activeTab === "destination"
+          ? t("nav.search")
+          : activeTab === "stays"
+            ? t("nav.stays")
             : t("nav.budget");
-
-  const tripsChatIdsKey = useMemo(
-    () =>
-      (trips || [])
-        .map((t) => String(t?.id || ""))
-        .filter(Boolean)
-        .sort()
-        .join(","),
-    [trips]
-  );
-
-  const chatUnreadByTrip = useMemo(() => {
-    const uid = String(session?.user?.id || "");
-    const email = String(session?.user?.email || "")
-      .trim()
-      .toLowerCase();
-    const out = {};
-    for (const t of trips || []) {
-      const tid = String(t.id);
-      const list = (chatMessagesByTrip[tid] || []).slice().sort(compareChatMessagesByTime);
-      out[tid] = countChatUnreadForTrip(list, uid, email, chatReadState[tid]);
-    }
-    return out;
-  }, [trips, chatMessagesByTrip, chatReadState, session?.user?.id, session?.user?.email]);
-
-  const totalChatUnread = useMemo(
-    () => Object.values(chatUnreadByTrip).reduce((a, b) => a + (Number(b) || 0), 0),
-    [chatUnreadByTrip]
-  );
-
-  const markChatThreadRead = useCallback(
-    (tripId, messages) => {
-      const tid = String(tripId || "");
-      if (!tid || !session?.user?.id) return;
-      const sorted = (Array.isArray(messages) ? messages : []).slice().sort(compareChatMessagesByTime);
-      if (sorted.length === 0) return;
-      const last = sorted[sorted.length - 1];
-      const key = { t: String(last.created_at || ""), id: String(last.id || "") };
-      setChatReadState((prev) => {
-        const cur = prev[tid];
-        if (cur && String(cur.t) === key.t && String(cur.id) === key.id) return prev;
-        const next = { ...prev, [tid]: key };
-        saveChatReadState(String(session.user.id), next);
-        return next;
-      });
-    },
-    [session?.user?.id]
-  );
-
-  useEffect(() => {
-    applyTabNotification(totalChatUnread);
-  }, [totalChatUnread]);
 
   useEffect(() => {
     return () => {
       if (typeof document !== "undefined") {
         document.title = baseDocumentTitle;
-        setFaviconHref("/logo-justtrip.png");
       }
     };
   }, []);
@@ -15157,6 +15190,7 @@ export default function App() {
         if (mounted) setSession(data?.session || null);
         if (mounted && data?.session?.user?.id) {
           authSessionUidRef.current = String(data.session.user.id);
+          authBootstrapDoneRef.current = true;
         }
       } catch (e) {
         if (mounted) setNotice(String(e?.message || "Erreur authentification"));
@@ -15183,9 +15217,17 @@ export default function App() {
 
       if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") {
         authSessionUidRef.current = uid;
+        authBootstrapDoneRef.current = true;
+        return;
       }
 
       if (event !== "SIGNED_IN") return;
+
+      if (!authBootstrapDoneRef.current) {
+        authSessionUidRef.current = uid;
+        authBootstrapDoneRef.current = true;
+        return;
+      }
 
       authSessionUidRef.current = uid;
       const isNewSignIn = hadUid !== uid;
@@ -15643,354 +15685,6 @@ export default function App() {
     return () => supabase.removeChannel(exChannel);
   }, [trips, session, authLoading, tripExpensesRetryNonce]);
 
-  useEffect(() => {
-    if (trips.length === 0) {
-      setChatTripId("");
-      setChatMessages([]);
-      setActivityVotes([]);
-    }
-  }, [trips]);
-
-  useEffect(() => {
-    saveChatCacheToStorage(chatMessagesByTrip);
-  }, [chatMessagesByTrip]);
-
-  /** Tous les voyages : charge les messages pour les compteurs, et crée un curseur « lu » seulement si encore absent (historique côté serveur = lu). */
-  useEffect(() => {
-    if (authLoading || !session?.user?.id) return;
-    const rawIds = (tripsChatIdsKey && tripsChatIdsKey.length > 0 ? tripsChatIdsKey.split(",") : []).filter(Boolean);
-    if (rawIds.length === 0) return;
-    const uid = String(session.user.id);
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .select("*")
-        .in("trip_id", rawIds)
-        .order("created_at", { ascending: true });
-      if (cancelled || error) return;
-      const by = {};
-      for (const row of data || []) {
-        const t = String(row.trip_id);
-        if (!by[t]) by[t] = [];
-        by[t].push(row);
-      }
-      const mergedBy = {};
-      for (const id of rawIds) {
-        const prevR = chatMessagesByTripRef.current[id] || [];
-        mergedBy[id] = mergeChatMessageLists(prevR, by[id] || []);
-      }
-      setChatMessagesByTrip((prev) => {
-        const next = { ...prev };
-        for (const id of rawIds) {
-          const m = mergedBy[id];
-          if (m && m.length) next[id] = m;
-        }
-        return next;
-      });
-      setChatReadState((prev) => {
-        const n = { ...prev };
-        let ch = false;
-        for (const id of rawIds) {
-          if (n[id]) continue;
-          const m = mergedBy[id] || [];
-          if (!m.length) continue;
-          const last = m[m.length - 1];
-          n[id] = { t: String(last.created_at || ""), id: String(last.id || "") };
-          ch = true;
-        }
-        if (ch) saveChatReadState(uid, n);
-        return ch ? n : prev;
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, session?.user?.id, tripsChatIdsKey]);
-
-  useEffect(() => {
-    if (authLoading || !session?.user?.id) return;
-    const allowed = new Set(
-      (tripsChatIdsKey && tripsChatIdsKey.length > 0 ? tripsChatIdsKey.split(",") : []).filter(Boolean)
-    );
-    if (allowed.size === 0) return;
-    const channel = supabase
-      .channel("tp-chat-messages-broadcast")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
-        const row = payload.new;
-        const tid = String(row?.trip_id || "");
-        if (!tid || !allowed.has(tid)) return;
-        setChatMessagesByTrip((prev) => {
-          const list = prev[tid] || [];
-          if (list.some((m) => String(m.id) === String(row.id))) return prev;
-          return { ...prev, [tid]: mergeChatMessageLists(list, [row]) };
-        });
-      })
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [authLoading, session?.user?.id, tripsChatIdsKey]);
-
-  useEffect(() => {
-    const loadChatData = async () => {
-      if (!chatTripId) {
-        setChatMessages([]);
-        setActivityVotes([]);
-        setChatActivities([]);
-        return;
-      }
-
-      const cachedMessages = chatMessagesByTripRef.current[chatTripId];
-      if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
-        setChatMessages(cachedMessages);
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("activities")
-          .select("*")
-          .eq("trip_id", chatTripId);
-        if (error) throw error;
-        setChatActivities((data || []).map(normalizeActivity));
-      } catch (_e) {
-        setChatActivities([]);
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("chat_messages")
-          .select("*")
-          .eq("trip_id", chatTripId)
-          .order("created_at", { ascending: true });
-        if (error) throw error;
-        const sortedMessages = (data || []).slice().sort((a, b) =>
-          String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
-        );
-        const prevList = chatMessagesByTripRef.current[chatTripId] || [];
-        const localOnly = chatMessagesLocalRef.current[chatTripId] || [];
-        const merged = mergeChatMessageLists(
-          mergeChatMessageLists(prevList, localOnly),
-          sortedMessages
-        );
-        setChatMessages(merged);
-        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: merged }));
-      } catch (_e) {
-        const prevList = chatMessagesByTripRef.current[chatTripId] || [];
-        const localFallback = chatMessagesLocalRef.current[chatTripId] || [];
-        const merged = mergeChatMessageLists(prevList, localFallback);
-        setChatMessages(merged);
-        setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: merged }));
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("activity_votes")
-          .select("*")
-          .eq("trip_id", chatTripId);
-        if (error) throw error;
-        setActivityVotes(data || []);
-      } catch (_e) {
-        setActivityVotes(activityVotesLocal[chatTripId] || []);
-      }
-    };
-    void loadChatData();
-
-    if (!chatTripId || !session) {
-      return undefined;
-    }
-
-    const filterId = String(chatTripId);
-    const channel = supabase
-      .channel(`tp-chat-messages-${filterId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "chat_messages", filter: `trip_id=eq.${filterId}` },
-        () => {
-          void loadChatData();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "activity_votes", filter: `trip_id=eq.${filterId}` },
-        () => {
-          void loadChatData();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [chatTripId, chatMessagesLocal, activityVotesLocal, session]);
-
-  const sortChatMessagesList = (list) =>
-    (Array.isArray(list) ? list : []).slice().sort((a, b) =>
-      String(a?.created_at || "").localeCompare(String(b?.created_at || ""))
-    );
-
-  const sendChatMessage = () => {
-    const content = String(chatInput || "").trim();
-    if (!content || !chatTripId) return;
-    const currentUserId = String(session?.user?.id || "");
-    const userEmail = String(session?.user?.email || "");
-    const authorName =
-      String(session?.user?.user_metadata?.first_name || "").trim() ||
-      String(userEmail).split("@")[0] ||
-      "Membre";
-
-    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const nowIso = new Date().toISOString();
-    const optimisticMsg = {
-      id: pendingId,
-      trip_id: chatTripId,
-      author_id: currentUserId,
-      author_email: userEmail,
-      author_name: authorName,
-      content,
-      created_at: nowIso,
-    };
-
-    setChatInput("");
-    setChatMessages((prev) => sortChatMessagesList([...(prev || []), optimisticMsg]));
-    setChatMessagesByTrip((prev) => ({
-      ...prev,
-      [chatTripId]: sortChatMessagesList([...(prev[chatTripId] || []), optimisticMsg]),
-    }));
-
-    let payload = {
-      trip_id: chatTripId,
-      author_id: currentUserId,
-      author_email: userEmail,
-      author_name: authorName,
-      content,
-    };
-
-    const replacePendingWithList = (nextList) => {
-      const sorted = sortChatMessagesList(nextList);
-      setChatMessages(sorted);
-      setChatMessagesByTrip((prev) => ({ ...prev, [chatTripId]: sorted }));
-    };
-
-    const removePendingAndApply = (fn) => {
-      setChatMessages((prev) => {
-        const without = (prev || []).filter((m) => String(m?.id) !== pendingId);
-        return sortChatMessagesList(fn(without));
-      });
-      setChatMessagesByTrip((prev) => {
-        const without = (prev[chatTripId] || []).filter((m) => String(m?.id) !== pendingId);
-        return { ...prev, [chatTripId]: sortChatMessagesList(fn(without)) };
-      });
-    };
-
-    void (async () => {
-      try {
-        for (let attempt = 0; attempt < 6; attempt += 1) {
-          const { data: insertedRows, error } = await supabase
-            .from("chat_messages")
-            .insert(payload)
-            .select("*");
-          if (!error) {
-            const row = Array.isArray(insertedRows) && insertedRows[0] ? insertedRows[0] : null;
-            if (row) {
-              removePendingAndApply((without) => [...without, row]);
-              return;
-            }
-            const { data: fresh, error: fetchErr } = await supabase
-              .from("chat_messages")
-              .select("*")
-              .eq("trip_id", chatTripId)
-              .order("created_at", { ascending: true });
-            if (!fetchErr) {
-              replacePendingWithList(fresh || []);
-              return;
-            }
-            removePendingAndApply((without) => without);
-            setChatInput(content);
-            return;
-          }
-          const msg = String(error?.message || "");
-          const m1 = msg.match(/Could not find the '([^']+)' column/i);
-          const m2 = msg.match(/column "([^"]+)" does not exist/i);
-          const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
-          if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
-            const { [missing]: _removed, ...rest } = payload;
-            payload = rest;
-            continue;
-          }
-          throw error;
-        }
-        throw new Error("chat insert failed");
-      } catch (_e) {
-        const localMsg = {
-          id: `local-${Date.now()}`,
-          trip_id: chatTripId,
-          author_id: currentUserId,
-          author_email: userEmail,
-          author_name: authorName,
-          content,
-        };
-        removePendingAndApply((without) => [...without, localMsg]);
-        setChatMessagesLocal((prev) => ({
-          ...prev,
-          [chatTripId]: [...(prev[chatTripId] || []), localMsg],
-        }));
-      }
-    })();
-  };
-
-  const voteActivity = async (activityId, value) => {
-    if (!chatTripId || !activityId) return;
-    const currentUserId = String(session?.user?.id || "");
-    const userEmail = String(session?.user?.email || "");
-    const voterName =
-      String(session?.user?.user_metadata?.first_name || "").trim() ||
-      String(userEmail).split("@")[0] ||
-      "Membre";
-    const v = Number(value) >= 0 ? 1 : -1;
-    let payload = {
-      trip_id: chatTripId,
-      activity_id: activityId,
-      voter_id: currentUserId,
-      value: v,
-      voter_name: voterName,
-      voter_email: userEmail,
-    };
-
-    try {
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const { error } = await supabase.from("activity_votes").upsert(payload, {
-          onConflict: "trip_id,activity_id,voter_id",
-        });
-        if (!error) break;
-        const msg = String(error?.message || "");
-        const m1 = msg.match(/Could not find the '([^']+)' column/i);
-        const m2 = msg.match(/column "([^"]+)" does not exist/i);
-        const missing = (m1 && m1[1]) || (m2 && m2[1]) || "";
-        if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
-          const { [missing]: _removed, ...rest } = payload;
-          payload = rest;
-          continue;
-        }
-        throw error;
-      }
-      const { data: fresh } = await supabase
-        .from("activity_votes")
-        .select("*")
-        .eq("trip_id", chatTripId);
-      setActivityVotes(fresh || []);
-    } catch (_e) {
-      setActivityVotes((prev) => {
-        const rest = (prev || []).filter(
-          (x) => !(String(x?.activity_id) === String(activityId) && String(x?.voter_id) === currentUserId)
-        );
-        const next = [...rest, payload];
-        setActivityVotesLocal((m) => ({ ...m, [chatTripId]: next }));
-        return next;
-      });
-    }
-  };
-
   const insertActivitiesFromGuideSelection = async (tripId, items, startYmd, endYmd, userId) => {
     const raw = Array.isArray(items) ? items : [];
     const normalizedItems = raw
@@ -16350,6 +16044,15 @@ export default function App() {
           if (insertedId) {
             activityInsertGraceRef.current.set(insertedId, Date.now());
             cacheActivityDescription(insertedId, input?.description || "");
+            if (tripExpensesTableReady && safeCost > 0) {
+              const actRow = match || {
+                ...payload,
+                id: insertedId,
+                trip_id: tid,
+                cost: safeCost,
+              };
+              void syncActivityBudgetExpense(actRow);
+            }
             (async () => {
               try {
                 const betterPhoto = await resolveActivityPlaceImage({
@@ -16442,6 +16145,11 @@ export default function App() {
                 : a
             )
           );
+          void syncActivityBudgetExpense({
+            ...activity,
+            ...payload,
+            description: desiredDescription,
+          });
           setNotice("");
           return;
         }
@@ -16461,6 +16169,8 @@ export default function App() {
   const deleteActivity = async (activity) => {
     if (!activity?.id) return;
     try {
+      const linked = findExpenseForActivity(tripExpensesRef.current, activity.id);
+      if (linked?.id) await deleteGroupExpense(linked);
       const { error } = await supabase.from("activities").delete().eq("id", activity.id);
       if (error) throw error;
       cacheActivityDescription(activity.id, "");
@@ -16483,6 +16193,10 @@ export default function App() {
       split_between: Array.isArray(row?.split_between) ? row.split_between : [],
       expense_date: row?.expense_date || null,
     };
+    if (row?.source_type) body.source_type = String(row.source_type);
+    if (row?.source_id != null && String(row.source_id).trim() !== "") {
+      body.source_id = String(row.source_id);
+    }
     if (session?.user?.id) body.owner_id = session.user.id;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const { data, error } = await supabase.from("trip_expenses").insert(body).select("*");
@@ -16532,6 +16246,10 @@ export default function App() {
       split_between: Array.isArray(row?.split_between) ? row.split_between : [],
       expense_date: row?.expense_date || null,
     };
+    if (row?.source_type) body.source_type = String(row.source_type);
+    if (row?.source_id != null && String(row.source_id).trim() !== "") {
+      body.source_id = String(row.source_id);
+    }
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const { data, error } = await supabase.from("trip_expenses").update(body).eq("id", id).select("*");
       if (!error && data?.[0]) {
@@ -16567,6 +16285,70 @@ export default function App() {
       setNotice(String(e?.message || "Erreur suppression depense"));
     }
   };
+
+  const tripExpensesRef = useRef(tripExpenses);
+  tripExpensesRef.current = tripExpenses;
+
+  const syncActivityBudgetExpense = async (activity) => {
+    if (!tripExpensesTableReady || !activity?.id) return;
+    const existing = findExpenseForActivity(tripExpensesRef.current, activity.id);
+    const cost = Number(activity?.cost) || 0;
+    if (cost <= 0) {
+      if (existing?.id) await deleteGroupExpense(existing);
+      return;
+    }
+    const actTitle = String(activity?.title || activity?.name || "Activité").trim();
+    const lineTitle = t("budget.importLineTitle", { activity: actTitle || "Activité" });
+    const payload = buildActivityExpensePayload({ ...activity, cost }, lineTitle);
+    if (!payload) return;
+    if (existing?.id) {
+      await updateGroupExpense({ ...payload, id: existing.id });
+    } else {
+      await addGroupExpense(payload);
+    }
+  };
+
+  const syncAllActivitiesBudgetForTrip = async (trip, tripActivities) => {
+    if (!tripExpensesTableReady) {
+      setNotice(t("budget.groupDisabledBody"));
+      return;
+    }
+    const list = (tripActivities || []).filter((a) => Number(a?.cost) > 0);
+    if (list.length === 0) {
+      setNotice(t("budget.importNone"));
+      return;
+    }
+    for (const a of list) {
+      await syncActivityBudgetExpense(a);
+    }
+    setNotice(t("budget.syncPlannerDone", { count: list.length }));
+  };
+
+  const addLodgingExpense = async ({ tripId, title, amount, checkIn, paidBy }) => {
+    const payload = buildLodgingExpensePayload({
+      tripId,
+      title,
+      amount,
+      checkIn,
+      paidBy: paidBy || "Moi",
+    });
+    if (!payload) return false;
+    const ok = await addGroupExpense(payload);
+    if (ok) setNotice(t("stays.addToBudgetDone"));
+    return ok;
+  };
+
+  useEffect(() => {
+    if (!budgetDetailTrip?.id || !tripExpensesTableReady) return;
+    const tid = String(budgetDetailTrip.id);
+    const tripActs = (activities || []).filter((a) => String(a?.trip_id) === tid);
+    const needsSync = tripActs.some((a) => {
+      if (Number(a?.cost) <= 0) return false;
+      return !findExpenseForActivity(tripExpensesRef.current, a.id);
+    });
+    if (!needsSync) return;
+    void syncAllActivitiesBudgetForTrip(budgetDetailTrip, tripActs);
+  }, [budgetDetailTrip?.id, tripExpensesTableReady, activities]);
 
   const saveParticipants = async (list) => {
     if (!tricountTrip) return;
@@ -16826,26 +16608,6 @@ export default function App() {
     // Optimistic UI : fermer la modal et retirer le voyage immédiatement
     setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
     setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
-    setChatMessagesByTrip((prev) => {
-      const next = { ...(prev || {}) };
-      delete next[idStr];
-      return next;
-    });
-    if (session?.user?.id) {
-      setChatReadState((prev) => {
-        if (!prev[idStr]) return prev;
-        const next = { ...prev };
-        delete next[idStr];
-        saveChatReadState(String(session.user.id), next);
-        return next;
-      });
-    }
-    if (String(chatTripId) === idStr) {
-      setChatTripId("");
-      setChatMessages([]);
-      setActivityVotes([]);
-      setChatActivities([]);
-    }
     if (String(selectedTripId) === idStr) setSelectedTripId("");
     setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
     setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
@@ -16872,8 +16634,8 @@ export default function App() {
     { id: "trips", icon: Briefcase, label: t("nav.trips") },
     { id: "planner", icon: Calendar, label: t("nav.planner") },
     { id: "destination", icon: Search, label: t("nav.search") },
+    { id: "stays", icon: BedDouble, label: t("nav.stays") },
     { id: "budget", icon: DollarSign, label: t("nav.budget") },
-    { id: "chat", icon: MessageCircle, label: t("nav.chat") },
   ];
 
   /** Efface seulement les notices ; la ville / la recherche reste (persistée + après refresh). */
@@ -17151,17 +16913,6 @@ export default function App() {
 
         <div style={{ display: activeTab === "budget" ? undefined : "none" }}>
           <section className="pb-4">
-            <div className="mb-6 rounded-[2rem] border border-amber-100/80 bg-gradient-to-br from-amber-50/75 via-white/95 to-slate-50/75 p-4 shadow-[0_14px_40px_rgba(180,83,9,0.06)] ring-1 ring-amber-100/50 sm:p-6">
-              <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-900 shadow-sm ring-1 ring-amber-200/50">
-                  <Wallet className="h-6 w-6" strokeWidth={2} aria-hidden />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-semibold tracking-tight text-slate-900">{t("budget.title")}</h2>
-                  <p className="mt-2 break-words text-sm leading-relaxed text-slate-600">{t("budget.intro")}</p>
-                </div>
-              </div>
-            </div>
             <div className="space-y-7">
               {(() => {
                 const sections = classifyTrips(trips || []);
@@ -17178,7 +16929,7 @@ export default function App() {
                 return (
                   <>
                     <div className="space-y-3">
-                      <div className="rounded-[2rem] border border-emerald-200/70 bg-emerald-50/45 p-4 shadow-[0_10px_26px_rgba(16,185,129,0.08)]">
+                      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
                         <h3 className="mb-1 font-display text-xs font-normal uppercase tracking-[0.28em] text-emerald-700">
                           {t("trips.badgeInProgress")}
                         </h3>
@@ -17191,11 +16942,11 @@ export default function App() {
                       </div>
                     </div>
                     <div className="space-y-3">
-                      <div className="rounded-[2rem] border border-sky-200/70 bg-sky-50/45 p-4 shadow-[0_10px_26px_rgba(14,165,233,0.08)]">
-                        <h3 className="mb-1 font-display text-xs font-normal uppercase tracking-[0.28em] text-sky-700">
+                      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
+                        <h3 className="mb-1 font-display text-xs font-normal uppercase tracking-[0.28em] text-brand-blue-deep">
                           {t("trips.badgeUpcoming")}
                         </h3>
-                        <p className="mb-3 text-[11px] text-sky-900/60">{t("trips.upcomingSubtitle")}</p>
+                        <p className="mb-3 text-[11px] text-brand-blue-deep/60">{t("trips.upcomingSubtitle")}</p>
                         <div className="grid gap-4">
                           {sections.upcoming.length > 0
                             ? sections.upcoming.map(renderBudgetTrip)
@@ -17204,7 +16955,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="space-y-3">
-                      <div className="rounded-[2rem] border border-slate-200 bg-slate-50/55 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+                      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
                         <button
                           type="button"
                           onClick={() => setBudgetMemoriesOpen((v) => !v)}
@@ -17240,23 +16991,17 @@ export default function App() {
           </section>
         </div>
 
-        <div style={{ display: activeTab === "chat" ? undefined : "none" }}>
-          <ChatHubView
+        <div style={{ display: activeTab === "stays" ? undefined : "none" }}>
+          <StaysView
             trips={trips}
-            activities={chatActivities}
-            session={session}
-            chatTripId={chatTripId}
-            setChatTripId={setChatTripId}
-            chatMessages={chatMessages}
-            chatInput={chatInput}
-            setChatInput={setChatInput}
-            onSendMessage={sendChatMessage}
-            votes={activityVotes}
-            onVote={voteActivity}
-            peerProfileByEmail={inviteeProfileByEmail}
-            peerOwnerByTripId={peerOwnerProfileByTripId}
-            unreadByTrip={chatUnreadByTrip}
-            onMarkThreadRead={markChatThreadRead}
+            destinationHint={destinationConfirmed}
+            groupExpenses={tripExpenses}
+            groupExpensesEnabled={tripExpensesTableReady}
+            onAddLodgingExpense={addLodgingExpense}
+            onOpenTripBudget={(trip) => {
+              if (trip?.id) setBudgetDetailTrip(trip);
+              setActiveTab("budget");
+            }}
           />
         </div>
       </main>
@@ -17269,12 +17014,7 @@ export default function App() {
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
-            const chatTabUnread = tab.id === "chat" && totalChatUnread > 0 ? totalChatUnread : 0;
-            const labelBase = String(tab.label);
-            const labelOut =
-              chatTabUnread > 0
-                ? `${labelBase}, ${formatUnreadCountBadge(chatTabUnread) || chatTabUnread} non lus`
-                : labelBase;
+            const labelOut = String(tab.label);
             return (
               <button
                 key={tab.id}
@@ -17297,17 +17037,7 @@ export default function App() {
                 title={labelOut}
                 aria-label={labelOut}
               >
-                <span className="relative inline-flex">
-                  <Icon size={20} className="shrink-0" aria-hidden />
-                  {chatTabUnread > 0 ? (
-                    <span
-                      className="absolute -right-1.5 -top-1 min-w-[1rem] rounded-full bg-rose-600 px-1 text-[9px] font-bold leading-4 text-white ring-1 ring-white tabular-nums"
-                      aria-hidden
-                    >
-                      {formatUnreadCountBadge(chatTabUnread)}
-                    </span>
-                  ) : null}
-                </span>
+                <Icon size={20} className="shrink-0" aria-hidden />
               </button>
             );
           })}
@@ -17400,6 +17130,7 @@ export default function App() {
             onUpdateGroupExpense={updateGroupExpense}
             onDeleteGroupExpense={deleteGroupExpense}
             onShareTrip={(tr) => setShareTrip(tr)}
+            onSyncPlanner={syncAllActivitiesBudgetForTrip}
           />
         </BudgetTripDetailShell>
       ) : null}

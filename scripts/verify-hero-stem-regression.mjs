@@ -3,7 +3,7 @@
  * Usage : npm run verify:hero-stem
  */
 
-import { buildCityHeroLookupKeys, heroImageStemFromDestination, buildNominatimCityQuery } from "../cityHeroStem.js";
+import { buildCityHeroLookupKeys, heroImageStemFromDestination, buildNominatimCityQuery, buildCityImageCacheKey } from "../cityHeroStem.js";
 import { resolveHeroLookupLabel } from "../i18n/cityDisplay.js";
 
 function fail(msg) {
@@ -50,6 +50,15 @@ function main() {
   const creteZhKeys = buildCityHeroLookupKeys("克里特岛");
   if (!creteZhKeys.includes("crete")) {
     fail(`« 克里特岛 » doit produire la clé « crete » (obtenu : ${creteZhKeys.join(", ")})`);
+  }
+
+  const capriHnKey = buildCityImageCacheKey("Capri, Gracias a Dios, Honduras");
+  const capriItKey = buildCityImageCacheKey("Capri, Campania, Italie");
+  if (capriHnKey === capriItKey) {
+    fail(`clés cache Capri HN vs IT doivent différer (obtenu : ${capriHnKey})`);
+  }
+  if (!/honduras/.test(capriHnKey)) {
+    fail(`clé cache Capri HN doit inclure le contexte Honduras (obtenu : ${capriHnKey})`);
   }
 
   console.error("verify-hero-stem: OK");

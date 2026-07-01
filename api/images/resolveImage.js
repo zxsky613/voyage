@@ -54,27 +54,32 @@ export async function resolveImage(params) {
   /** @type {import('../../lib/images/types.js').ImageCandidate[]} */
   let candidateLists = [];
 
-  if (kind === "hero" && entity) {
+  if (kind === "hero") {
     const heroOpts = { kind: /** @type {'hero'} */ ("hero") };
-    const [category, p18, wiki, unsplash] = await Promise.all([
-      entity.commonsCategory
-        ? fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts)
-        : Promise.resolve([]),
-      entity.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames, heroOpts) : Promise.resolve([]),
-      entity.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks, heroOpts) : Promise.resolve([]),
-      fetchUnsplashHeroCandidate(searchLabel, effectiveContext),
-    ]);
-    const wikiScenic = wiki.filter((c) => !isLikelyOrbitalOrMapImagery(c.url || "", "", ""));
-    candidateLists = [
-      ...category,
-      ...p18,
-      ...wikiScenic,
-      ...(unsplash ? [unsplash] : []),
-    ];
-  } else if (entity) {
+    if (entity) {
+      const [category, p18, wiki, unsplash] = await Promise.all([
+        entity.commonsCategory
+          ? fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts)
+          : Promise.resolve([]),
+        entity.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames, heroOpts) : Promise.resolve([]),
+        entity.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks, heroOpts) : Promise.resolve([]),
+        fetchUnsplashHeroCandidate(searchLabel, effectiveContext),
+      ]);
+      const wikiScenic = wiki.filter((c) => !isLikelyOrbitalOrMapImagery(c.url || "", "", ""));
+      candidateLists = [
+        ...category,
+        ...p18,
+        ...wikiScenic,
+        ...(unsplash ? [unsplash] : []),
+      ];
+    } else {
+      const unsplash = await fetchUnsplashHeroCandidate(searchLabel, effectiveContext);
+      if (unsplash) candidateLists = [unsplash];
+    }
+  } else {
     const [p18, wiki, unsplash] = await Promise.all([
-      entity.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames) : Promise.resolve([]),
-      entity.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks) : Promise.resolve([]),
+      entity?.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames) : Promise.resolve([]),
+      entity?.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks) : Promise.resolve([]),
       fetchUnsplashPlaceCandidate(searchLabel, effectiveContext),
     ]);
     candidateLists = [...p18, ...wiki, ...(unsplash ? [unsplash] : [])];

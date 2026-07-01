@@ -70,38 +70,28 @@ async function triggerUnsplashDownload(downloadLocation, accessKey) {
   }
 }
 
-/**
- * Unsplash secours — requête drone via cityDroneImagePrompt.
- * @param {string} label
- * @param {string} [context]
- * @returns {Promise<import('../../lib/images/types.js').ImageCandidate|null>}
- */
-export async function fetchUnsplashHeroCandidate(label, context = "") {
+function homonymHeroAvoidKeywords(label, context) {
+  const stem = normalizeText(resolveSearchLabel(label, context));
+  const ctx = normalizeText(context);
+  if (stem === "capri" && /honduras|gracias a dios/.test(ctx)) {
+    return [
+      "italy", "italie", "italia", "campania", "campanie", "amalfi", "faraglioni",
+      "positano", "naples", "napoli", "mediterranean", "blue grotto",
+    ];
+  }
+  return [];
+}
+
+async function searchUnsplashHero(query, opts) {
   const key = getUnsplashKey();
   if (!key) return null;
-
-  const raw = String(label || context || "").trim();
-  const stem = resolveSearchLabel(label, context);
-  const q = buildCityHeroUnsplashQuery(stem || raw);
+  const q = String(query || "").trim();
   if (!q) return null;
-
-  const isCoastal = inferAestheticCityQueryType(raw) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
-  const cityTok = normalizeCityDroneKey(stem).split(/\s+/).filter((t) => t.length > 2);
-  const landmarkBoost = getHeroUnsplashDescBoostTokens(stem).map((t) => normalizeText(t));
-
-  const preferredKeywords = isCoastal
-    ? ["beach", "turquoise", "ocean", "coast", "aerial", "drone", "panorama", "daylight"]
-    : ["landmark", "skyline", "aerial", "drone", "panorama", "architecture", "daylight", "golden hour"];
-
-  const avoidKeywords = [
-    "logo", "icon", "illustration", "map", "monochrome", "black and white",
-    "portrait", "selfie", "food", "macro", "close-up",
-  ];
 
   const params = new URLSearchParams();
   params.set("query", q);
   params.set("orientation", "landscape");
-  params.set("per_page", "20");
+  params.set("per_page", String(opts.perPage || 20));
   params.set("content_filter", "high");
 
   const response = await fetch(`https://api.unsplash.com/search/photos?${params}`, {
@@ -115,17 +105,13 @@ export async function fetchUnsplashHeroCandidate(label, context = "") {
   const scored = results
     .map((item) => ({
       item,
-      score: scoreUnsplashPhoto(item, {
-        preferredKeywords: preferredKeywords.map(normalizeText),
-        avoidKeywords: avoidKeywords.map(normalizeText),
-        cityBoost: cityTok.map(normalizeText),
-        landmarkBoost,
-        heroPenalizeSkyOnly: true,
-      }),
+      score: scoreUnsplashPhoto(item, opts),
     }))
     .sort((a, b) => b.score - a.score);
 
-  const best = scored.find((s) => s.score > 0)?.item || results[0];
+  const best = opts.acceptAnyResult
+    ? scored[0]?.item || results[0]
+    : scored.find((s) => s.score > 0)?.item || results[0];
   const url = String(best?.urls?.regular || best?.urls?.full || "").trim();
   if (!url) return null;
 
@@ -144,6 +130,76 @@ export async function fetchUnsplashHeroCandidate(label, context = "") {
     score: scored[0]?.score || 0,
     unsplashDownloadLocation: downloadLoc,
   };
+}
+
+/**
+ * Unsplash secours — requête drone via cityDroneImagePrompt.
+ * @param {string} label
+ * @param {string} [context]
+ * @returns {Promise<import('../../lib/images/types.js').ImageCandidate|null>}
+ */
+export async function fetchUnsplashHeroCandidate(label, context = "") {
+  const key = getUnsplashKey();
+  if (!key) return null;
+
+  const raw = String(label || context || "").trim();
+  const stem = resolveSearchLabel(label, context);
+  const queryInput = context ? `${stem || label}, ${context}` : raw;
+  const q = buildCityHeroUnsplashQuery(queryInput);
+  if (!q) return null;
+
+  const isCoastal = inferAestheticCityQueryType(queryInput) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
+  const cityTok = normalizeCityDroneKey(stem).split(/\s+/).filter((t) => t.length > 2);
+  const contextTok = String(context || "")
+    .split(/[,;|]/)
+    .map((s) => normalizeText(s))
+    .flatMap((s) => s.split(/\s+/))
+    .filter((t) => t.length >= 4);
+  const landmarkBoost = getHeroUnsplashDescBoostTokens(stem).map((t) => normalizeText(t));
+  const homonymAvoid = homonymHeroAvoidKeywords(label, context);
+
+  const preferredKeywords = isCoastal
+    ? ["beach", "turquoise", "ocean", "coast", "aerial", "drone", "panorama", "daylight"]
+    : ["landmark", "skyline", "aerial", "drone", "panorama", "architecture", "daylight", "golden hour"];
+
+  const baseAvoid = [
+    "logo", "icon", "illustration", "map", "monochrome", "black and white",
+    "portrait", "selfie", "food", "macro", "close-up",
+    ...homonymAvoid,
+  ];
+
+  const scoreOpts = {
+    preferredKeywords: preferredKeywords.map(normalizeText),
+    avoidKeywords: baseAvoid.map(normalizeText),
+    cityBoost: [...cityTok, ...contextTok].filter(Boolean),
+    landmarkBoost,
+    heroPenalizeSkyOnly: true,
+  };
+
+  let hit = await searchUnsplashHero(q, { ...scoreOpts, perPage: 20, acceptAnyResult: Boolean(context) });
+  if (!hit && context) {
+    const geoTail = String(context || "").trim();
+    hit = await searchUnsplashHero(`${geoTail} landscape travel destination`, {
+      ...scoreOpts,
+      perPage: 15,
+      acceptAnyResult: true,
+    });
+  }
+  if (!hit && context) {
+    const country = String(context || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .pop();
+    if (country && country.length >= 4) {
+      hit = await searchUnsplashHero(`${country} landscape travel destination`, {
+        ...scoreOpts,
+        perPage: 15,
+        acceptAnyResult: true,
+      });
+    }
+  }
+  return hit;
 }
 
 /**

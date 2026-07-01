@@ -10,10 +10,13 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from
 import { createPortal } from "react-dom";
 import { useI18n } from "./i18n/I18nContext.jsx";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  BRAND_BLUE,
+  BRAND_ORANGE_GRADIENT_135,
+} from "./lib/brandColors.js";
 
-/** Bleu logo Justtrip (#002B4F) et nuance plus foncée pour les dégradés */
-const BRAND_NAVY = "#002B4F";
-const BRAND_NAVY_MID = "#001F3B";
+const BRAND_ORANGE_CTA_SHADOW = "0 10px 28px rgba(249, 115, 22, 0.35)";
+const BRAND_ORANGE_CTA_SHADOW_SM = "0 6px 16px rgba(249, 115, 22, 0.28)";
 
 /* ─── Storage helpers ──────────────────────────────────────────────────── */
 function storageKeyForUser(userId) {
@@ -126,19 +129,19 @@ const STEPS = [
   },
   {
     type: "spotlight",
+    tourId: "tab-stays",
+    navigateTab: "stays",
+    emoji: "🛏️",
+    labelKey: "onboarding.step.stays.label",
+    hintKey: "onboarding.step.stays.hint",
+  },
+  {
+    type: "spotlight",
     tourId: "tab-budget",
     navigateTab: "budget",
     emoji: "💰",
     labelKey: "onboarding.step.budget.label",
     hintKey: "onboarding.step.budget.hint",
-  },
-  {
-    type: "spotlight",
-    tourId: "tab-chat",
-    navigateTab: "chat",
-    emoji: "💬",
-    labelKey: "onboarding.step.chat.label",
-    hintKey: "onboarding.step.chat.hint",
   },
 ];
 
@@ -378,7 +381,7 @@ function SpotlightOverlay({ rawRect, tourId }) {
           strokeWidth="2.25"
           style={{
             filter:
-              "drop-shadow(0 0 6px rgba(0,43,79,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
+              "drop-shadow(0 0 6px rgba(29,78,216,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
           }}
         >
           <animate attributeName="stroke-opacity" values="0.9;0.5;0.9" dur="1.8s" repeatCount="indefinite" />
@@ -401,7 +404,7 @@ function TourDots({ step, total, goTo }) {
           className={`rounded-full transition-all duration-300 ${
             i === step ? "h-2 w-5" : "h-2 w-2 bg-slate-200 hover:bg-slate-300"
           }`}
-          style={i === step ? { backgroundColor: BRAND_NAVY } : undefined}
+          style={i === step ? { backgroundColor: BRAND_BLUE } : undefined}
         />
       ))}
     </div>
@@ -610,7 +613,7 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
             src={`${import.meta.env.BASE_URL}logo-justtrip.png`}
             alt={t("auth.logoAlt")}
             className="h-[4.75rem] w-auto max-w-[7.25rem] shrink-0 rounded-[1.35rem] object-contain shadow-xl sm:rounded-[1.5rem]"
-            style={{ boxShadow: "0 16px 40px rgba(0, 43, 79, 0.38)" }}
+            style={{ boxShadow: "0 16px 40px rgba(249, 115, 22, 0.28)" }}
             width={220}
             height={140}
             decoding="async"
@@ -630,8 +633,8 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
             onClick={() => goTo(1)}
             className="w-full rounded-2xl py-3 text-sm font-semibold text-white transition-transform active:scale-95"
             style={{
-              background: `linear-gradient(135deg, ${BRAND_NAVY_MID} 0%, ${BRAND_NAVY} 100%)`,
-              boxShadow: "0 10px 28px rgba(0, 85, 164, 0.35)",
+              background: BRAND_ORANGE_GRADIENT_135,
+              boxShadow: BRAND_ORANGE_CTA_SHADOW,
             }}
           >
             {t("onboarding.welcome.cta")} →
@@ -701,8 +704,8 @@ export function OnboardingTour({ userId, onDone, onNavigateToTab }) {
                 onClick={() => (isLast ? dismissTour(true) : goTo(step + 1))}
                 className="flex shrink-0 items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-transform active:scale-95"
                 style={{
-                  background: `linear-gradient(135deg, ${BRAND_NAVY_MID}, ${BRAND_NAVY})`,
-                  boxShadow: "0 6px 16px rgba(0, 43, 79, 0.3)",
+                  background: BRAND_ORANGE_GRADIENT_135,
+                  boxShadow: BRAND_ORANGE_CTA_SHADOW_SM,
                 }}
               >
                 {isLast ? (

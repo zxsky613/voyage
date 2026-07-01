@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "./i18n/I18nContext.jsx";
+import { BRAND_ORANGE_GRADIENT_135 } from "./lib/brandColors.js";
 
 const MSG_DELAY  = 950;   // message apparaît quand l'avion atteint le centre
 const VISIBLE_MS = 4000;  // durée totale
@@ -39,24 +40,29 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
           className="relative w-full overflow-hidden"
           style={{ height: "96px" }}
         >
-          {/* Teinte ciel */}
-          <div className="tp-sky-strip absolute inset-0 pointer-events-none" />
+          {/* Teinte chaude */}
+          <div
+            className="tp-sky-strip absolute inset-0 pointer-events-none"
+            style={{
+              background: "linear-gradient(180deg, rgba(255,237,213,0.55) 0%, rgba(255,237,213,0.08) 100%)",
+            }}
+          />
 
           {/* Avion grand format */}
           <span
             className="tp-plane-fly absolute left-0 select-none"
-            style={{ top: "20px", fontSize: "3.2rem", lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(14,165,233,0.35))" }}
+            style={{ top: "20px", fontSize: "3.2rem", lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(249,115,22,0.35))" }}
           >
             ✈️
           </span>
 
           {/* Traînée de nuages — tailles alternées pour effet naturel */}
-          <span className="tp-cloud-1 absolute select-none" style={{ top: "8px",  left: "8%",  fontSize: "2rem",   filter: "drop-shadow(0 2px 6px rgba(186,230,255,0.6))" }}>☁️</span>
-          <span className="tp-cloud-2 absolute select-none" style={{ top: "30px", left: "22%", fontSize: "3rem",   filter: "drop-shadow(0 2px 8px rgba(186,230,255,0.5))" }}>☁️</span>
-          <span className="tp-cloud-3 absolute select-none" style={{ top: "5px",  left: "38%", fontSize: "2.4rem", filter: "drop-shadow(0 2px 6px rgba(186,230,255,0.6))" }}>☁️</span>
-          <span className="tp-cloud-4 absolute select-none" style={{ top: "28px", left: "53%", fontSize: "3.4rem", filter: "drop-shadow(0 2px 10px rgba(186,230,255,0.5))" }}>☁️</span>
-          <span className="tp-cloud-5 absolute select-none" style={{ top: "6px",  left: "69%", fontSize: "2.2rem", filter: "drop-shadow(0 2px 6px rgba(186,230,255,0.6))" }}>☁️</span>
-          <span className="tp-cloud-6 absolute select-none" style={{ top: "26px", left: "83%", fontSize: "2.8rem", filter: "drop-shadow(0 2px 8px rgba(186,230,255,0.5))" }}>☁️</span>
+          <span className="tp-cloud-1 absolute select-none" style={{ top: "8px",  left: "8%",  fontSize: "2rem",   filter: "drop-shadow(0 2px 6px rgba(255,237,213,0.8))" }}>☁️</span>
+          <span className="tp-cloud-2 absolute select-none" style={{ top: "30px", left: "22%", fontSize: "3rem",   filter: "drop-shadow(0 2px 8px rgba(255,237,213,0.7))" }}>☁️</span>
+          <span className="tp-cloud-3 absolute select-none" style={{ top: "5px",  left: "38%", fontSize: "2.4rem", filter: "drop-shadow(0 2px 6px rgba(255,237,213,0.8))" }}>☁️</span>
+          <span className="tp-cloud-4 absolute select-none" style={{ top: "28px", left: "53%", fontSize: "3.4rem", filter: "drop-shadow(0 2px 10px rgba(255,237,213,0.7))" }}>☁️</span>
+          <span className="tp-cloud-5 absolute select-none" style={{ top: "6px",  left: "69%", fontSize: "2.2rem", filter: "drop-shadow(0 2px 6px rgba(255,237,213,0.8))" }}>☁️</span>
+          <span className="tp-cloud-6 absolute select-none" style={{ top: "26px", left: "83%", fontSize: "2.8rem", filter: "drop-shadow(0 2px 8px rgba(255,237,213,0.7))" }}>☁️</span>
         </div>
 
         {/* ── Carte message ── */}
@@ -70,13 +76,13 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
             aria-live="polite"
             className="tp-card-pulse rounded-[28px] px-8 py-5 flex items-center gap-4"
             style={{
-              background: "linear-gradient(135deg, #001F3B 0%, #002B4F 48%, #003A62 100%)",
-              boxShadow: "0 24px 64px rgba(0,43,79,0.38), 0 6px 20px rgba(0,31,59,0.28), inset 0 1px 0 rgba(255,255,255,0.2)",
+              background: BRAND_ORANGE_GRADIENT_135,
+              boxShadow: `0 24px 64px rgba(249,115,22,0.38), 0 6px 20px rgba(251,101,20,0.28), inset 0 1px 0 rgba(255,255,255,0.25)`,
             }}
           >
             <span style={{ fontSize: "2.2rem", lineHeight: 1, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}>🌍</span>
             <div>
-              <p className="text-white/60 text-[10px] font-extrabold uppercase tracking-[0.32em] mb-1 leading-none" style={{ fontFamily: "'Yeseva One', serif" }}>
+              <p className="text-white/70 text-[10px] font-extrabold uppercase tracking-[0.32em] mb-1 leading-none" style={{ fontFamily: "'Yeseva One', serif" }}>
                 {t("auth.brand")}
               </p>
               <p className="text-white font-bold leading-snug whitespace-nowrap" style={{ fontSize: "1.2rem", textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>

@@ -2,9 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Palette marque Justtrip (source unique) ── */
+:root {
+  --brand-blue: #1d4ed8;
+  --brand-blue-deep: #1e3a8a;
+  --brand-blue-tint: #e5ebfb;
+  --brand-orange-from: #fb8a3c;
+  --brand-orange-to: #fb6514;
+  --brand-orange-solid: #f97316;
+  --brand-orange-tint: #ffedd5;
+  --brand-orange-ink: #c2410c;
+  --brand-gradient: linear-gradient(90deg, var(--brand-orange-from), var(--brand-orange-to));
+  --brand-blue-gradient: linear-gradient(
+    135deg,
+    rgba(29, 78, 216, 0.96) 0%,
+    rgba(30, 58, 138, 0.92) 55%,
+    rgba(29, 78, 216, 0.96) 100%
+  );
+  --brand-blue-gradient-h: linear-gradient(90deg, var(--brand-blue) 0%, var(--brand-blue-deep) 100%);
+}
+
 /* Titres (onglets, etc.) : nom à deux mots — sans guillemets, le navigateur ignore la police (repli Arial / sans-serif). */
 .font-display {
   font-family: "Yeseva One", Georgia, serif;
+}
+
+@layer utilities {
+  .bg-brand-gradient {
+    background-image: var(--brand-gradient);
+  }
+  .text-brand-gradient {
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 html,
@@ -98,4 +130,25 @@ html.modal-open .sticky {
 html.modal-open .sticky > * {
   opacity: 0 !important;
   pointer-events: none !important;
+}
+
+/* Barres de défilement visibles — modale itinéraire (rail jours + détail). */
+.itinerary-day-rail {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.85) transparent;
+}
+.itinerary-day-rail::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.itinerary-day-rail::-webkit-scrollbar-track {
+  background: transparent;
+}
+.itinerary-day-rail::-webkit-scrollbar-thumb {
+  background: rgb(203 213 225);
+  border-radius: 999px;
+}
+.itinerary-day-rail::-webkit-scrollbar-thumb:hover {
+  background: rgb(148 163 184);
 }

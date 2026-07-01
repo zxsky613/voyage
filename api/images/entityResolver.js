@@ -97,6 +97,12 @@ function isHomonymEntity(entity, label, context) {
   const blob = `${normalizeForLookup(label)} ${normalizeForLookup(context)}`;
   const id = String(entity?.id || "");
   const labelEn = normalizeForLookup(entity?.labels?.en?.value || entity?.labels?.fr?.value || "");
+  if (/\bcapri\b/.test(normalizeForLookup(label))) {
+    const ctx = normalizeForLookup(context);
+    if (/honduras|gracias a dios|nebraska|saline county/.test(ctx)) {
+      if (id === "Q173292" || id === "Q71902") return true;
+    }
+  }
   if (/crete|heraklion|rethymno|phalasarna|greece|grec/i.test(blob)) {
     if (id === "Q4646" || (labelEn === "bali" && id !== "Q804679")) return true;
     if (/indonesia|denpasar|java/.test(labelEn)) return true;
