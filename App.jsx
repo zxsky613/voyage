@@ -1793,6 +1793,10 @@ const BRAND_CTA_BTN_CLASS =
 const BRAND_BLUE_PILL_CLASS =
   "inline-flex items-center rounded-full bg-brand-blue font-bold text-white shadow-sm";
 
+/** Pastille label chaleur (suggestions, idées, programme IA). */
+const BRAND_ORANGE_PILL_CLASS =
+  "inline-flex items-center rounded-full bg-brand-orange-tint font-bold text-brand-orange-ink shadow-sm";
+
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
 const TRIPS_SELECT_ATTEMPTS = [
   "*",
@@ -9588,7 +9592,7 @@ function CitySearchBox({
           readOnly ? "bg-slate-50/90" : "bg-white"
         }`}
       >
-        <Search size={16} className="shrink-0 text-brand-blue/60" />
+        <Search size={16} className="shrink-0 text-brand-orange" />
         <input
           value={value}
           onChange={(e) => {
@@ -10269,7 +10273,7 @@ function ItineraryResultModal({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className={`${BRAND_BLUE_PILL_CLASS} gap-1 px-2.5 py-0.5 text-[10px] font-semibold`}>
+                <span className={`${BRAND_ORANGE_PILL_CLASS} gap-1 px-2.5 py-0.5 text-[10px] font-semibold`}>
                   <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
                   {t("destination.itineraryResultSubtitle")}
                 </span>
@@ -12003,7 +12007,7 @@ function DestinationGuideView({
                   className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand-blue-tint/40 blur-3xl"
                   aria-hidden
                 />
-                <p className="text-[11px] font-normal uppercase tracking-[0.3em] text-brand-blue-deep/90">
+                <p className="inline-flex rounded-full bg-brand-orange-tint px-2.5 py-0.5 text-[11px] font-normal uppercase tracking-[0.3em] text-brand-orange-ink">
                   {t("destination.badgeDestination")}
                 </p>
                 <h3 className="mt-2 font-display text-[1.65rem] font-normal leading-tight tracking-[0.04em] text-slate-900 sm:text-3xl">
@@ -12213,15 +12217,15 @@ function DestinationGuideView({
               })()}
 
               <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
-                <div className="flex items-center gap-2.5 border-b border-brand-blue/15/80 pb-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-blue-tint text-brand-blue-deep ring-1 ring-brand-blue/20">
+                <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                   </span>
                   <div>
-                    <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
+                    <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
                       {t("destination.activitiesTitle")}
                     </h4>
-                    <p className="text-[11px] text-slate-500">{t("destination.activitiesSubtitle")}</p>
+                    <p className="text-[11px] text-brand-orange-ink/75">{t("destination.activitiesSubtitle")}</p>
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
@@ -12336,8 +12340,8 @@ function DestinationGuideView({
                     {/* Aperçu condensé — invite à ouvrir le popup */}
                     <div className="overflow-hidden rounded-2xl border border-brand-blue/20 bg-gradient-to-br from-slate-900 via-brand-blue-deep to-brand-blue-deep p-5 shadow-[0_8px_32px_rgba(29,78,216,0.2)]">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                        <Sparkles className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2.5} aria-hidden />
-                        <p className="text-[10px] font-normal uppercase tracking-[0.22em] text-slate-300">
+                        <Sparkles className="h-4 w-4 shrink-0 text-brand-orange" strokeWidth={2.5} aria-hidden />
+                        <p className="text-[10px] font-normal uppercase tracking-[0.22em] text-brand-orange-tint">
                           {t("destination.itineraryResultTitle")}
                         </p>
                       </div>

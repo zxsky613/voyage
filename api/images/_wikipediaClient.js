@@ -1,5 +1,5 @@
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
-import { commonsThumbUrl, wikiUserAgent } from "./headCheck.js";
+import { commonsThumbUrl, wikiUserAgent } from "./_headCheck.js";
 
 /**
  * @param {string} lang

@@ -1,7 +1,7 @@
 import { sendJson } from "../_helpers.js";
-import { handler as itineraryHandler } from "./itinerary.js";
-import { handler as suggestedActivitiesHandler } from "./suggested-activities.js";
-import { handler as suggestionsHandler } from "./suggestions.js";
+import { handler as itineraryHandler } from "./_itinerary.js";
+import { handler as suggestedActivitiesHandler } from "./_suggested-activities.js";
+import { handler as suggestionsHandler } from "./_suggestions.js";
 
 /** @type {Record<string, (req: import('@vercel/node').VercelRequest, res: import('@vercel/node').VercelResponse) => Promise<void>>} */
 const ROUTES = {

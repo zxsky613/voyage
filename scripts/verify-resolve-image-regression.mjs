@@ -13,8 +13,8 @@ import {
   normalizeLabelKey,
   splitResolveImageLabelContext,
 } from "../lib/images/normalizeLabel.js";
-import { resolveEntity } from "../api/images/entityResolver.js";
-import { resolveImage } from "../api/images/resolveImage.js";
+import { resolveEntity } from "../api/images/_entityResolver.js";
+import { resolveImage } from "../api/images/_resolveImage.js";
 import { buildCityHeroUnsplashQuery } from "../cityDroneImagePrompt.js";
 import { buildCityImageCacheKey } from "../cityHeroStem.js";
 

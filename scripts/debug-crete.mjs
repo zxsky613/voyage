@@ -1,4 +1,4 @@
-import { resolveImage } from "../api/images/resolveImage.js";
+import { resolveImage } from "../api/images/_resolveImage.js";
 
 const result = await resolveImage({
   kind: "hero",

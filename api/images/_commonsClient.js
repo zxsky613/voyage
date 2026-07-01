@@ -5,7 +5,7 @@ import {
   isOrbitalCommonsCategoryName,
   scoreScenicCommonsFile,
 } from "../../lib/images/wikiImageFilters.js";
-import { commonsThumbUrl, parseExtMetaValue, wikiUserAgent } from "./headCheck.js";
+import { commonsThumbUrl, parseExtMetaValue, wikiUserAgent } from "./_headCheck.js";
 
 /**
  * @param {string} fileTitle

@@ -16,7 +16,7 @@ import { loadEnv } from "vite";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
 import { buildItineraryEnrichmentBlock, dedupeItineraryDayIdeas, buildProperNamesScriptConsistencyRule, tipsContainForbiddenNonLatinScript, suggestionsBundleContainsForbiddenNonLatinScript, buildTipsRewriteRetryInstruction } from "./api/_helpers.js";
-import { fetchLandmarkNamesFromOverpass } from "./api/osm/overpassLandmarks.js";
+import { fetchLandmarkNamesFromOverpass } from "./api/osm/_overpassLandmarks.js";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -449,7 +449,13 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           : pathname.endsWith("commons-info")
             ? "commons-info"
             : "unsplash";
-        const mod = await import(`./api/images/${action}.js`);
+        const file =
+          action === "resolve"
+            ? "_resolve"
+            : action === "commons-info"
+              ? "_commons-info"
+              : "_unsplash";
+        const mod = await import(`./api/images/${file}.js`);
         await routeVercelApiHandler(req, res, mod.handler, body);
       } catch (e) {
         sendJson(res, 502, { ok: false, error: String(e?.message || e) });

@@ -1,5 +1,5 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
-import { fetchLandmarkNamesFromOverpass } from "./overpassLandmarks.js";
+import { fetchLandmarkNamesFromOverpass } from "./_overpassLandmarks.js";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "../../placeGuards.js";
 
 export default async function handler(req, res) {

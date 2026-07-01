@@ -1,7 +1,7 @@
 import { sendJson } from "../_helpers.js";
-import { handler as resolveHandler } from "./resolve.js";
-import { handler as unsplashHandler } from "./unsplash.js";
-import { handler as commonsInfoHandler } from "./commons-info.js";
+import { handler as resolveHandler } from "./_resolve.js";
+import { handler as unsplashHandler } from "./_unsplash.js";
+import { handler as commonsInfoHandler } from "./_commons-info.js";
 
 /** @type {Record<string, (req: import('@vercel/node').VercelRequest, res: import('@vercel/node').VercelResponse) => Promise<void>>} */
 const ROUTES = {

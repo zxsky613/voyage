@@ -5,15 +5,15 @@ import {
   readCacheByEntity,
   readCacheByLabel,
   writeCache,
-} from "./cache.js";
+} from "./_cache.js";
 import {
   fetchCommonsCategoryScenicCandidates,
   fetchP18Candidates,
-} from "./commonsClient.js";
-import { resolveEntity } from "./entityResolver.js";
-import { candidateToResolved, firstValidCandidate } from "./headCheck.js";
-import { fetchUnsplashHeroCandidate, fetchUnsplashPlaceCandidate } from "./unsplashClient.js";
-import { fetchWikipediaCandidates } from "./wikipediaClient.js";
+} from "./_commonsClient.js";
+import { resolveEntity } from "./_entityResolver.js";
+import { candidateToResolved, firstValidCandidate } from "./_headCheck.js";
+import { fetchUnsplashHeroCandidate, fetchUnsplashPlaceCandidate } from "./_unsplashClient.js";
+import { fetchWikipediaCandidates } from "./_wikipediaClient.js";
 
 /**
  * @param {import('../../lib/images/types.js').ResolveImageParams} params

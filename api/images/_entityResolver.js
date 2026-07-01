@@ -1,4 +1,4 @@
-import { wikiUserAgent } from "./headCheck.js";
+import { wikiUserAgent } from "./_headCheck.js";
 
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
 

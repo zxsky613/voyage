@@ -1,5 +1,5 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
-import { resolveImage } from "./resolveImage.js";
+import { resolveImage } from "./_resolveImage.js";
 
 const rateMap = new Map();
 const RATE_WINDOW_MS = 60_000;
