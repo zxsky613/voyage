@@ -183,10 +183,10 @@ const creteHero = await resolveImage({
   context: "",
   uiLang: "en",
 });
-assert(creteHero?.url, "Crete hero should resolve an URL");
+assert(creteHero.image?.url, "Crete hero should resolve an URL");
 assert(
-  !isLikelyOrbitalOrMapImagery(creteHero.url, creteHero.url),
-  `Crete hero must not be orbital: ${creteHero.url.slice(0, 80)}`
+  !isLikelyOrbitalOrMapImagery(creteHero.image.url, creteHero.image.url),
+  `Crete hero must not be orbital: ${creteHero.image.url.slice(0, 80)}`
 );
 
 console.log("verify-resolve-image: live OK");

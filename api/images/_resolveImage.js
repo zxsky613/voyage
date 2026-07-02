@@ -97,8 +97,14 @@ async function resolvePlaceFromEntity(entity, kind) {
 }
 
 /**
+ * @typedef {import('../../lib/images/types.js').ResolvedImage} ResolvedImage
+ * @typedef {'wikidata_throttled' | 'not_found' | 'timeout' | 'cache_disabled' | 'filtered'} ResolveImageReason
+ * @typedef {{ image: ResolvedImage|null, reason?: ResolveImageReason }} ResolveImageOutcome
+ */
+
+/**
  * @param {import('../../lib/images/types.js').ResolveImageParams} params
- * @returns {Promise<import('../../lib/images/types.js').ResolvedImage|null>}
+ * @returns {Promise<ResolveImageOutcome>}
  */
 export async function resolveImage(params) {
   const kind = params.kind;
@@ -108,7 +114,9 @@ export async function resolveImage(params) {
   const effectiveContext = geoContext || (kind === "hero" ? inferDefaultHeroResolveContext(params.label) : "");
   const labelNormalized = normalizeLabelKey(params.label, context || effectiveContext);
 
-  if (!labelNormalized && !searchLabel) return null;
+  if (!labelNormalized && !searchLabel) {
+    return { image: null, reason: "not_found" };
+  }
 
   if (isCacheConfigured()) {
     const cached = await readCacheByLabel(labelNormalized, kind);
@@ -118,18 +126,29 @@ export async function resolveImage(params) {
         kind === "hero" &&
         (isLikelyOrbitalOrMapImagery(cached.url, decodedTitle, "") ||
           isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle));
-      if (!blocked) return cached;
+      if (!blocked) return { image: cached };
     }
   }
 
+  let wikiThrottled = false;
   const entity = await (async () => {
     try {
       return await resolveEntity(searchLabel, uiLang, kind, effectiveContext);
     } catch (err) {
-      if (err instanceof WikiApiThrottledError) return null;
+      if (err instanceof WikiApiThrottledError) {
+        wikiThrottled = true;
+        return null;
+      }
       throw err;
     }
   })();
+
+  if (!entity) {
+    if (wikiThrottled && !isCacheConfigured()) {
+      return { image: null, reason: "cache_disabled" };
+    }
+    return { image: null, reason: wikiThrottled ? "wikidata_throttled" : "not_found" };
+  }
 
   if (entity?.qid && isCacheConfigured()) {
     const byEntity = await readCacheByEntity(entity.qid, kind);
@@ -139,18 +158,18 @@ export async function resolveImage(params) {
         kind === "hero" &&
         (isLikelyOrbitalOrMapImagery(byEntity.url, decodedTitle, "") ||
           isLikelyWikiBrandOrLogoImage(byEntity.url, decodedTitle));
-      if (!blocked) return { ...byEntity, cached: true };
+      if (!blocked) return { image: { ...byEntity, cached: true } };
     }
   }
-
-  if (!entity) return null;
 
   const valid =
     kind === "hero"
       ? await resolveHeroFromEntity(entity, uiLang)
       : await resolvePlaceFromEntity(entity, kind);
 
-  if (!valid?.url) return null;
+  if (!valid?.url) {
+    return { image: null, reason: "not_found" };
+  }
 
   const resolved = candidateToResolved(valid, entity.qid);
   resolved.cached = false;
@@ -164,5 +183,5 @@ export async function resolveImage(params) {
     });
   }
 
-  return resolved;
+  return { image: resolved };
 }

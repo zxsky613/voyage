@@ -7,8 +7,8 @@ const result = await resolveImage({
   uiLang: "fr",
 });
 
-if (result == null) {
-  console.log("null");
+if (result.image == null) {
+  console.log("null", result.reason || "");
 } else {
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result.image, null, 2));
 }

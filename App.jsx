@@ -99,7 +99,11 @@ import {
   inferDefaultHeroResolveContext,
   splitResolveImageLabelContext,
 } from "./lib/images/normalizeLabel.js";
-import { isLikelyOrbitalOrMapImagery } from "./lib/images/wikiImageFilters.js";
+import {
+  isLikelyOrbitalOrMapImagery,
+  isLikelyWikiBrandOrLogoImage,
+  isLikelyWikiFlagOrSealThumb,
+} from "./lib/images/wikiImageFilters.js";
 import {
   UiLocalizedTripTitle,
   UiTranslatedActivityTitle,
@@ -501,6 +505,61 @@ function getUnsplashHeroConflictAvoidKeywords(cityInput) {
 /** Bucket Supabase Storage (public) pour la couche 3 — fichiers {slug}.webp ex. tokyo.webp */
 const CITY_HERO_STORAGE_BUCKET = import.meta.env.VITE_CITY_HERO_STORAGE_BUCKET || "";
 const cityImageMemoryCache = {};
+const CITY_IMG_LS_PREFIX = "tp_city_img_v2_";
+const CITY_IMG_LS_LEGACY_PREFIX = "tp_city_img_";
+
+function getCityImageLocalStorageKey(cacheKey) {
+  return `${CITY_IMG_LS_PREFIX}${cacheKey}`;
+}
+
+/** One-shot : invalide les entrées tp_city_img_* (pré-v2, souvent satellite / carte). */
+function purgeLegacyCityImageLocalStorageOnce() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    const toRemove = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(CITY_IMG_LS_LEGACY_PREFIX) && !k.startsWith(CITY_IMG_LS_PREFIX)) {
+        toRemove.push(k);
+      }
+    }
+    for (const k of toRemove) window.localStorage.removeItem(k);
+  } catch (_e) {
+    /* ignore */
+  }
+}
+purgeLegacyCityImageLocalStorageOnce();
+
+function isRejectedCachedHeroUrl(url) {
+  const s = String(url || "").trim();
+  if (!s) return false;
+  const decoded = decodeURIComponent(s);
+  return (
+    isLikelyOrbitalOrMapImagery(s, decoded) || isLikelyWikiBrandOrLogoImage(s, decoded)
+  );
+}
+
+function acceptValidatedCachedHeroUrl(url) {
+  const s = String(url || "").trim();
+  if (!s || !isPersistableHeroUrl(s) || isRejectedCachedHeroUrl(s)) return "";
+  return s;
+}
+
+async function purgeCityImageCacheEntry(cacheKey) {
+  if (!cacheKey) return;
+  delete cityImageMemoryCache[cacheKey];
+  try {
+    window.localStorage.removeItem(getCityImageLocalStorageKey(cacheKey));
+    window.localStorage.removeItem(`${CITY_IMG_LS_LEGACY_PREFIX}${cacheKey}`);
+  } catch (_e) {
+    /* ignore */
+  }
+  try {
+    await supabase.from("image_cache").delete().eq("id", cacheKey);
+  } catch (_e) {
+    /* ignore */
+  }
+}
 const baseDocumentTitle = "Justtrip";
 const ACTIVITY_DESC_CACHE_KEY = "tp_activity_desc_cache_v1";
 
@@ -2103,45 +2162,6 @@ function upgradeLandscapeImageUrl(url) {
   return u;
 }
 
-/** Vignette Wikipédia souvent = drapeau / sceau / blason — inadaptée comme bandeau paysage. */
-function isLikelyWikiFlagOrSealThumb(url) {
-  const u = String(url || "").toLowerCase();
-  if (!u) return false;
-  return (
-    u.includes("flag_of") ||
-    u.includes("/flag/") ||
-    u.includes("flag_of_") ||
-    u.includes("seal_of") ||
-    u.includes("coat_of_arms") ||
-    u.includes("armoiries") ||
-    u.includes("emblem_of") ||
-    u.includes("drapeau") ||
-    u.includes("blason") ||
-    u.includes("_seal.") ||
-    u.includes("_badge.") ||
-    u.includes("logo_")
-  );
-}
-
-/** Logo / wordmark / charte — à éviter pour le bandeau « lieu » (ex. The Met). */
-function isLikelyWikiBrandOrLogoImage(url, fileTitle = "") {
-  const u = String(url || "").toLowerCase();
-  const ft = String(fileTitle || "")
-    .toLowerCase()
-    .replace(/^file:/i, "");
-  if (!u && !ft) return false;
-  if (isLikelyWikiFlagOrSealThumb(url)) return true;
-  const hay = `${u} ${ft}`;
-  if (/wordmark|lockup|branding|brand_mark|charte_graphique/i.test(hay)) return true;
-  if (/logo\.svg|_logo\.|\/logo\.|_logo_|\/logos?\//i.test(hay)) return true;
-  if (/\blogo\b/i.test(ft) && /\.(svg|png|gif)/i.test(ft)) return true;
-  if (u.includes(".svg.png") && /logo|wordmark|emblem|icon/i.test(hay)) return true;
-  if (/^file:[^|]+_logo\.(svg|png)/i.test(String(fileTitle || ""))) return true;
-  if (/\b(openstreetmap|osm[_-]|locator[_-]?map|location[_-]?map|map[_-]?of[_-]|relief[_-]?map|carte[_-]|karte[_-]|plan[_-]d|stadtplan|lageplan)\b/i.test(hay)) return true;
-  if (/\bmap\.(?:svg|png)\b/i.test(hay)) return true;
-  return false;
-}
-
 function largestSrcFromWikiMediaSrcset(srcset) {
   if (!Array.isArray(srcset) || srcset.length === 0) return "";
   let best = "";
@@ -2293,12 +2313,14 @@ function getCityImageCacheKey(cityInput) {
   return buildCityImageCacheKey(cityInput);
 }
 
-/** URL héro à ne pas afficher (satellite / carte / drapeau). */
+/** URL héro à ne pas afficher (satellite / carte / drapeau / logo). */
 function isBlockedHeroImageUrl(url) {
   const s = String(url || "").trim();
   if (!s) return false;
+  const decoded = decodeURIComponent(s);
   if (isLikelyWikiFlagOrSealThumb(s)) return true;
-  if (isLikelyOrbitalOrMapImagery(s, decodeURIComponent(s))) return true;
+  if (isLikelyOrbitalOrMapImagery(s, decoded)) return true;
+  if (isLikelyWikiBrandOrLogoImage(s, decoded)) return true;
   return false;
 }
 
@@ -2412,7 +2434,7 @@ function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
     try {
       for (const probe of cacheProbes) {
         ck = getCityImageCacheKey(probe);
-        const v = window.localStorage.getItem(`tp_city_img_${ck}`);
+        const v = window.localStorage.getItem(getCityImageLocalStorageKey(ck));
         if (v && isPersistableHeroUrl(String(v)) && !isLikelyWikiFlagOrSealThumb(String(v))) {
           fast = upgradeLandscapeImageUrl(String(v).trim());
           break;
@@ -2451,29 +2473,24 @@ function applyGuideHeroUnsplashOnlyOrEmpty(guide) {
 async function getCachedCityImage(cityInput) {
   const cacheKey = getCityImageCacheKey(cityInput);
   if (!cacheKey) return "";
-  const localStorageKey = `tp_city_img_${cacheKey}`;
-
-  const acceptCached = (url) => {
-    const s = String(url || "").trim();
-    if (!s || !isPersistableHeroUrl(s)) return "";
-    return s;
-  };
+  const localStorageKey = getCityImageLocalStorageKey(cacheKey);
 
   if (cityImageMemoryCache[cacheKey]) {
-    const mem = acceptCached(cityImageMemoryCache[cacheKey]);
+    const mem = acceptValidatedCachedHeroUrl(cityImageMemoryCache[cacheKey]);
     if (mem) return mem;
-    delete cityImageMemoryCache[cacheKey];
+    await purgeCityImageCacheEntry(cacheKey);
   }
 
   try {
     const persisted = window.localStorage.getItem(localStorageKey);
     if (persisted) {
-      const ok = acceptCached(persisted);
+      const ok = acceptValidatedCachedHeroUrl(persisted);
       if (ok) {
         cityImageMemoryCache[cacheKey] = ok;
         return ok;
       }
       window.localStorage.removeItem(localStorageKey);
+      await purgeCityImageCacheEntry(cacheKey);
     }
   } catch (_e) {
     // ignore localStorage errors
@@ -2482,7 +2499,7 @@ async function getCachedCityImage(cityInput) {
   try {
     const { data, error } = await supabase.from("image_cache").select("url").eq("id", cacheKey).limit(1);
     if (!error && data && data.length > 0 && data[0]?.url) {
-      const ok = acceptCached(data[0].url);
+      const ok = acceptValidatedCachedHeroUrl(data[0].url);
       if (ok) {
         cityImageMemoryCache[cacheKey] = ok;
         try {
@@ -2492,6 +2509,7 @@ async function getCachedCityImage(cityInput) {
         }
         return ok;
       }
+      await purgeCityImageCacheEntry(cacheKey);
     }
   } catch (_e) {
     // ignore cache read failures
@@ -2503,8 +2521,8 @@ async function getCachedCityImage(cityInput) {
 async function persistCityImage(cityInput, urlInput) {
   const cacheKey = getCityImageCacheKey(cityInput);
   const url = String(urlInput || "").trim();
-  if (!cacheKey || !url || !isPersistableHeroUrl(url)) return;
-  const localStorageKey = `tp_city_img_${cacheKey}`;
+  if (!cacheKey || !url || !isPersistableHeroUrl(url) || isRejectedCachedHeroUrl(url)) return;
+  const localStorageKey = getCityImageLocalStorageKey(cacheKey);
   cityImageMemoryCache[cacheKey] = url;
   try {
     window.localStorage.setItem(localStorageKey, url);
@@ -7007,10 +7025,24 @@ async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
   const url = await pickCityHeroImageUrl(c);
-  if (url && isPersistableHeroUrl(url)) {
+  if (url && isPersistableHeroUrl(url) && !isRejectedCachedHeroUrl(url)) {
     void persistCityImage(c, url);
   }
   return url;
+}
+
+function firstCuratedHeroCandidate(tripTitle) {
+  const list = getCityHeroImageCandidates(tripTitle);
+  return (
+    list.find((u) => {
+      const s = String(u || "").trim();
+      if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
+      const decoded = decodeURIComponent(s);
+      if (isLikelyOrbitalOrMapImagery(s, decoded)) return false;
+      if (isLikelyWikiBrandOrLogoImage(s, decoded)) return false;
+      return true;
+    }) || ""
+  );
 }
 
 /**
@@ -7018,12 +7050,16 @@ async function resolveStableCityImageForCard(canonicalCity) {
  * (sinon les cartes restent bloquées sur une ancienne URL Unsplash).
  */
 async function syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tripTitle, cachedUrl) {
-  const list = getCityHeroImageCandidates(tripTitle);
-  const first =
-    list.find((u) => u && !isLikelyWikiFlagOrSealThumb(u)) || list[0] || "";
-  if (!first) return cachedUrl ? upgradeLandscapeImageUrl(String(cachedUrl)) : "";
+  const first = firstCuratedHeroCandidate(tripTitle);
+  const validatedCached = cachedUrl ? acceptValidatedCachedHeroUrl(cachedUrl) : "";
+  if (!validatedCached && cachedUrl) {
+    await purgeCityImageCacheEntry(cacheKey);
+  }
+  if (!first) {
+    return validatedCached ? upgradeLandscapeImageUrl(validatedCached) : "";
+  }
   const want = upgradeLandscapeImageUrl(String(first));
-  const have = cachedUrl ? upgradeLandscapeImageUrl(String(cachedUrl).trim()) : "";
+  const have = validatedCached ? upgradeLandscapeImageUrl(validatedCached) : "";
   if (have && have === want) return want;
   cityImageMemoryCache[cacheKey] = want;
   try {
@@ -7039,6 +7075,74 @@ async function syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tri
   return want;
 }
 
+function getInstantCityImageUrl(title, cacheKey) {
+  const fallbackCommons = buildCityImageUrl(title) || "";
+  if (cityImageMemoryCache[cacheKey]) {
+    const mem = acceptValidatedCachedHeroUrl(cityImageMemoryCache[cacheKey]);
+    if (mem) return upgradeLandscapeImageUrl(mem);
+    delete cityImageMemoryCache[cacheKey];
+  }
+  try {
+    const ls = window.localStorage.getItem(getCityImageLocalStorageKey(cacheKey));
+    if (ls) {
+      const ok = acceptValidatedCachedHeroUrl(ls);
+      if (ok) {
+        cityImageMemoryCache[cacheKey] = ok;
+        return upgradeLandscapeImageUrl(ok);
+      }
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  return fallbackCommons ? upgradeLandscapeImageUrl(fallbackCommons) : "";
+}
+
+async function readValidatedCityImageFromCaches(cacheKey, tripTitle) {
+  const localStorageKey = getCityImageLocalStorageKey(cacheKey);
+
+  if (cityImageMemoryCache[cacheKey]) {
+    const mem = acceptValidatedCachedHeroUrl(cityImageMemoryCache[cacheKey]);
+    if (mem) {
+      return syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tripTitle, mem);
+    }
+    await purgeCityImageCacheEntry(cacheKey);
+  }
+
+  try {
+    const persisted = window.localStorage.getItem(localStorageKey);
+    if (persisted) {
+      const ok = acceptValidatedCachedHeroUrl(persisted);
+      if (ok) {
+        cityImageMemoryCache[cacheKey] = ok;
+        return syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tripTitle, ok);
+      }
+      window.localStorage.removeItem(localStorageKey);
+      await purgeCityImageCacheEntry(cacheKey);
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("image_cache")
+      .select("url")
+      .eq("id", cacheKey)
+      .limit(1);
+    if (!error && data && data.length > 0 && data[0]?.url) {
+      const ok = acceptValidatedCachedHeroUrl(data[0].url);
+      if (ok) {
+        return syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, tripTitle, ok);
+      }
+      await purgeCityImageCacheEntry(cacheKey);
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+
+  return "";
+}
+
 // Atomes UI
 /** @param {{ title: string, frameClassName?: string }} props — `frameClassName` pour aligner le masque avec le parent (ex. shell chat `rounded-none`). */
 function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
@@ -7047,14 +7151,7 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   const safeTitle = String(prompt || title || "voyage");
   const cacheKey = getCityImageCacheKey(title);
 
-  const getInstantUrl = () => {
-    if (cityImageMemoryCache[cacheKey]) return String(cityImageMemoryCache[cacheKey]);
-    try {
-      const ls = window.localStorage.getItem(`tp_city_img_${cacheKey}`);
-      if (ls) { cityImageMemoryCache[cacheKey] = ls; return ls; }
-    } catch (_e) { /* ignore */ }
-    return buildCityImageUrl(title) || "";
-  };
+  const getInstantUrl = () => getInstantCityImageUrl(title, cacheKey);
 
   const [resolvedUrl, setResolvedUrl] = useState(getInstantUrl);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -7075,7 +7172,6 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   useEffect(() => {
     let cancelled = false;
     async function resolve() {
-      const localStorageKey = `tp_city_img_${cacheKey}`;
       const fallbackCommons = buildCityImageUrl(title);
 
       if (!prompt) {
@@ -7083,64 +7179,18 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
         return;
       }
 
-      if (cityImageMemoryCache[cacheKey]) {
-        const synced = await syncTripCardHeroWithCuratedCatalog(
-          cacheKey,
-          localStorageKey,
-          title,
-          cityImageMemoryCache[cacheKey]
-        );
-        if (!cancelled) setResolvedUrl(synced);
+      const fromCache = await readValidatedCityImageFromCaches(cacheKey, title);
+      if (fromCache) {
+        if (!cancelled) setResolvedUrl(fromCache);
         return;
       }
 
       try {
-        const persisted = window.localStorage.getItem(localStorageKey);
-        if (persisted) {
-          const synced = await syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, title, persisted);
-          if (!cancelled) setResolvedUrl(synced);
-          return;
-        }
+        const fromResolver = await resolveStableCityImageForCard(title);
+        const url = fromResolver || fallbackCommons || "";
+        if (!cancelled) setResolvedUrl(url);
       } catch (_e) {
-        // ignore localStorage errors
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("image_cache")
-          .select("url")
-          .eq("id", cacheKey)
-          .limit(1);
-
-        if (cancelled) return;
-        if (!error && data && data.length > 0 && data[0]?.url) {
-          const cachedUrl = String(data[0].url);
-          const synced = await syncTripCardHeroWithCuratedCatalog(cacheKey, localStorageKey, title, cachedUrl);
-          if (!cancelled) setResolvedUrl(synced);
-          return;
-        }
-
-        const fromWiki = await resolveStableCityImageForCard(title);
-        const url = fromWiki || fallbackCommons;
-        cityImageMemoryCache[cacheKey] = url;
-        if (url) {
-          try {
-            window.localStorage.setItem(localStorageKey, url);
-          } catch (_e) {
-            // ignore localStorage errors
-          }
-          try {
-            const { error: insErr } = await supabase
-              .from("image_cache")
-              .upsert({ id: cacheKey, url }, { onConflict: "id" });
-            void insErr;
-          } catch (_e) {
-            // Ignore cache write failures
-          }
-        }
-        setResolvedUrl(url);
-      } catch (_e) {
-        if (!cancelled) setResolvedUrl(fallbackCommons);
+        if (!cancelled) setResolvedUrl(fallbackCommons || "");
       }
     }
 
@@ -11447,10 +11497,16 @@ function DestinationGuideView({
         : "";
     let heroFromDisk = "";
     try {
-      const lsKey = `tp_city_img_${cacheKeyFast}`;
+      const lsKey = getCityImageLocalStorageKey(cacheKeyFast);
       const v = window.localStorage.getItem(lsKey);
-      if (v && isPersistableHeroUrl(String(v)) && !isLikelyWikiFlagOrSealThumb(String(v))) {
+      if (v && acceptValidatedCachedHeroUrl(String(v))) {
         heroFromDisk = upgradeLandscapeImageUrl(String(v).trim());
+      } else if (v) {
+        try {
+          window.localStorage.removeItem(lsKey);
+        } catch (_e) {
+          /* ignore */
+        }
       }
     } catch (_e) {
       /* ignore */

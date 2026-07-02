@@ -24,15 +24,19 @@ function checkRateLimit(ip) {
 export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
+  const body = parseBody(req);
+
   const ip =
     String(req.headers["x-forwarded-for"] || "")
       .split(",")[0]
       .trim() || req.socket?.remoteAddress || "";
   if (!checkRateLimit(ip)) {
-    return sendJson(res, 429, { ok: false, error: "Rate limit exceeded." });
+    console.error(
+      `[images/resolve] rate limited label="${String(body?.label || "").slice(0, 80)}" reason=timeout`
+    );
+    return sendJson(res, 429, { ok: false, error: "Rate limit exceeded.", reason: "timeout" });
   }
 
-  const body = parseBody(req);
   const kind = String(body.kind || "hero").trim();
   const label = String(body.label || "").trim();
   const context = String(body.context || "").trim();
@@ -47,16 +51,24 @@ export async function handler(req, res) {
   }
 
   try {
-    const result = await Promise.race([
+    const outcome = await Promise.race([
       resolveImage({ kind: /** @type {import('../../lib/images/types.js').ImageKind} */ (kind), label, context, uiLang }),
-      new Promise((resolve) => setTimeout(() => resolve(null), 12000)),
+      new Promise((resolve) => setTimeout(() => resolve({ image: null, reason: "timeout" }), 12000)),
     ]);
 
+    const result = outcome?.image || null;
+    const reason = outcome?.reason;
+
     if (!result?.url) {
+      const failReason = reason || "not_found";
+      console.error(
+        `[images/resolve] failed kind=${kind} label="${label.slice(0, 80)}" context="${context.slice(0, 40)}" reason=${failReason}`
+      );
       return sendJson(res, 200, {
         ok: false,
         url: "",
         source: "fallback",
+        reason: failReason,
         error: "Aucune image résolue — utiliser le fallback legacy.",
       });
     }
@@ -74,10 +86,14 @@ export async function handler(req, res) {
       cached: Boolean(result.cached),
     });
   } catch (e) {
+    console.error(
+      `[images/resolve] error kind=${kind} label="${label.slice(0, 80)}" reason=not_found msg=${String(e?.message || e).slice(0, 120)}`
+    );
     return sendJson(res, 200, {
       ok: false,
       url: "",
       source: "fallback",
+      reason: "not_found",
       error: String(e?.message || e),
     });
   }
