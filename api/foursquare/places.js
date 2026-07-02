@@ -1,4 +1,5 @@
 import { handleCors, sendJson, parseBody, getFoursquareKey } from "../_helpers.js";
+import { searchFoursquarePlace } from "./_textSearch.js";
 
 /** Loisirs / culture / plein air — lieux « incontournables ». */
 const FSQ_PRESET_POI = "10000,16000,12000";
@@ -12,13 +13,27 @@ export default async function handler(req, res) {
   if (!fsqKey) return sendJson(res, 503, { error: "FOURSQUARE_API_KEY non configurée sur le serveur." });
 
   const body = parseBody(req);
+  const query = String(body.query || "").trim();
+  const near = String(body.near || "").trim();
+  const localeRaw = String(body.locale || body.language || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+
+  /** Recherche texte nom + ville (identité + coords) — pas de géocodage Nominatim. */
+  if (query.length >= 2 && near.length >= 2) {
+    try {
+      const hit = await searchFoursquarePlace(query, near, localeRaw);
+      if (!hit) return sendJson(res, 404, { ok: false, error: "Aucun résultat Foursquare." });
+      return sendJson(res, 200, { ok: true, result: hit });
+    } catch (e) {
+      return sendJson(res, 502, { error: String(e?.message || e) });
+    }
+  }
+
   const lat = Number(body.lat);
   const lon = Number(body.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
   }
   const limit = Math.min(Number(body.limit) || 20, 50);
-  const localeRaw = String(body.locale || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
   /** Chaîne Accept-Language riche : la langue UI en premier, puis secours (meilleure localisation des noms). */
   const acceptLanguage =
     localeRaw === "zh"

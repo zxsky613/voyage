@@ -4,6 +4,7 @@
  */
 
 const ITIN_FETCH_TIMEOUT_MS = 120000;
+const VERIFIED_ITIN_FETCH_TIMEOUT_MS = 180000;
 
 async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -100,6 +101,38 @@ export async function fetchGroqItinerary({
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(typeof j.error === "string" ? j.error : `Groq erreur ${r.status}`);
+  }
+  return j;
+}
+
+/**
+ * Pipeline vérifié : passe 1 → TripAdvisor/Foursquare → clustering → passe 2.
+ */
+export async function fetchVerifiedItinerary({
+  destination,
+  startDate,
+  endDate,
+  language = "fr",
+  prefs = null,
+  countryCode = "",
+  country = "",
+}) {
+  const r = await fetchPostJsonWithTimeout(
+    "/api/planner/generate-itinerary",
+    {
+      destination,
+      startDate,
+      endDate,
+      language,
+      prefs,
+      countryCode: String(countryCode || "").trim(),
+      country: String(country || "").trim(),
+    },
+    VERIFIED_ITIN_FETCH_TIMEOUT_MS
+  );
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Planner erreur ${r.status}`);
   }
   return j;
 }

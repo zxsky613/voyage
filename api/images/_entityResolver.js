@@ -1,4 +1,5 @@
 import { wikiUserAgent } from "./_headCheck.js";
+import { fetchJsonWithRetry, WikiApiThrottledError } from "./_fetchRetry.js";
 
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
 
@@ -207,12 +208,12 @@ async function fetchEntities(ids) {
     format: "json",
     origin: "*",
   });
-  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(`${WIKIDATA_API}?${params}`, {
     headers: { "User-Agent": wikiUserAgent() },
   });
-  if (!r.ok) return {};
-  const j = await r.json();
-  return j?.entities || {};
+  if (throttled || timedOut) throw new WikiApiThrottledError("Wikidata wbgetentities throttled");
+  if (!ok) return {};
+  return json?.entities || {};
 }
 
 async function expandP279(directP279) {
@@ -250,12 +251,12 @@ async function wbSearchEntities(search, language, limit = 8) {
     format: "json",
     origin: "*",
   });
-  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(`${WIKIDATA_API}?${params}`, {
     headers: { "User-Agent": wikiUserAgent() },
   });
-  if (!r.ok) return [];
-  const j = await r.json();
-  return Array.isArray(j?.search) ? j.search : [];
+  if (throttled || timedOut) throw new WikiApiThrottledError("Wikidata wbsearchentities throttled");
+  if (!ok) return [];
+  return Array.isArray(json?.search) ? json.search : [];
 }
 
 async function wbGetEntitiesFull(ids) {
@@ -269,12 +270,12 @@ async function wbGetEntitiesFull(ids) {
     format: "json",
     origin: "*",
   });
-  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(`${WIKIDATA_API}?${params}`, {
     headers: { "User-Agent": wikiUserAgent() },
   });
-  if (!r.ok) return {};
-  const j = await r.json();
-  return j?.entities || {};
+  if (throttled || timedOut) throw new WikiApiThrottledError("Wikidata wbgetentities full throttled");
+  if (!ok) return {};
+  return json?.entities || {};
 }
 
 async function fetchGeoLabelMap(entities) {
@@ -326,12 +327,12 @@ async function wbGetEntityLabelsOnly(ids) {
     format: "json",
     origin: "*",
   });
-  const r = await fetch(`${WIKIDATA_API}?${params}`, {
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(`${WIKIDATA_API}?${params}`, {
     headers: { "User-Agent": wikiUserAgent() },
   });
-  if (!r.ok) return {};
-  const j = await r.json();
-  return j?.entities || {};
+  if (throttled || timedOut) throw new WikiApiThrottledError("Wikidata wbgetentities labels throttled");
+  if (!ok) return {};
+  return json?.entities || {};
 }
 
 function scoreEntityBase(entity, searchLabel) {
@@ -453,10 +454,13 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
   const commonsCategory = p373[0] || "";
 
   const sitelinks = [];
+  const wikivoyageSitelinks = [];
   const links = best.sitelinks || {};
   for (const l of [lang, "en", "fr", "de", "es", "it", "zh"]) {
     const title = String(links[`${l}wiki`]?.title || "").trim();
     if (title) sitelinks.push({ lang: l, title });
+    const wvTitle = String(links[`${l}wikivoyage`]?.title || "").trim();
+    if (wvTitle) wikivoyageSitelinks.push({ lang: l, title: wvTitle });
   }
 
   return {
@@ -464,6 +468,7 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
     p18Filenames,
     commonsCategory,
     sitelinks,
+    wikivoyageSitelinks,
     p31Ids,
   };
 }

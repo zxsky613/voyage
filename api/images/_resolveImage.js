@@ -1,5 +1,5 @@
 import { normalizeLabelKey, splitResolveImageLabelContext, inferDefaultHeroResolveContext } from "../../lib/images/normalizeLabel.js";
-import { isLikelyOrbitalOrMapImagery } from "../../lib/images/wikiImageFilters.js";
+import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
 import {
   isCacheConfigured,
   readCacheByEntity,
@@ -11,9 +11,90 @@ import {
   fetchP18Candidates,
 } from "./_commonsClient.js";
 import { resolveEntity } from "./_entityResolver.js";
-import { candidateToResolved, firstValidCandidate } from "./_headCheck.js";
-import { fetchUnsplashHeroCandidate, fetchUnsplashPlaceCandidate } from "./_unsplashClient.js";
+import { WikiApiThrottledError } from "./_fetchRetry.js";
+import { candidateToResolved, headCheckUrl } from "./_headCheck.js";
 import { fetchWikipediaCandidates } from "./_wikipediaClient.js";
+import { fetchWikivoyageCandidates } from "./_wikivoyageClient.js";
+
+/**
+ * @param {import('../../lib/images/types.js').ImageCandidate} c
+ * @param {import('../../lib/images/types.js').ImageKind} kind
+ */
+function passesKindFilters(c, kind) {
+  if (!c?.url) return false;
+  if (kind === "hero") {
+    if (isLikelyOrbitalOrMapImagery(c.url, "", "")) return false;
+    if (isLikelyWikiBrandOrLogoImage(c.url, "")) return false;
+  }
+  return true;
+}
+
+/**
+ * Premier candidat valide (filtres + HEAD) — ordre séquentiel, stop à la 1re image sûre.
+ * @param {import('../../lib/images/types.js').ImageCandidate[]} candidates
+ * @param {import('../../lib/images/types.js').ImageKind} kind
+ */
+async function firstValidSequential(candidates, kind) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  for (const c of list) {
+    if (!passesKindFilters(c, kind)) continue;
+    if (await headCheckUrl(c.url)) return c;
+  }
+  return null;
+}
+
+/**
+ * Résolution entité héro — P18 → catégorie Commons → Wikipedia → Wikivoyage (banner puis pageimages).
+ * @param {NonNullable<Awaited<ReturnType<typeof resolveEntity>>>} entity
+ * @param {string} uiLang
+ */
+async function resolveHeroFromEntity(entity, uiLang) {
+  const heroOpts = { kind: /** @type {'hero'} */ ("hero") };
+
+  if (entity.p18Filenames?.length) {
+    const p18 = await fetchP18Candidates(entity.p18Filenames, heroOpts);
+    const hit = await firstValidSequential(p18, "hero");
+    if (hit) return hit;
+  }
+
+  if (entity.commonsCategory) {
+    const category = await fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts);
+    const hit = await firstValidSequential(category, "hero");
+    if (hit) return hit;
+  }
+
+  if (entity.sitelinks?.length) {
+    const wiki = await fetchWikipediaCandidates(entity.sitelinks, heroOpts);
+    const hit = await firstValidSequential(wiki, "hero");
+    if (hit) return hit;
+  }
+
+  const wikivoyage = await fetchWikivoyageCandidates(entity, heroOpts, uiLang);
+  const wvHit = await firstValidSequential(wikivoyage, "hero");
+  if (wvHit) return wvHit;
+
+  return null;
+}
+
+/**
+ * Landmark / activity — P18 puis Wikipedia (séquentiel).
+ * @param {NonNullable<Awaited<ReturnType<typeof resolveEntity>>>} entity
+ */
+async function resolvePlaceFromEntity(entity, kind) {
+  if (entity.p18Filenames?.length) {
+    const p18 = await fetchP18Candidates(entity.p18Filenames);
+    const hit = await firstValidSequential(p18, kind);
+    if (hit) return hit;
+  }
+
+  if (entity.sitelinks?.length) {
+    const wiki = await fetchWikipediaCandidates(entity.sitelinks);
+    const hit = await firstValidSequential(wiki, kind);
+    if (hit) return hit;
+  }
+
+  return null;
+}
 
 /**
  * @param {import('../../lib/images/types.js').ResolveImageParams} params
@@ -32,72 +113,53 @@ export async function resolveImage(params) {
   if (isCacheConfigured()) {
     const cached = await readCacheByLabel(labelNormalized, kind);
     if (cached?.url) {
+      const decodedTitle = decodeURIComponent(cached.url);
       const blocked =
         kind === "hero" &&
-        isLikelyOrbitalOrMapImagery(cached.url, decodeURIComponent(cached.url), "");
+        (isLikelyOrbitalOrMapImagery(cached.url, decodedTitle, "") ||
+          isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle));
       if (!blocked) return cached;
     }
   }
 
-  const entity = await resolveEntity(searchLabel, uiLang, kind, effectiveContext);
+  const entity = await (async () => {
+    try {
+      return await resolveEntity(searchLabel, uiLang, kind, effectiveContext);
+    } catch (err) {
+      if (err instanceof WikiApiThrottledError) return null;
+      throw err;
+    }
+  })();
 
   if (entity?.qid && isCacheConfigured()) {
     const byEntity = await readCacheByEntity(entity.qid, kind);
     if (byEntity?.url) {
+      const decodedTitle = decodeURIComponent(byEntity.url);
       const blocked =
         kind === "hero" &&
-        isLikelyOrbitalOrMapImagery(byEntity.url, decodeURIComponent(byEntity.url), "");
+        (isLikelyOrbitalOrMapImagery(byEntity.url, decodedTitle, "") ||
+          isLikelyWikiBrandOrLogoImage(byEntity.url, decodedTitle));
       if (!blocked) return { ...byEntity, cached: true };
     }
   }
 
-  /** @type {import('../../lib/images/types.js').ImageCandidate[]} */
-  let candidateLists = [];
+  if (!entity) return null;
 
-  if (kind === "hero") {
-    const heroOpts = { kind: /** @type {'hero'} */ ("hero") };
-    if (entity) {
-      const [category, p18, wiki, unsplash] = await Promise.all([
-        entity.commonsCategory
-          ? fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts)
-          : Promise.resolve([]),
-        entity.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames, heroOpts) : Promise.resolve([]),
-        entity.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks, heroOpts) : Promise.resolve([]),
-        fetchUnsplashHeroCandidate(searchLabel, effectiveContext),
-      ]);
-      const wikiScenic = wiki.filter((c) => !isLikelyOrbitalOrMapImagery(c.url || "", "", ""));
-      candidateLists = [
-        ...category,
-        ...p18,
-        ...wikiScenic,
-        ...(unsplash ? [unsplash] : []),
-      ];
-    } else {
-      const unsplash = await fetchUnsplashHeroCandidate(searchLabel, effectiveContext);
-      if (unsplash) candidateLists = [unsplash];
-    }
-  } else {
-    const [p18, wiki, unsplash] = await Promise.all([
-      entity?.p18Filenames?.length ? fetchP18Candidates(entity.p18Filenames) : Promise.resolve([]),
-      entity?.sitelinks?.length ? fetchWikipediaCandidates(entity.sitelinks) : Promise.resolve([]),
-      fetchUnsplashPlaceCandidate(searchLabel, effectiveContext),
-    ]);
-    candidateLists = [...p18, ...wiki, ...(unsplash ? [unsplash] : [])];
-  }
+  const valid =
+    kind === "hero"
+      ? await resolveHeroFromEntity(entity, uiLang)
+      : await resolvePlaceFromEntity(entity, kind);
 
-  candidateLists.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-  const valid = await firstValidCandidate(candidateLists);
   if (!valid?.url) return null;
 
-  const resolved = candidateToResolved(valid, entity?.qid);
+  const resolved = candidateToResolved(valid, entity.qid);
   resolved.cached = false;
 
   if (isCacheConfigured()) {
     await writeCache({
       labelNormalized,
       kind,
-      entityId: entity?.qid,
+      entityId: entity.qid,
       candidate: valid,
     });
   }

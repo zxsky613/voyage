@@ -6,6 +6,7 @@ import {
   scoreScenicCommonsFile,
 } from "../../lib/images/wikiImageFilters.js";
 import { commonsThumbUrl, parseExtMetaValue, wikiUserAgent } from "./_headCheck.js";
+import { fetchJsonWithRetry } from "./_fetchRetry.js";
 
 /**
  * @param {string} fileTitle
@@ -25,9 +26,11 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
     `&titles=${encodeURIComponent(filePage)}` +
     "&prop=imageinfo&iiprop=url|extmetadata|size";
 
-  const r = await fetch(api, { headers: { "User-Agent": wikiUserAgent() } });
-  if (!r.ok) return null;
-  const j = await r.json();
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (throttled || timedOut || !ok) return null;
+  const j = json;
   const page = Object.values(j?.query?.pages || {})[0];
   const info = page?.imageinfo?.[0];
   const url = String(info?.url || info?.thumburl || "").trim();
@@ -88,9 +91,11 @@ export async function fetchCommonsCategoryScenicCandidates(categoryName, options
     `&list=categorymembers&cmtitle=${encodeURIComponent(`Category:${cat}`)}` +
     "&cmtype=file&cmlimit=40&cmnamespace=6";
 
-  const lr = await fetch(listApi, { headers: { "User-Agent": wikiUserAgent() } });
-  if (!lr.ok) return [];
-  const lj = await lr.json();
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(listApi, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (throttled || timedOut || !ok) return [];
+  const lj = json;
   const members = Array.isArray(lj?.query?.categorymembers) ? lj.query.categorymembers : [];
   const titles = members
     .map((m) => String(m?.title || "").replace(/^File:/i, ""))

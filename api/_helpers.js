@@ -687,7 +687,8 @@ const FALLBACK_BULLETS_EXTRA = {
 /**
  * Supprime les bullets quasi identiques entre jours (post-traitement serveur).
  */
-export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr") {
+export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr", options = {}) {
+  const skipFallbackPadding = !!options?.skipFallbackPadding;
   const code = String(uiLang || "fr").toLowerCase().split("-")[0];
   const extras = FALLBACK_BULLETS_EXTRA[code] || FALLBACK_BULLETS_EXTRA.fr;
   const kept = [];
@@ -724,10 +725,12 @@ export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr") {
       next.push(s);
       kept.push(s);
     }
-    while (next.length < 2) {
-      next.push(extras[(next.length + out.length) % extras.length]);
+    if (!skipFallbackPadding) {
+      while (next.length < 2) {
+        next.push(extras[(next.length + out.length) % extras.length]);
+      }
     }
-    out.push({ ...day, bullets: next.slice(0, 2) });
+    out.push({ ...day, bullets: skipFallbackPadding ? next : next.slice(0, 2) });
   }
   return out;
 }
@@ -766,6 +769,10 @@ export function getGroqKey() {
 
 export function getFoursquareKey() {
   return String(process.env.FOURSQUARE_API_KEY || "").trim();
+}
+
+export function getTripadvisorKey() {
+  return String(process.env.TRIPADVISOR_API_KEY || "").trim();
 }
 
 /** Clé Unsplash — serveur uniquement (jamais VITE_ en prod). */

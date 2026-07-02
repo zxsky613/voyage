@@ -2,7 +2,7 @@
   "framework": "vite",
   "functions": {
     "api/**/*.js": {
-      "includeFiles": "{placeGuards.js,api/osm/_overpassLandmarks.js,cityDroneImagePrompt.js,cityHeroStem.js,i18n/cityDisplay.js,lib/images/**,api/images/_*.js,api/gemini/_*.js,api/groq/_*.js}"
+      "includeFiles": "{placeGuards.js,api/osm/_overpassLandmarks.js,cityDroneImagePrompt.js,cityHeroStem.js,i18n/cityDisplay.js,lib/images/**,lib/planner/**,api/images/_*.js,api/gemini/_*.js,api/groq/_*.js,api/planner/_*.js,api/foursquare/_textSearch.js}"
     }
   }
 }

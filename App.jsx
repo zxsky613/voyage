@@ -31,14 +31,25 @@ import {
   AlertTriangle,
   Sunrise,
   Sun,
+  Moon,
   ImageOff,
   RefreshCw,
+  UtensilsCrossed,
+  Waves,
+  ShoppingBag,
+  Mountain,
+  Landmark,
+  TrainFront,
+  PartyPopper,
+  Bike,
+  CalendarCheck,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
   fetchGeminiTripSuggestions,
   fetchGeminiSuggestedActivities,
   fetchItineraryGroqFirst,
+  fetchVerifiedItinerary,
   fetchGroqTips,
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
@@ -82,6 +93,8 @@ import {
   isResolveActivityEnabled,
   stripGuideImageFields,
 } from "./lib/images/featureFlags.js";
+import { isVerifiedPlannerEnabled } from "./lib/planner/featureFlags.js";
+import { categoryForActivityTitle } from "./lib/planner/activityCategoryThumb.js";
 import {
   inferDefaultHeroResolveContext,
   splitResolveImageLabelContext,
@@ -1999,46 +2012,27 @@ async function fetchWikiSearchHeroUrl(query) {
   return "";
 }
 
-/** Carte OSM statique — dernier repli quand Unsplash / Wikipedia échouent (ex. quota API). */
-function buildOsmStaticMapHeroUrl(lat, lon) {
-  const la = Number(lat);
-  const lo = Number(lon);
-  if (!Number.isFinite(la) || !Number.isFinite(lo)) return "";
-  const center = `${la},${lo}`;
-  return (
-    `https://staticmap.openstreetmap.de/staticmap.php?center=${encodeURIComponent(center)}` +
-    `&zoom=10&size=1200x600&scale=2&maptype=mapnik&markers=${encodeURIComponent(center)},lightblue1`
-  );
-}
-
-/** Repli héros quand resolve / Unsplash échouent — Unsplash géo + Wikipedia search + carte OSM. */
-async function resolveGeoHeroFallback(cityInput, uiLang = "fr") {
+/** Repli héros après resolve — Wikipedia puis Unsplash ancré ville ; jamais région/pays/carte. */
+async function resolveGeoHeroFallback(cityInput, _uiLang = "fr") {
   const ctx = String(cityInput || "").trim();
   if (!ctx) return "";
   const nominatimQ = buildNominatimCityQuery(ctx) || ctx;
-  const unsplash = await getCityHeroImage(nominatimQ);
-  if (unsplash && !isBlockedHeroImageUrl(unsplash)) return upgradeLandscapeImageUrl(unsplash);
+
   const wiki = await fetchWikiSearchHeroUrl(nominatimQ);
   if (wiki && !isBlockedHeroImageUrl(wiki)) return wiki;
-  const { context: geoCtx } = splitResolveImageLabelContext(ctx, "");
-  if (geoCtx) {
-    const country = geoCtx.split(",").map((s) => s.trim()).filter(Boolean).pop() || "";
-    if (country) {
-      const countryImg = await getCityHeroImage(`${country} landscape travel destination`);
-      if (countryImg && !isBlockedHeroImageUrl(countryImg)) return upgradeLandscapeImageUrl(countryImg);
-    }
+
+  if (isCityAnchoredUnsplashAllowed(nominatimQ)) {
+    const unsplash = await getCityHeroImage(nominatimQ);
+    if (unsplash && !isBlockedHeroImageUrl(unsplash)) return upgradeLandscapeImageUrl(unsplash);
   }
-  try {
-    const stem = extractCityPrompt(ctx) || normalizeCityInput(ctx);
-    const geo = await fetchNominatimCityGeo(stem, uiLang, ctx);
-    if (Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon))) {
-      const mapUrl = buildOsmStaticMapHeroUrl(geo.lat, geo.lon);
-      if (mapUrl) return mapUrl;
-    }
-  } catch (_e) {
-    /* ignore */
-  }
+
   return "";
+}
+
+/** Unsplash héros : autoriser seulement si le 1er segment « Ville, … » fait ≥ 3 caractères. */
+function isCityAnchoredUnsplashAllowed(cityInput) {
+  const stem = extractCityPrompt(cityInput) || String(String(cityInput || "").split(",")[0] || "").trim();
+  return stem.length >= 3;
 }
 
 function getBundledCityHeroPath(cityInput) {
@@ -2327,47 +2321,15 @@ function isPersistableHeroUrl(url) {
 }
 
 /**
- * Bandeau ville — ordre figé : Commons curés → Wikipedia → bundle / Storage → cache fiable → Unsplash validé.
- * Évite les photos Unsplash hors lieu mises en cache (ex. Bakou pour Crète).
+ * Bandeau ville — chaîne unique : catalogue → entité (API) → Wikipedia search → Unsplash ville → "".
+ * Unsplash reste côté client uniquement (jamais dans api/images/resolve).
  */
 async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
   const ctx = String(cityInput || "").trim();
   if (!ctx) return "";
 
-  const resolveHeroOn = isResolveHeroEnabled();
   const { searchLabel, context: geoCtx } = splitResolveImageLabelContext(ctx, "");
   const resolveContext = geoCtx || inferDefaultHeroResolveContext(ctx);
-  const lookupLabel =
-    heroImageStemFromDestination(ctx) || extractCityPrompt(ctx) || ctx;
-
-  /** Resolve + Unsplash seulement — jamais Commons curés / wiki satellite. */
-  if (resolveHeroOn) {
-    const cachedRaw =
-      prefetched.cachedCityImage != null
-        ? String(prefetched.cachedCityImage || "")
-        : await getCachedCityImage(ctx);
-    if (cachedRaw && isPersistableHeroUrl(cachedRaw)) {
-      return upgradeLandscapeImageUrl(cachedRaw);
-    }
-
-    const fromResolve = await getResolvedImageUrl({
-      kind: "hero",
-      label: searchLabel || ctx,
-      context: resolveContext,
-      uiLang,
-    });
-    if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
-      return upgradeLandscapeImageUrl(fromResolve);
-    }
-    /** Repli Unsplash / Wikipedia / pays — requête Nominatim complète pour homonymes. */
-    const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
-    if (unsplashPref && !isBlockedHeroImageUrl(unsplashPref)) {
-      return upgradeLandscapeImageUrl(unsplashPref);
-    }
-    const geoFallback = await resolveGeoHeroFallback(ctx, uiLang);
-    if (geoFallback) return geoFallback;
-    return "";
-  }
 
   const commonsCandidates = getCityHeroImageCandidates(ctx);
   const commonsFirst =
@@ -2378,17 +2340,6 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
       return true;
     }) || "";
   if (commonsFirst) return upgradeLandscapeImageUrl(String(commonsFirst));
-
-  const safeCity = resolveCanonicalCity(lookupLabel) || lookupLabel;
-
-  /** Contexte géo explicite + resolve échoué : pas de repli wiki sur la seule tige (homonymes). */
-  if (!(resolveHeroOn && geoCtx)) {
-    const wikiUrls = Array.isArray(prefetched.wikiHeroUrls)
-      ? prefetched.wikiHeroUrls
-      : await fetchWikipediaHeroImageUrls(lookupLabel);
-    const wikiPrimary = firstAllowedHeroUrl(wikiUrls);
-    if (wikiPrimary) return upgradeLandscapeImageUrl(wikiPrimary);
-  }
 
   const bundled = getBundledCityHeroPath(ctx);
   if (bundled) return upgradeLandscapeImageUrl(bundled);
@@ -2402,27 +2353,33 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
       : await getCachedCityImage(ctx);
   if (
     cachedRaw &&
-    isTrustworthyHeroImageUrl(cachedRaw) &&
-    !isLikelyWikiFlagOrSealThumb(cachedRaw) &&
-    !isBlockedHeroImageUrl(cachedRaw)
+    !isBlockedHeroImageUrl(cachedRaw) &&
+    (isTrustworthyHeroImageUrl(cachedRaw) || isPersistableHeroUrl(cachedRaw))
   ) {
     return upgradeLandscapeImageUrl(cachedRaw);
   }
 
+  const fromResolve = await getResolvedImageUrl({
+    kind: "hero",
+    label: searchLabel || ctx,
+    context: resolveContext,
+    uiLang,
+  });
+  if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
+    return upgradeLandscapeImageUrl(fromResolve);
+  }
+
   const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
-  const unsplash =
-    unsplashPref || (await getCityHeroImage(buildNominatimCityQuery(ctx) || ctx));
-  if (unsplash && !isBlockedHeroImageUrl(unsplash)) {
-    return upgradeLandscapeImageUrl(unsplash);
+  if (
+    unsplashPref &&
+    !isBlockedHeroImageUrl(unsplashPref) &&
+    isCityAnchoredUnsplashAllowed(buildNominatimCityQuery(ctx) || ctx)
+  ) {
+    return upgradeLandscapeImageUrl(unsplashPref);
   }
 
-  const wikiThumb = firstAllowedHeroUrl(String(prefetched.wikiThumb || "").trim());
-  if (wikiThumb) return upgradeLandscapeImageUrl(wikiThumb);
-
-  const summaryThumb = await fetchFrenchWikiSummaryThumb(lookupLabel);
-  if (summaryThumb && !isBlockedHeroImageUrl(summaryThumb)) {
-    return upgradeLandscapeImageUrl(summaryThumb);
-  }
+  const geoFallback = await resolveGeoHeroFallback(ctx, uiLang);
+  if (geoFallback) return geoFallback;
 
   return "";
 }
@@ -3818,6 +3775,37 @@ function buildInstantDestinationGuide(rawQuery, uiLanguage = "fr") {
 }
 
 const countryMapCache = Object.create(null);
+const NOMINATIM_USER_AGENT = "Justtrip/1.0 (https://justtrip.fr; destination-map)";
+
+function nominatimFetchHeaders() {
+  return { "User-Agent": NOMINATIM_USER_AGENT, Accept: "application/json" };
+}
+
+/** Extrait une géométrie drawable depuis Feature / FeatureCollection / géométrie brute. */
+function normalizeCountryGeoGeometry(geojson) {
+  if (!geojson || typeof geojson !== "object") return null;
+  const t = geojson.type;
+  if (t === "Feature") return normalizeCountryGeoGeometry(geojson.geometry);
+  if (t === "FeatureCollection") {
+    const feats = Array.isArray(geojson.features) ? geojson.features : [];
+    let best = null;
+    let bestScore = 0;
+    for (const feat of feats) {
+      const g = normalizeCountryGeoGeometry(feat);
+      if (!g) continue;
+      const b = getMainLandLonLatBounds(g);
+      if (!b) continue;
+      const score = (b.east - b.west) * (b.north - b.south);
+      if (score > bestScore) {
+        bestScore = score;
+        best = g;
+      }
+    }
+    return best;
+  }
+  if (t === "Polygon" || t === "MultiPolygon" || t === "GeometryCollection") return geojson;
+  return null;
+}
 
 /** Bbox + contour GeoJSON du pays (une requête Nominatim avec polygon_geojson). */
 /**
@@ -3827,9 +3815,12 @@ const countryMapCache = Object.create(null);
  */
 async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
   const cc = String(countryCode || "").trim().toLowerCase();
-  const cacheKey = cc || String(countryName || "").toLowerCase();
+  const name = String(countryName || "").trim();
+  const cacheKey = cc || name.toLowerCase();
   if (!cacheKey) return null;
   if (countryMapCache[cacheKey]) return countryMapCache[cacheKey];
+
+  const headers = nominatimFetchHeaders();
 
   try {
     let first = null;
@@ -3839,7 +3830,7 @@ async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
       const revUrl =
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${cityLat}&lon=${cityLon}` +
         `&zoom=3&polygon_geojson=1&addressdetails=0`;
-      const revResp = await fetch(revUrl);
+      const revResp = await fetch(revUrl, { headers });
       if (revResp.ok) {
         const revJson = await revResp.json();
         if (revJson?.geojson && revJson?.boundingbox) first = revJson;
@@ -3851,10 +3842,22 @@ async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
       const searchUrl =
         `https://nominatim.openstreetmap.org/search?format=json&limit=1&polygon_geojson=1` +
         `&addressdetails=0&featuretype=country&countrycodes=${cc}&q=${encodeURIComponent(cc)}`;
-      const r2 = await fetch(searchUrl);
+      const r2 = await fetch(searchUrl, { headers });
       if (r2.ok) {
         const arr2 = await r2.json();
         first = Array.isArray(arr2) && arr2.length > 0 ? arr2[0] : null;
+      }
+    }
+
+    // Stratégie 3 : recherche par nom de pays (ex. « France »)
+    if (!first && name.length >= 3) {
+      const searchUrl =
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&polygon_geojson=1` +
+        `&addressdetails=0&featuretype=country&q=${encodeURIComponent(name)}`;
+      const r3 = await fetch(searchUrl, { headers });
+      if (r3.ok) {
+        const arr3 = await r3.json();
+        first = Array.isArray(arr3) && arr3.length > 0 ? arr3[0] : null;
       }
     }
 
@@ -3870,10 +3873,10 @@ async function fetchCountryMapData(countryName, countryCode, cityLat, cityLon) {
     }
     if (![south, north, west, east].every(Number.isFinite)) return null;
 
-    const geo = first?.geojson;
+    const geo = normalizeCountryGeoGeometry(first?.geojson);
     const data = {
       bbox: { south, north, west, east },
-      geojson: geo && typeof geo === "object" ? geo : null,
+      geojson: geo,
     };
     countryMapCache[cacheKey] = data;
     return data;
@@ -3983,6 +3986,13 @@ function geoJsonOutlineToPathD(geometry, b, svgW, svgH) {
       .filter(Boolean)
       .join(" ");
   }
+  if (t === "GeometryCollection") {
+    const geoms = Array.isArray(c) ? c : [];
+    return geoms
+      .map((g) => geoJsonOutlineToPathD(g, b, svgW, svgH))
+      .filter(Boolean)
+      .join(" ");
+  }
   return "";
 }
 
@@ -4010,6 +4020,21 @@ function getMainLandLonLatBounds(geometry) {
   if (!geometry?.type || !geometry.coordinates) return null;
   if (geometry.type === "Polygon") {
     return geometry.coordinates[0] ? getRingLonLatBounds(geometry.coordinates[0]) : null;
+  }
+  if (geometry.type === "GeometryCollection") {
+    const geoms = Array.isArray(geometry.coordinates) ? geometry.coordinates : [];
+    let best = null;
+    let bestScore = 0;
+    for (const g of geoms) {
+      const b = getMainLandLonLatBounds(g);
+      if (!b) continue;
+      const score = (b.east - b.west) * (b.north - b.south);
+      if (score > bestScore) {
+        bestScore = score;
+        best = b;
+      }
+    }
+    return best;
   }
   if (geometry.type !== "MultiPolygon") return null;
   let best = null;
@@ -5700,16 +5725,223 @@ function parseItineraryBulletPeriod(bullet) {
   return "other";
 }
 
+/**
+ * Matin / après-midi / soir — dérivé de l'heure HH:MM (vue calendrier).
+ * @param {string} timeStr
+ * @returns {"morning"|"afternoon"|"evening"|"other"}
+ */
+function parseActivityTimePeriod(timeStr) {
+  const m = String(timeStr || "").trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "other";
+  const h = Number(m[1]);
+  if (!Number.isFinite(h)) return "other";
+  if (h < 12) return "morning";
+  if (h < 18) return "afternoon";
+  return "evening";
+}
+
+/**
+ * Query Google Maps pour une activité du calendrier (lieu nettoyé + ville du voyage).
+ * @param {string} activityTitle
+ * @param {string} cityLabel
+ * @param {string} [dayTitle]
+ */
+function buildPlannerActivityGoogleMapsUrl(activityTitle, cityLabel, dayTitle = "") {
+  const raw = String(activityTitle || "").trim();
+  const placeHint =
+    extractItineraryBulletPlaceHint(raw, dayTitle) ||
+    stripItineraryBulletTimePrefix(raw) ||
+    raw;
+  const city = String(cityLabel || "").trim();
+  const query = [placeHint, city].filter(Boolean).join(", ");
+  if (!query) return "https://www.google.com/maps";
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+/**
+ * Carte activité enrichie (vue calendrier) — image + chip moment + actions.
+ * @param {{ activity: object, cityLabel: string, onView: () => void, onEdit: () => void, onDelete: () => void }} props
+ */
+function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete }) {
+  const { t, language } = useI18n();
+  const rawTitle = String(activity?.title || activity?.name || "").trim();
+  const timeStr = String(activity?.time || "--:--");
+  const period = parseActivityTimePeriod(activity?.time);
+  const mapsUrl = buildPlannerActivityGoogleMapsUrl(rawTitle, cityLabel);
+  const cacheKey = `planner-v1|${String(cityLabel || "").trim()}|${String(activity?.id || "")}|${rawTitle}`;
+  const [src, setSrc] = useState(() => itineraryBulletImageCache[cacheKey] || "");
+  const [loading, setLoading] = useState(() => !itineraryBulletImageCache[cacheKey]);
+  const [imgBroken, setImgBroken] = useState(false);
+
+  useEffect(() => {
+    setImgBroken(false);
+  }, [cacheKey, src]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!rawTitle) {
+      setSrc("");
+      setLoading(false);
+      return undefined;
+    }
+    if (itineraryBulletImageCache[cacheKey]) {
+      setSrc(itineraryBulletImageCache[cacheKey]);
+      setLoading(false);
+      return undefined;
+    }
+    setSrc("");
+    setLoading(true);
+    scheduleItineraryBulletImageFetch(async () => {
+      try {
+        const url = await fetchItineraryBulletImage(rawTitle, cityLabel, language, "");
+        if (cancelled) return;
+        const finalUrl = String(url || "").trim();
+        if (finalUrl) itineraryBulletImageCache[cacheKey] = finalUrl;
+        setSrc(finalUrl);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, rawTitle, cityLabel, language]);
+
+  const periodChip =
+    period === "morning" ? (
+      <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
+        <Sunrise className="h-3 w-3 text-brand-orange-ink" strokeWidth={2} aria-hidden />
+        {t("destination.itineraryPeriodMorning")}
+      </span>
+    ) : period === "afternoon" ? (
+      <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
+        <Sun className="h-3 w-3 text-brand-orange-ink" strokeWidth={2} aria-hidden />
+        {t("destination.itineraryPeriodAfternoon")}
+      </span>
+    ) : period === "evening" ? (
+      <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
+        <Moon className="h-3 w-3 text-brand-orange-ink" strokeWidth={2} aria-hidden />
+        {t("planner.periodEvening")}
+      </span>
+    ) : null;
+
+  const actionBtnClass =
+    "rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50";
+
+  const categoryThumb = categoryForActivityTitle(rawTitle);
+  const CategoryIcon = ACTIVITY_CATEGORY_ICON_MAP[categoryThumb.iconKey] || CalendarCheck;
+
+  const imageInner = loading ? (
+    <div className="h-full w-full animate-pulse bg-slate-200" aria-hidden />
+  ) : src && !imgBroken ? (
+    <img
+      src={src}
+      alt=""
+      className="h-full w-full object-cover"
+      loading="lazy"
+      decoding="async"
+      onError={() => {
+        delete itineraryBulletImageCache[cacheKey];
+        setImgBroken(true);
+        setSrc("");
+      }}
+    />
+  ) : (
+    <div
+      className={`flex h-full w-full items-center justify-center ${categoryThumb.bgClass}`}
+      aria-hidden
+    >
+      <CategoryIcon className={`h-6 w-6 sm:h-7 sm:w-7 ${categoryThumb.fgClass}`} strokeWidth={1.75} />
+    </div>
+  );
+
+  return (
+    <div className="group overflow-hidden rounded-2xl bg-white ring-1 ring-slate-100 transition hover:ring-slate-200">
+      <div className="flex gap-3 p-3 sm:gap-4 sm:p-4">
+        <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/80 sm:h-20 sm:w-28">
+          {imageInner}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {periodChip}
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{timeStr}</span>
+          </div>
+          <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-snug text-slate-900 sm:text-[15px]">
+            <UiTranslatedActivityTitle
+              raw={rawTitle}
+              emptyFallback={t("planner.activityNamePlaceholder")}
+            />
+          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={actionBtnClass}
+              title={t("planner.openInMaps")}
+              aria-label={t("planner.openInMaps")}
+            >
+              <MapPin size={14} aria-hidden />
+            </a>
+            <button
+              type="button"
+              onClick={onView}
+              className={actionBtnClass}
+              title={t("planner.viewDetails")}
+              aria-label={t("planner.viewDetails")}
+            >
+              <Eye size={14} aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={onEdit}
+              className={actionBtnClass}
+              title={t("tripCard.edit")}
+              aria-label={t("tripCard.edit")}
+            >
+              <Pencil size={14} aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-full border border-rose-100 bg-white p-2 text-rose-700 shadow-sm transition hover:bg-rose-50"
+              title={t("tripCard.delete")}
+              aria-label={t("tripCard.delete")}
+            >
+              <Trash2 size={14} aria-hidden />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function normalizeItineraryDayBullets(day) {
-  return (Array.isArray(day?.bullets) ? day.bullets : Array.isArray(day?.activities) ? day.activities : [])
-    .map((b) => String(b || "").trim())
+  if (Array.isArray(day?.bullets) && day.bullets.length > 0) {
+    return day.bullets
+      .map((b) => String(b || "").trim())
+      .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
+      .slice(0, 2);
+  }
+  return (Array.isArray(day?.activities) ? day.activities : [])
+    .map((a) => (typeof a === "string" ? a : String(a?.description || a?.name || "")).trim())
     .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
     .slice(0, 2);
 }
 
+function getItineraryDayActivitiesMeta(day) {
+  return (Array.isArray(day?.activities) ? day.activities : []).filter((a) => a && typeof a === "object");
+}
+
 function getItineraryDayBulletsRaw(day) {
-  return (Array.isArray(day?.bullets) ? day.bullets : Array.isArray(day?.activities) ? day.activities : [])
-    .map((b) => String(b || "").trim())
+  if (Array.isArray(day?.bullets) && day.bullets.length > 0) {
+    return day.bullets
+      .map((b) => String(b || "").trim())
+      .filter((b) => b && !isItineraryMealOrRestBulletClient(b));
+  }
+  return (Array.isArray(day?.activities) ? day.activities : [])
+    .map((a) => (typeof a === "string" ? a : String(a?.description || a?.name || "")).trim())
     .filter((b) => b && !isItineraryMealOrRestBulletClient(b));
 }
 
@@ -5800,6 +6032,22 @@ async function fetchFreshSuggestedActivityTitles(dest, language) {
 const itineraryBulletImageCache = Object.create(null);
 let itineraryBulletImageFetchChain = Promise.resolve();
 
+/** @type {Record<string, import('react').ComponentType<{ size?: number, className?: string, strokeWidth?: number, 'aria-hidden'?: boolean }>>} */
+const ACTIVITY_CATEGORY_ICON_MAP = {
+  UtensilsCrossed,
+  Users,
+  BedDouble,
+  Waves,
+  ShoppingBag,
+  Mountain,
+  Landmark,
+  Plane,
+  TrainFront,
+  PartyPopper,
+  Bike,
+  CalendarCheck,
+};
+
 function scheduleItineraryBulletImageFetch(task) {
   const run = itineraryBulletImageFetchChain.then(() => task());
   itineraryBulletImageFetchChain = run.catch(() => {});
@@ -5808,6 +6056,7 @@ function scheduleItineraryBulletImageFetch(task) {
 
 function ItineraryBulletRow({
   bullet,
+  activityMeta = null,
   cityLabel,
   dayTitle,
   dayNum,
@@ -5886,6 +6135,28 @@ function ItineraryBulletRow({
   const displayText = stripItineraryBulletTimePrefix(text) || text;
   const period = parseItineraryBulletPeriod(text);
   const placeLabel = extractItineraryBulletPlaceHint(text, dayTitle) || displayText.slice(0, 48);
+  const rating = Number(activityMeta?.rating);
+  const numReviews = Number(activityMeta?.numReviews);
+  const showRatingBadge = Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0;
+  const taUrl = String(activityMeta?.tripadvisorUrl || "").trim();
+
+  const ratingBadge = showRatingBadge ? (
+    <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+      <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
+        ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })}
+      </span>
+      {taUrl ? (
+        <a
+          href={taUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full px-2 py-0.5 ring-1 ring-slate-200 transition hover:bg-slate-50"
+        >
+          {t("destination.itineraryTaAttribution")}
+        </a>
+      ) : null}
+    </p>
+  ) : null;
 
   const periodChip =
     period === "morning" ? (
@@ -5976,6 +6247,7 @@ function ItineraryBulletRow({
             <div className="min-w-0 space-y-2">
               {periodChip}
               <p className="text-[13px] leading-relaxed text-slate-700 sm:text-[14px]">{displayText}</p>
+              {ratingBadge}
             </div>
             {hoverActions}
           </div>
@@ -6269,22 +6541,14 @@ async function resolveDestinationHeroFirstPaint(cityRaw) {
  */
 async function getCityHeroImage(cityInput) {
   const raw = String(cityInput || "").trim();
-  if (!raw) return "";
+  if (!raw || !isCityAnchoredUnsplashAllowed(raw)) return "";
   const nominatimQ = buildNominatimCityQuery(raw) || raw;
   const stem = heroImageStemFromDestination(nominatimQ);
   const q = buildCityHeroUnsplashQuery(nominatimQ);
   if (!q) return "";
   const cityTok = normalizeCityDroneKey(stem).split(/\s+/).filter((t) => t.length > 2);
-  const contextTok = nominatimQ
-    .split(",")
-    .slice(1)
-    .join(" ")
-    .split(/\s+/)
-    .map((t) => normalizeTextForSearch(t))
-    .filter((t) => t.length >= 4);
   const landmarkDescBoostTokens = getHeroUnsplashDescBoostTokens(stem).map((t) => normalizeTextForSearch(t));
   const isCoastal = inferAestheticCityQueryType(nominatimQ) === AESTHETIC_CITY_QUERY_TYPE.COASTAL;
-  const hasGeoCtx = nominatimQ.split(",").map((p) => p.trim()).filter(Boolean).length >= 2;
   const preferredKeywords = isCoastal
     ? [
         "beach", "turquoise", "ocean", "sea", "coast", "tropical",
@@ -6307,8 +6571,8 @@ async function getCityHeroImage(cityInput) {
     perPage: 30,
     contentFilter: "high",
     heroPenalizeSkyOnly: true,
-    minCityBoostScore: hasGeoCtx ? 0 : 80,
-    acceptAnyResult: hasGeoCtx,
+    minCityBoostScore: 80,
+    acceptAnyResult: false,
     landmarkDescBoostTokens,
     preferredKeywords,
     avoidKeywords: [
@@ -6327,24 +6591,9 @@ async function getCityHeroImage(cityInput) {
       "noir et blanc", "noir blanc", "sepia", "desaturated", "bw photo",
       ...getUnsplashHeroConflictAvoidKeywords(nominatimQ),
     ],
-    cityBoostTokens: [...cityTok, ...contextTok, normalizeTextForSearch(stem).split(/\s+/)[0]].filter(Boolean),
+    cityBoostTokens: [...cityTok, normalizeTextForSearch(stem).split(/\s+/)[0]].filter(Boolean),
   };
-  let out = await fetchUnsplashImageByQuery(q, unsplashOpts);
-  if (!out && hasGeoCtx) {
-    const geoTail = nominatimQ
-      .split(",")
-      .slice(1)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .join(" ");
-    if (geoTail) {
-      out = await fetchUnsplashImageByQuery(`${geoTail} landscape travel destination`, {
-        ...unsplashOpts,
-        minCityBoostScore: 0,
-      });
-    }
-  }
-  return out;
+  return fetchUnsplashImageByQuery(q, unsplashOpts);
 }
 
 /**
@@ -9646,7 +9895,7 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
   const lon = Number(coordinates?.lon);
   if (!bbox || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
-  const geojson = mini?.geojson;
+  const geojson = normalizeCountryGeoGeometry(mini?.geojson) || mini?.geojson;
   const { svgW, svgH, outlineD, mx, my } = useMemo(() => {
     const b = framingBboxForMiniMap(geojson, lat, lon, bbox);
     const lonSpan = Math.max(Number(b.east) - Number(b.west), 0.0001);
@@ -9661,32 +9910,10 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
     return { svgW: svgWVal, svgH: svgHVal, outlineD: d, mx: mxC, my: myC };
   }, [bbox, geojson, lat, lon]);
 
+  if (!outlineD) return null;
+
   const ariaLabel = [city, adminRegion, country].filter(Boolean).join(", ") || String(city);
   const pinR = 4.75;
-
-  const landPath = outlineD ? (
-    <path
-      d={outlineD}
-      fill="#ffffff"
-      fillRule="evenodd"
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth={0.75}
-      strokeLinejoin="round"
-      filter={`url(#${landDropId})`}
-    />
-  ) : (
-    <rect
-      x={svgW * 0.04}
-      y={svgH * 0.06}
-      width={svgW * 0.92}
-      height={svgH * 0.88}
-      rx={svgW * 0.06}
-      fill="#ffffff"
-      stroke="rgba(255,255,255,0.5)"
-      strokeWidth={0.75}
-      filter={`url(#${landDropId})`}
-    />
-  );
 
   return (
     <figure
@@ -9709,7 +9936,15 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
             <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f172a" floodOpacity="0.14" />
           </filter>
         </defs>
-        {landPath}
+        <path
+          d={outlineD}
+          fill="#ffffff"
+          fillRule="evenodd"
+          stroke="rgba(255,255,255,0.55)"
+          strokeWidth={0.75}
+          strokeLinejoin="round"
+          filter={`url(#${landDropId})`}
+        />
         <circle cx={mx} cy={my} r={pinR} fill={`url(#${pinGradId})`} stroke="white" strokeWidth={1.65} />
         <circle cx={mx} cy={my} r={pinR * 0.4} fill="rgba(255,255,255,0.32)" />
       </svg>
@@ -10391,6 +10626,7 @@ function ItineraryResultModal({
                   const dayNum = Number(d?.day) || idx + 1;
                   const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
                   const bullets = normalizeItineraryDayBullets(d);
+                  const activityMetaList = getItineraryDayActivitiesMeta(d);
                   const cost = Number(d?.costEur) || 0;
                   return (
                     <section
@@ -10438,6 +10674,7 @@ function ItineraryResultModal({
                               key={`${dayNum}-${j}`}
                               variant="card"
                               bullet={b}
+                              activityMeta={activityMetaList[j] || null}
                               cityLabel={cityLabel}
                               dayTitle={title}
                               dayNum={dayNum}
@@ -11418,40 +11655,12 @@ function DestinationGuideView({
       try {
         const cached = await getCachedCityImage(confirmedDestination);
         if (cancelled) return;
-        if (cached) {
-          const hero = upgradeLandscapeImageUrl(cached);
-          setGuide((prev) => {
-            if (!prev) return prev;
-            if (normalizeTextForSearch(String(prev.city || "")) !== normalizeTextForSearch(cityKey)) return prev;
-            const cur = String(prev.landscapeImageUrl || prev.imageUrl || "").trim();
-            if (cur === hero) return prev;
-            return {
-              ...prev,
-              imageUrl: hero,
-              landscapeImageUrl: hero,
-              ...(isResolveGuideCleanupEnabled()
-                ? {}
-                : {
-                    heroImageCandidates: dedupeImageUrlChain([hero]).map((u) =>
-                      upgradeLandscapeImageUrl(String(u || ""))
-                    ),
-                  }),
-            };
-          });
-          return;
-        }
 
-        const { searchLabel, context: geoCtx } = splitResolveImageLabelContext(confirmedDestination, "");
-        const resolveContext = geoCtx || inferDefaultHeroResolveContext(confirmedDestination);
-        let url = await getResolvedImageUrl({
-          kind: "hero",
-          label: searchLabel || confirmedDestination,
-          context: resolveContext,
-          uiLang: language,
-        });
-        if (!url || isBlockedHeroImageUrl(url)) {
-          url = await resolveGeoHeroFallback(confirmedDestination, language);
-        }
+        const url = await pickCityHeroImageUrl(
+          confirmedDestination,
+          { cachedCityImage: cached || undefined },
+          language
+        );
         if (cancelled || !url || isBlockedHeroImageUrl(url)) return;
         const hero = upgradeLandscapeImageUrl(url);
         void persistCityImage(confirmedDestination, hero);
@@ -11618,6 +11827,18 @@ function DestinationGuideView({
 
   async function fetchItineraryProgram(dest, startDate, endDate, prefs) {
     const countryCode = String(displayGuide?.countryCode || "").trim();
+    const country = String(displayGuide?.country || "").trim();
+    if (isVerifiedPlannerEnabled()) {
+      return fetchVerifiedItinerary({
+        destination: dest,
+        startDate,
+        endDate,
+        language,
+        prefs,
+        countryCode,
+        country,
+      });
+    }
     return fetchItineraryGroqFirst({
       destination: dest,
       startDate,
@@ -11935,12 +12156,6 @@ function DestinationGuideView({
                             ""
                         ).trim();
                   let heroSrc = (primary || syncFallback).trim();
-                  if (!heroSrc) {
-                    const lat = Number(displayGuide.coordinates?.lat);
-                    const lon = Number(displayGuide.coordinates?.lon);
-                    const mapHero = buildOsmStaticMapHeroUrl(lat, lon);
-                    if (mapHero) heroSrc = mapHero;
-                  }
                   if (!heroSrc && !heroFetchSettled) {
                     return (
                       <div className="flex h-full w-full items-center justify-center">
@@ -13370,6 +13585,9 @@ function PlannerView({
     selectedTrip ||
     (trips || []).find((t) => normTripId(t?.id) === normTripId(selectedTripIdProp)) ||
     null;
+  const tripCityLabel = String(
+    resolvedTrip?.destination || resolvedTrip?.title || resolvedTrip?.name || ""
+  ).trim();
   const selectedTripIdSafe = normTripId(resolvedTrip?.id || selectedTripIdProp || "");
   const dayActivities = (activities || [])
     .filter(
@@ -13493,64 +13711,30 @@ function PlannerView({
           </button>
           <div className="space-y-3">
             {dayActivities && dayActivities.length > 0 ? dayActivities.map((a) => (
-              <div
+              <PlannerDayActivityCard
                 key={String(a.id)}
-                className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_6px_16px_rgba(15,23,42,0.05)]"
-              >
-                <div className="flex items-center justify-between border-b border-slate-200/80 bg-slate-50/70 px-4 py-3">
-                  <div className="min-w-0 pr-3">
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {String(a.time || "--:--")}
-                    </p>
-                    <p className="truncate font-medium text-slate-900">
-                      <UiTranslatedActivityTitle
-                        raw={String(a?.title || a?.name || "")}
-                        emptyFallback={t("planner.activityNamePlaceholder")}
-                        className="truncate"
-                      />
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2 px-4 py-3">
-                  <button
-                    onClick={() => {
-                      setViewingActivity(a);
-                      setActivityDetailsOpen(true);
-                    }}
-                    className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    title={t("planner.viewDetails")}
-                  >
-                    <Eye size={14} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditingActivity(a);
-                      const rawAct = String(a?.title || a?.name || "").trim();
-                      setTitle(
-                        rawAct
-                          ? displayActivityTitleForLocale(rawAct, language)
-                          : ""
-                      );
-                      setDescription(String(a?.description || ""));
-                      setLocation(String(a?.location || ""));
-                      setCost(String(a?.cost ?? ""));
-                      setActivityTime(String(a?.time || ""));
-                      setEditActivityModalOpen(true);
-                    }}
-                    className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    title={t("tripCard.edit")}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    onClick={() => setActivityToDelete(a)}
-                    className="rounded-full border border-rose-100 bg-white p-2 text-rose-700 shadow-sm transition hover:bg-rose-50"
-                    title={t("tripCard.delete")}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
+                activity={a}
+                cityLabel={tripCityLabel}
+                onView={() => {
+                  setViewingActivity(a);
+                  setActivityDetailsOpen(true);
+                }}
+                onEdit={() => {
+                  setEditingActivity(a);
+                  const rawAct = String(a?.title || a?.name || "").trim();
+                  setTitle(
+                    rawAct
+                      ? displayActivityTitleForLocale(rawAct, language)
+                      : ""
+                  );
+                  setDescription(String(a?.description || ""));
+                  setLocation(String(a?.location || ""));
+                  setCost(String(a?.cost ?? ""));
+                  setActivityTime(String(a?.time || ""));
+                  setEditActivityModalOpen(true);
+                }}
+                onDelete={() => setActivityToDelete(a)}
+              />
             )) : (
               <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
                 <p className="font-medium text-slate-700">{t("planner.noActivitiesThisDate")}</p>

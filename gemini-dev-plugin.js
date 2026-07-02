@@ -8,7 +8,8 @@
  * - POST /api/ui-translate — traduction des libellés utilisateur (GROQ_API_KEY ou GEMINI_API_KEY).
  * - POST /api/images/unsplash — proxy Unsplash (UNSPLASH_ACCESS_KEY).
  * - POST /api/images/commons-info — attribution Commons (auteur + licence).
- * - POST /api/images/resolve — résolution Wikidata + cache image_resolve_cache.
+ * - POST /api/planner/generate-itinerary — pipeline itinéraire vérifié (dev).
+ * - POST /api/planner/verify-itinerary — enrichissement lieux (dev).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -457,6 +458,52 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
               : "_unsplash";
         const mod = await import(`./api/images/${file}.js`);
         await routeVercelApiHandler(req, res, mod.handler, body);
+      } catch (e) {
+        sendJson(res, 502, { ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
+
+    if (
+      pathname === "/api/planner/generate-itinerary" ||
+      pathname === "/api/planner/verify-itinerary"
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") {
+        res.statusCode = 200;
+        res.end();
+        return;
+      }
+      if (req.method !== "POST") {
+        sendJson(res, 405, { error: "Method not allowed" });
+        return;
+      }
+      const groqKey = readGroqKey(envDir);
+      if (groqKey) process.env.GROQ_API_KEY = groqKey;
+      const geminiKey = readGeminiKeyFromEnvFiles(envDir);
+      if (geminiKey) process.env.GEMINI_API_KEY = geminiKey;
+      const fsqKey = readFoursquareKey(envDir);
+      if (fsqKey) process.env.FOURSQUARE_API_KEY = fsqKey;
+      const taKey = readServerKey(envDir, "TRIPADVISOR_API_KEY");
+      if (taKey) process.env.TRIPADVISOR_API_KEY = taKey;
+      const supabaseUrl =
+        readServerKey(envDir, "VITE_SUPABASE_URL") || readServerKey(envDir, "SUPABASE_URL");
+      if (supabaseUrl) process.env.VITE_SUPABASE_URL = supabaseUrl;
+      const supabaseServiceKey = readServerKey(envDir, "SUPABASE_SERVICE_ROLE_KEY");
+      if (supabaseServiceKey) process.env.SUPABASE_SERVICE_ROLE_KEY = supabaseServiceKey;
+      let body = {};
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      try {
+        const action = pathname.split("/").pop();
+        req.query = { ...(req.query || {}), action };
+        const mod = await import("./api/planner/[action].js");
+        await routeVercelApiHandler(req, res, mod.default, body);
       } catch (e) {
         sendJson(res, 502, { ok: false, error: String(e?.message || e) });
       }

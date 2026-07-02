@@ -144,6 +144,8 @@ export async function fetchUnsplashHeroCandidate(label, context = "") {
 
   const raw = String(label || context || "").trim();
   const stem = resolveSearchLabel(label, context);
+  const cityStem = String(stem || label || "").trim();
+  if (cityStem.length < 3) return null;
   const queryInput = context ? `${stem || label}, ${context}` : raw;
   const q = buildCityHeroUnsplashQuery(queryInput);
   if (!q) return null;
@@ -176,29 +178,7 @@ export async function fetchUnsplashHeroCandidate(label, context = "") {
     heroPenalizeSkyOnly: true,
   };
 
-  let hit = await searchUnsplashHero(q, { ...scoreOpts, perPage: 20, acceptAnyResult: Boolean(context) });
-  if (!hit && context) {
-    const geoTail = String(context || "").trim();
-    hit = await searchUnsplashHero(`${geoTail} landscape travel destination`, {
-      ...scoreOpts,
-      perPage: 15,
-      acceptAnyResult: true,
-    });
-  }
-  if (!hit && context) {
-    const country = String(context || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .pop();
-    if (country && country.length >= 4) {
-      hit = await searchUnsplashHero(`${country} landscape travel destination`, {
-        ...scoreOpts,
-        perPage: 15,
-        acceptAnyResult: true,
-      });
-    }
-  }
+  let hit = await searchUnsplashHero(q, { ...scoreOpts, perPage: 20, acceptAnyResult: false });
   return hit;
 }
 

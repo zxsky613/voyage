@@ -6,6 +6,7 @@
  */
 import {
   isLikelyOrbitalOrMapImagery,
+  isLikelyWikiBrandOrLogoImage,
   isOrbitalCommonsCategoryName,
   scoreScenicCommonsFile,
 } from "../lib/images/wikiImageFilters.js";
@@ -20,6 +21,14 @@ import { buildCityImageCacheKey } from "../cityHeroStem.js";
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
+}
+
+/** Rejet héro : carte, logo, drapeau ou SVG vectoriel. */
+function isRejectedHeroImage(url, fileTitle) {
+  return (
+    isLikelyWikiBrandOrLogoImage(url, fileTitle) ||
+    isLikelyOrbitalOrMapImagery(url, fileTitle, "")
+  );
 }
 
 function sleep(ms) {
@@ -51,6 +60,51 @@ const groundScore = scoreScenicCommonsFile("Harbour_Crete_panorama.jpg", "https:
 });
 assert(satScore < 0, "satellite hero score negative");
 assert(groundScore > 0, "ground hero score positive");
+
+const svgScore = scoreScenicCommonsFile("Apulia in Italy.svg", "https://x/a.svg.png", 2000, 1200, {
+  hero: true,
+});
+const photoScore = scoreScenicCommonsFile("Polignano a Mare, Puglia.jpg", "https://x/p.jpg", 2000, 1200, {
+  hero: true,
+});
+assert(svgScore < 0, "SVG locator hero score must be strongly negative");
+assert(photoScore > 0, "JPEG hero should score well (photo bias)");
+
+const mustReject = [
+  ["", "File:Apulia in Italy.svg"],
+  ["", "File:Phuket in Thailand.svg"],
+  ["", "File:Bavaria in Germany.svg"],
+  ["", "File:Hokkaido in Japan.svg"],
+  ["", "File:Andalusia in Spain.svg"],
+  ["", "File:California in the United States.svg"],
+  ["", "File:Nairobi County in Kenya.svg"],
+  ["", "File:São Paulo in Brazil.svg"],
+  ["", "File:São Paulo location map.svg"],
+  [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Some_Region_locator.svg.png/640px-Some_Region_locator.svg.png",
+    "",
+  ],
+  ["", "File:Country location map generic.svg"],
+  ["", "File:Flag of Anywhere.svg"],
+  ["", "File:Coat of arms of Somewhere.svg"],
+];
+for (const [url, title] of mustReject) {
+  assert(isRejectedHeroImage(url, title), `must reject: ${title || url}`);
+}
+
+const mustKeep = [
+  ["https://upload.wikimedia.org/x/Polignano.jpg", "File:Polignano a Mare, Puglia.jpg"],
+  ["https://upload.wikimedia.org/x/Frejus.jpg", "File:Fréjus port.jpg"],
+  ["https://upload.wikimedia.org/x/Avignon.jpg", "File:Avignon Palais des Papes.jpg"],
+  ["https://upload.wikimedia.org/x/Kyoto.jpg", "File:Kyoto Fushimi Inari.jpg"],
+  ["https://upload.wikimedia.org/x/CapeTown.jpg", "File:Cape Town Table Mountain.jpg"],
+  ["https://upload.wikimedia.org/x/Rio.jpg", "File:Rio de Janeiro Copacabana.jpg"],
+  ["https://upload.wikimedia.org/x/Bangkok.jpg", "File:Bangkok Grand Palace.jpeg"],
+  ["https://upload.wikimedia.org/x/Munich.webp", "File:Munich Marienplatz.webp"],
+];
+for (const [url, title] of mustKeep) {
+  assert(!isRejectedHeroImage(url, title), `must keep photo: ${title}`);
+}
 
 const capriSplit = splitResolveImageLabelContext("Capri, Gracias a Dios, Honduras", "");
 assert(capriSplit.searchLabel === "Capri", "Capri label stem");

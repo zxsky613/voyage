@@ -2,12 +2,23 @@ import { createClient } from "@supabase/supabase-js";
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from "../_helpers.js";
 
 let supabaseAdmin = null;
+let warnedMissingServiceKey = false;
 
 function getAdmin() {
   if (supabaseAdmin) return supabaseAdmin;
   const url = getSupabaseUrl();
   const key = getSupabaseServiceRoleKey();
-  if (!url || !key) return null;
+  if (!url || !key) {
+    if (!warnedMissingServiceKey) {
+      warnedMissingServiceKey = true;
+      console.warn(
+        "[image-resolve-cache] SUPABASE_SERVICE_ROLE_KEY absente — cache Supabase désactivé ; " +
+          "le resolver Wikidata/Commons risque d’être rate-limité (429). Ajoutez la clé service-role " +
+          "en local (.env) et sur Vercel."
+      );
+    }
+    return null;
+  }
   supabaseAdmin = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });

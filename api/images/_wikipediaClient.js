@@ -1,4 +1,5 @@
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
+import { fetchJsonWithRetry } from "./_fetchRetry.js";
 import { commonsThumbUrl, wikiUserAgent } from "./_headCheck.js";
 
 /**
@@ -14,10 +15,11 @@ export async function fetchWikipediaPageCandidate(lang, title, options = {}) {
   const api =
     `https://${l}.wikipedia.org/w/api.php?action=query&format=json&redirects=1&origin=*` +
     `&titles=${encodeURIComponent(t)}&prop=pageimages&pithumbsize=1920`;
-  const r = await fetch(api, { headers: { "User-Agent": wikiUserAgent() } });
-  if (!r.ok) return null;
-  const j = await r.json();
-  const page = Object.values(j?.query?.pages || {})[0];
+  const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
+    headers: { "User-Agent": wikiUserAgent() },
+  });
+  if (throttled || timedOut || !ok) return null;
+  const page = Object.values(json?.query?.pages || {})[0];
   if (!page || page.missing) return null;
   const src = String(page.thumbnail?.source || "").trim();
   if (!src || isLikelyWikiBrandOrLogoImage(src, t)) return null;
