@@ -4,7 +4,7 @@
  */
 import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { normalizeLabelKey } from "../lib/images/normalizeLabel.js";
+import { normalizeLabel } from "../lib/images/normalizeLabel.js";
 import { resolveImage } from "../api/images/_resolveImage.js";
 
 const envPath = ".env.local";
@@ -28,7 +28,7 @@ const uiLang = process.argv[3] || "fr";
 
 console.log(`warmup-resolve-hero: label="${label}" uiLang=${uiLang}`);
 
-const cacheKey = normalizeLabelKey(label, "");
+const cacheKey = normalizeLabel(label, "");
 console.log(`cache key: ${cacheKey || "(empty)"}`);
 
 const outcome = await resolveImage({ kind: "hero", label, context: "", uiLang });

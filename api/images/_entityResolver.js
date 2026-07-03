@@ -139,6 +139,8 @@ const GEO_TOKEN_ALIAS_GROUPS = [
   ["campania", "campanie", "campana"],
   ["gracias a dios", "gracias ad dios"],
   ["nebraska", "saline county"],
+  ["spain", "espagne", "espana", "spanish", "espagnol", "kingdom of spain"],
+  ["canary islands", "canaries", "islas canarias", "ile canaries", "iles canaries", "canarie"],
 ];
 
 function expandTokenAliases(token) {
@@ -335,7 +337,7 @@ async function wbGetEntityLabelsOnly(ids) {
   return json?.entities || {};
 }
 
-function scoreEntityBase(entity, searchLabel) {
+function scoreEntityBase(entity, searchLabel, kind = "hero") {
   if (!entity?.id) return -999;
   const p31 = entityP31Ids(entity);
   if (p31.some((id) => REJECTED_P31.has(id))) return -500;
@@ -344,7 +346,12 @@ function scoreEntityBase(entity, searchLabel) {
   if (claimValues(entity, "P373").length) score += 25;
   const labelNorm = normalizeForLookup(searchLabel);
   const labels = Object.values(entity.labels || {}).map((l) => normalizeForLookup(l?.value || ""));
-  if (labels.some((l) => l === labelNorm || l.startsWith(labelNorm))) score += 15;
+  if (labels.some((l) => l === labelNorm)) score += 35;
+  else if (labels.some((l) => l.startsWith(labelNorm))) score += 10;
+  if (kind === "hero") {
+    if (p31.some((id) => id === "Q23442" || id === "Q1161185" || id === "Q8502")) score += 25;
+    if (p31.some((id) => id === "Q644371" || id === "Q1248784")) score -= 300;
+  }
   return score;
 }
 
@@ -359,6 +366,26 @@ function searchQueryMatchesContext(searchQuery, contextTokens) {
     if (q.includes(token)) hits += 1;
   }
   return hits >= Math.min(2, contextTokens.length) || contextTokens.some((t) => t.length >= 5 && q.includes(t));
+}
+
+function stripDiacritics(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Variantes de requête wbsearch : avec accents puis sans accents. */
+function searchQueryVariants(query) {
+  const t = String(query || "").trim();
+  if (!t) return [];
+  const stripped = stripDiacritics(t);
+  return stripped !== t ? [t, stripped] : [t];
+}
+
+function resolveSearchLanguages(uiLang) {
+  const lang = String(uiLang || "fr").slice(0, 2);
+  const order = [lang, "en", "es", "fr"];
+  return [...new Set(order)];
 }
 
 /**
@@ -387,17 +414,19 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
   const seen = new Set();
 
   for (const q of queries.slice(0, 4)) {
-    for (const langTry of lang !== "en" ? [lang, "en"] : [lang]) {
-      const batch = await wbSearchEntities(q, langTry, 10);
-      for (const hit of batch) {
-        const id = String(hit?.id || "").trim();
-        if (!id) continue;
-        if (!seen.has(id)) {
-          seen.add(id);
-          hits.push({ id, searchQuery: q });
-        } else if (searchQueryMatchesContext(q, contextTokens)) {
-          const row = hits.find((h) => h.id === id);
-          if (row) row.searchQuery = q;
+    for (const qTry of searchQueryVariants(q)) {
+      for (const langTry of resolveSearchLanguages(lang)) {
+        const batch = await wbSearchEntities(qTry, langTry, 10);
+        for (const hit of batch) {
+          const id = String(hit?.id || "").trim();
+          if (!id) continue;
+          if (!seen.has(id)) {
+            seen.add(id);
+            hits.push({ id, searchQuery: qTry });
+          } else if (searchQueryMatchesContext(qTry, contextTokens)) {
+            const row = hits.find((h) => h.id === id);
+            if (row) row.searchQuery = qTry;
+          }
         }
       }
     }
@@ -413,10 +442,10 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
 
   const geoLabelMap = await fetchGeoLabelMap(candidateEntities);
 
-  let best = null;
-  let bestScore = -9999;
+  /** @type {{ ent: object, score: number }[]} */
+  const ranked = [];
   for (const ent of candidateEntities) {
-    const base = scoreEntityBase(ent, searchLabel);
+    const base = scoreEntityBase(ent, searchLabel, kind);
     if (base <= -500) continue;
 
     const hit = hitById[ent.id];
@@ -431,19 +460,32 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
     if (contextTokens.length && !contextOk) continue;
 
     const provenanceBonus = searchMatched ? 45 : 0;
-    const sc = base + ctxScore + provenanceBonus;
-    if (sc > bestScore) {
-      bestScore = sc;
-      best = ent;
-    }
+    ranked.push({ ent, score: base + ctxScore + provenanceBonus });
+  }
+
+  if (!ranked.length) return null;
+
+  ranked.sort((a, b) => b.score - a.score);
+
+  /** @type {object|null} */
+  let best = null;
+  /** @type {string[]} */
+  let p31Ids = [];
+  /** @type {Set<string>} */
+  let expandedP279 = new Set();
+
+  for (const { ent } of ranked.slice(0, 8)) {
+    const ids = entityP31Ids(ent);
+    const p279Direct = [...entityP279Ids(ent), ...ids];
+    const expanded = await expandP279(p279Direct);
+    if (!matchesKindType(ids, kind, expanded)) continue;
+    best = ent;
+    p31Ids = ids;
+    expandedP279 = expanded;
+    break;
   }
 
   if (!best?.id) return null;
-
-  const p31Ids = entityP31Ids(best);
-  const p279Direct = entityP279Ids(best);
-  const expandedP279 = await expandP279(p279Direct);
-  if (!matchesKindType(p31Ids, kind, expandedP279)) return null;
 
   const p18Filenames = claimValues(best, "P18")
     .map((v) => String(v || "").trim())

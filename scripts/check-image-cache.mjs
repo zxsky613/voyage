@@ -5,6 +5,7 @@
  */
 import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeLabel } from "../lib/images/normalizeLabel.js";
 
 /** @typedef {{ ok: boolean, reason?: string }} CheckResult */
 
@@ -136,6 +137,65 @@ async function checkTable(db, table, healthRow, onConflict, previewColumns) {
   return result;
 }
 
+/**
+ * Écrit puis relit une entrée via normalizeLabel — la clé doit matcher (hit).
+ * @param {ReturnType<typeof createClient>} db
+ */
+async function checkNormalizeLabelReadWriteCoherence(db) {
+  console.log("\n=== normalizeLabel read/write coherence ===");
+  const probeLabel = "Ténérife, Canaries, Espagne";
+  const labelNormalized = normalizeLabel(probeLabel, "");
+  const expectedKey = "tenerife|canaries, espagne";
+
+  if (labelNormalized !== expectedKey) {
+    console.log(`normalizeLabel FAIL — got "${labelNormalized}", expected "${expectedKey}"`);
+    return { ok: false, reason: "normalizeLabel key mismatch" };
+  }
+  console.log(`normalizeLabel OK — "${probeLabel}" → "${labelNormalized}"`);
+
+  const row = {
+    label_normalized: labelNormalized,
+    kind: "hero",
+    entity_id: "Q40846",
+    image_url: "https://example.com/coherence-probe.jpg",
+    source: "fallback",
+    updated_at: new Date().toISOString(),
+  };
+
+  const upsert = await db.from("image_resolve_cache").upsert(row, { onConflict: "label_normalized,kind" });
+  if (upsert.error) {
+    return { ok: false, reason: `coherence upsert FAIL — ${classifySupabaseError(upsert.error)}` };
+  }
+
+  const readKey = normalizeLabel(probeLabel, "");
+  const readBack = await db
+    .from("image_resolve_cache")
+    .select("label_normalized, image_url")
+    .eq("label_normalized", readKey)
+    .eq("kind", "hero")
+    .maybeSingle();
+
+  if (readBack.error || !readBack.data?.image_url) {
+    return {
+      ok: false,
+      reason: `coherence read-back FAIL — ${classifySupabaseError(readBack.error)}`,
+    };
+  }
+  console.log("READ via normalizeLabel: OK (hit)");
+
+  const del = await db
+    .from("image_resolve_cache")
+    .delete()
+    .eq("label_normalized", readKey)
+    .eq("kind", "hero");
+  if (del.error) {
+    return { ok: false, reason: `coherence cleanup FAIL — ${classifySupabaseError(del.error)}` };
+  }
+  console.log("DELETE coherence probe: OK");
+
+  return { ok: true };
+}
+
 const fileEnv = loadEnvFile(".env.local");
 const url =
   process.env.SUPABASE_URL ||
@@ -192,6 +252,9 @@ const imageResult = await checkTable(
   ["label_normalized", "kind", "entity_id", "source", "updated_at", "created_at"]
 );
 if (!imageResult.ok) failures.push(`image_resolve_cache: ${imageResult.reason}`);
+
+const coherenceResult = await checkNormalizeLabelReadWriteCoherence(db);
+if (!coherenceResult.ok) failures.push(`normalizeLabel coherence: ${coherenceResult.reason}`);
 
 const placeResult = await checkTable(
   db,

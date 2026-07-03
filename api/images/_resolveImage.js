@@ -1,4 +1,4 @@
-import { normalizeLabelKey, splitResolveImageLabelContext, inferDefaultHeroResolveContext } from "../../lib/images/normalizeLabel.js";
+import { normalizeLabel, splitResolveImageLabelContext, inferDefaultHeroResolveContext } from "../../lib/images/normalizeLabel.js";
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
 import {
   isCacheConfigured,
@@ -114,7 +114,7 @@ export async function resolveImage(params) {
   const context = String(params.context || "").trim();
   const { searchLabel, context: geoContext } = splitResolveImageLabelContext(params.label, context);
   const effectiveContext = geoContext || (kind === "hero" ? inferDefaultHeroResolveContext(params.label) : "");
-  const labelNormalized = normalizeLabelKey(params.label, context || effectiveContext);
+  const labelNormalized = normalizeLabel(params.label, context);
 
   let cacheField = noteCacheStatusAtResolveStart();
   const cacheReady = isCacheConfigured() && cacheField !== "disabled";

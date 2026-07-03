@@ -11,7 +11,7 @@ import {
   scoreScenicCommonsFile,
 } from "../lib/images/wikiImageFilters.js";
 import {
-  normalizeLabelKey,
+  normalizeLabel,
   splitResolveImageLabelContext,
 } from "../lib/images/normalizeLabel.js";
 import { resolveEntity } from "../api/images/_entityResolver.js";
@@ -113,12 +113,17 @@ assert(/honduras/i.test(capriSplit.context), "Capri HN context preserved");
 const capriIt = splitResolveImageLabelContext("Capri, Campania, Italie", "");
 assert(/italie|campania/i.test(capriIt.context), "Capri IT context");
 
-const creteKeys = ["Crete", "Crète", "克里特岛"].map((l) => normalizeLabelKey(l, ""));
+const creteKeys = ["Crete", "Crète", "克里特岛"].map((l) => normalizeLabel(l, ""));
 assert(new Set(creteKeys).size === 1, `Crete cache keys differ: ${creteKeys.join(" | ")}`);
 
 assert(
-  normalizeLabelKey("Capri, Gracias a Dios, Honduras", "") !==
-    normalizeLabelKey("Capri, Campania, Italie", ""),
+  normalizeLabel("Ténérife, Canaries, Espagne", "") === "tenerife|canaries, espagne",
+  "Ténérife seed cache key"
+);
+
+assert(
+  normalizeLabel("Capri, Gracias a Dios, Honduras", "") !==
+    normalizeLabel("Capri, Campania, Italie", ""),
   "Capri HN vs IT cache keys must differ"
 );
 
@@ -157,6 +162,14 @@ const creteEntity = await liveResolveEntity("Crete", "en", "hero", "Greece");
 assert(
   creteEntity?.qid === "Q34374",
   `Crete (Greece) entity expected Q34374, got ${creteEntity?.qid || "null"}`
+);
+
+await sleep(1200);
+
+const tenerifeEntity = await liveResolveEntity("Ténérife", "fr", "hero", "Canaries, Espagne");
+assert(
+  tenerifeEntity?.qid === "Q40846",
+  `Ténérife (Canaries) expected Q40846, got ${tenerifeEntity?.qid || "null"}`
 );
 
 await sleep(1200);

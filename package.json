@@ -23,7 +23,7 @@
     "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
     "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
     "fix:logo": "node scripts/fix-logo-white-dot.mjs",
-    "test": "node --test placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
+    "test": "node --test placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs lib/images/normalizeLabel.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",
