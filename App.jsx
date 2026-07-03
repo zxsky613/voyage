@@ -108,6 +108,7 @@ import {
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
 import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
+import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
 import {
   scheduleActivityReminders,
   scheduleActivityRemindersBatch,
@@ -8651,7 +8652,7 @@ function useScrollLock(active) {
       body.style.top = `-${s.scrollY}px`;
       body.style.width = "100%";
       html.classList.add("modal-open");
-      body.querySelectorAll("header, [class*='sticky']").forEach((el) => {
+      body.querySelectorAll("header, .app-top-nav, [class*='sticky']").forEach((el) => {
         el.dataset.prevVis = el.style.visibility || "";
         el.style.visibility = "hidden";
       });
@@ -8669,7 +8670,7 @@ function useScrollLock(active) {
         body.style.top = "";
         body.style.width = "";
         html.classList.remove("modal-open");
-        body.querySelectorAll("header, [class*='sticky']").forEach((el) => {
+        body.querySelectorAll("header, .app-top-nav, [class*='sticky']").forEach((el) => {
           el.style.visibility = el.dataset.prevVis || "";
           delete el.dataset.prevVis;
         });
@@ -15544,8 +15545,8 @@ export default function App() {
   );
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
-  /** Monte le composant Recherche dès le départ pour que la vidéo et le DOM soient prêts. */
-  const [destTabReady, setDestTabReady] = useState(true);
+  /** Monte Recherche après la 1ère visite (évite modales fixed + effets au login sur autre onglet). */
+  const [destTabReady, setDestTabReady] = useState(false);
   const [destinationInvalidModalOpen, setDestinationInvalidModalOpen] = useState(false);
   const [destinationInvalidMessage, setDestinationInvalidMessage] = useState("");
   const [tripDateConflictModalOpen, setTripDateConflictModalOpen] = useState(false);
@@ -15896,6 +15897,28 @@ export default function App() {
       return [...keep, ...fresh];
     });
   };
+
+  useEffect(() => {
+    if (authLoading) return;
+    resetScrollLockOnBoot();
+  }, [authLoading]);
+
+  useEffect(() => {
+    if (authLoading || !session || activeTab === "destination") return;
+    try {
+      const raw = sessionStorage.getItem("tp_last_itinerary_result");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data?.popupOpen) {
+        sessionStorage.setItem(
+          "tp_last_itinerary_result",
+          JSON.stringify({ ...data, popupOpen: false })
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [authLoading, session, activeTab]);
 
   useEffect(() => {
     let mounted = true;
@@ -17532,7 +17555,7 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ display: activeTab === "trips" ? undefined : "none" }}>
+        {activeTab === "trips" ? (
           <AllTripsView
             trips={trips}
             onOpenTrip={(trip) => {
@@ -17542,9 +17565,9 @@ export default function App() {
             onEditTrip={setEditingTrip}
             onDeleteTrip={deleteTrip}
           />
-        </div>
+        ) : null}
 
-        <div style={{ display: activeTab === "planner" ? undefined : "none" }}>
+        {activeTab === "planner" ? (
           <div
             id="tp-planner-main"
             className="space-y-4 scroll-mt-[var(--app-header-clearance)]"
@@ -17697,9 +17720,9 @@ export default function App() {
               setMonthCursor={setMonthCursor}
             />
           </div>
-        </div>
+        ) : null}
 
-        <div style={{ display: activeTab === "budget" ? undefined : "none" }}>
+        {activeTab === "budget" ? (
           <section className="pb-4">
             <div className="space-y-7">
               {(() => {
@@ -17777,9 +17800,9 @@ export default function App() {
               })()}
             </div>
           </section>
-        </div>
+        ) : null}
 
-        <div style={{ display: activeTab === "stays" ? undefined : "none" }}>
+        {activeTab === "stays" ? (
           <StaysView
             trips={trips}
             destinationHint={destinationConfirmed}
@@ -17791,7 +17814,7 @@ export default function App() {
               setActiveTab("budget");
             }}
           />
-        </div>
+        ) : null}
       </main>
 
       <nav className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-1/2 z-30 w-[min(100%-1.5rem,calc(100vw-1.5rem))] max-w-3xl -translate-x-1/2 rounded-[2.2rem] bg-white/92 p-1.5 shadow-[0_18px_44px_rgba(2,6,23,0.12)] backdrop-blur-xl sm:p-2">
