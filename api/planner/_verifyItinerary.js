@@ -10,6 +10,8 @@ import { readPlaceEnrichmentCache, writePlaceEnrichmentCache, normalizePlaceCach
 import { searchFoursquarePlace } from "../foursquare/_textSearch.js";
 import { applyGeoMismatchGuard } from "../../lib/planner/geoGuard.js";
 
+const PLACE_LOOKUP_TIMEOUT_MS = 3000;
+
 /**
  * @template T
  * @param {T[]} items
@@ -31,6 +33,24 @@ async function mapPool(items, fn, concurrency = 5) {
 }
 
 /**
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @returns {Promise<{ timedOut: true } | T>}
+ * @template T
+ */
+async function withLookupTimeout(promise, ms) {
+  let timerId;
+  const timeout = new Promise((resolve) => {
+    timerId = setTimeout(() => resolve({ timedOut: true }), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timerId);
+  }
+}
+
+/**
  * @param {string} name
  * @param {string} city
  * @param {string} near
@@ -38,7 +58,7 @@ async function mapPool(items, fn, concurrency = 5) {
  * @param {{ inc: () => void, get: () => number }} taCounter
  * @param {{ searchName?: string, category?: string, collectDebug?: boolean }} [opts]
  */
-export async function enrichPlaceByName(name, city, near, locale, taCounter, opts = {}) {
+async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts = {}) {
   const placeName = String(name || "").trim();
   const cityNorm = String(city || "").trim();
   const searchName = String(opts.searchName || "").trim();
@@ -47,22 +67,6 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
   let debugEntry = opts.collectDebug
     ? { name: placeName, searchName: searchName || placeName, city: cityNorm }
     : null;
-
-  if (!placeName) {
-    const out = { status: "unverified", source: "none", name: placeName };
-    if (debugEntry) debugEntry.reason = "empty_name";
-    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
-  }
-
-  const cached = await readPlaceEnrichmentCache(placeName, cityNorm);
-  if (cached) {
-    const out = { ...cached, name: cached.name || placeName };
-    if (debugEntry) {
-      debugEntry.reason = "cache_hit";
-      debugEntry.status = cached.status;
-    }
-    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
-  }
 
   if (isTripAdvisorConfigured()) {
     taCounter.inc();
@@ -136,6 +140,46 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
   return opts.collectDebug ? { ...unverified, _debug: debugEntry } : unverified;
 }
 
+export async function enrichPlaceByName(name, city, near, locale, taCounter, opts = {}) {
+  const placeName = String(name || "").trim();
+  const cityNorm = String(city || "").trim();
+  /** @type {object|null} */
+  let debugEntry = opts.collectDebug
+    ? {
+        name: placeName,
+        searchName: String(opts.searchName || "").trim() || placeName,
+        city: cityNorm,
+      }
+    : null;
+
+  if (!placeName) {
+    const out = { status: "unverified", source: "none", name: placeName };
+    if (debugEntry) debugEntry.reason = "empty_name";
+    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
+  }
+
+  const cached = await readPlaceEnrichmentCache(placeName, cityNorm);
+  if (cached) {
+    const out = { ...cached, name: cached.name || placeName };
+    if (debugEntry) {
+      debugEntry.reason = "cache_hit";
+      debugEntry.status = cached.status;
+    }
+    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
+  }
+
+  const raced = await withLookupTimeout(
+    enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts),
+    PLACE_LOOKUP_TIMEOUT_MS
+  );
+  if (raced && typeof raced === "object" && raced.timedOut) {
+    const partial = { name: placeName, status: "partial", source: "timeout" };
+    if (debugEntry) debugEntry.reason = "lookup_timeout";
+    return opts.collectDebug ? { ...partial, _debug: debugEntry } : partial;
+  }
+  return raced;
+}
+
 /**
  * @param {Array<{ id?: string, name: string, searchName?: string, category?: string }>} candidates
  * @param {{ city: string, near: string, locale: string, concurrency?: number, debug?: boolean }} options
@@ -182,7 +226,7 @@ export async function verifyCandidatePlaces(candidates, options) {
         ...meta,
       };
     },
-    options.concurrency || 5
+    options.concurrency || 6
   );
 
   const guarded = applyGeoMismatchGuard(enriched);

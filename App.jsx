@@ -43,6 +43,7 @@ import {
   PartyPopper,
   Bike,
   CalendarCheck,
+  CalendarPlus,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
@@ -50,6 +51,7 @@ import {
   fetchGeminiSuggestedActivities,
   fetchItineraryGroqFirst,
   fetchVerifiedItinerary,
+  fetchSuggestHighlights,
   fetchGroqTips,
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
@@ -59,6 +61,7 @@ import {
   pickPlacesListAfterScriptFilter,
   filterTipLinesForUiLang,
   filterSuggestedActivitiesForUiLang,
+  isUninformativeMustSeePlaceLabel,
 } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
@@ -75,10 +78,12 @@ import { CITY_CATALOG, CITY_ALIASES } from "./cityCatalogData.js";
 import { BUNDLED_CITY_HERO_PATHS, CITY_HERO_IMAGE_URLS, CITY_HERO_IMAGE_URL_LISTS } from "./cityHeroBundled.js";
 import { extractCityPrompt, heroImageStemFromDestination, buildCityHeroLookupKeys, buildCityImageCacheKey, isTrustworthyHeroImageUrl, buildNominatimCityQuery } from "./cityHeroStem.js";
 import { useI18n, LanguageSelector, LanguageFab } from "./i18n/I18nContext.jsx";
+import { resolveUiString } from "./i18n/resolveUiString.js";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale, resolveHeroLookupLabel } from "./i18n/cityDisplay.js";
 import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
 import { getResolvedImage, getResolvedImageUrl } from "./lib/getResolvedImage.js";
+import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
 import { resolveImagePlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
 import {
   stripItineraryBulletTimePrefix,
@@ -100,6 +105,16 @@ import {
   pickActivityDisplayPhotoUrl,
   shouldShowTripAdvisorAttribution,
 } from "./lib/planner/activityImageSource.js";
+import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
+import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
+import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
+import {
+  scheduleActivityReminders,
+  scheduleActivityRemindersBatch,
+  cancelActivityReminders,
+  isNativeRemindersAvailable,
+} from "./lib/notifications/activityReminders.js";
+import { isTripRemindersEnabled, setTripRemindersEnabled } from "./lib/notifications/tripRemindersPref.js";
 import {
   inferDefaultHeroResolveContext,
   splitResolveImageLabelContext,
@@ -510,7 +525,7 @@ function getUnsplashHeroConflictAvoidKeywords(cityInput) {
 /** Bucket Supabase Storage (public) pour la couche 3 — fichiers {slug}.webp ex. tokyo.webp */
 const CITY_HERO_STORAGE_BUCKET = import.meta.env.VITE_CITY_HERO_STORAGE_BUCKET || "";
 const cityImageMemoryCache = {};
-const CITY_IMG_LS_PREFIX = "tp_city_img_v2_";
+const CITY_IMG_LS_PREFIX = "tp_city_img_v3_";
 const CITY_IMG_LS_LEGACY_PREFIX = "tp_city_img_";
 
 function getCityImageLocalStorageKey(cacheKey) {
@@ -534,6 +549,25 @@ function purgeLegacyCityImageLocalStorageOnce() {
   }
 }
 purgeLegacyCityImageLocalStorageOnce();
+
+/** One-shot : purge entrées vides / rejetées (v2 et v3) — ne jamais réutiliser un échec héro. */
+function purgeNegativeCityImageLocalStorageOnce() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    const prefixes = [CITY_IMG_LS_PREFIX, "tp_city_img_v2_"];
+    const toRemove = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k || !prefixes.some((p) => k.startsWith(p))) continue;
+      const v = window.localStorage.getItem(k);
+      if (!v || !acceptValidatedCachedHeroUrl(String(v))) toRemove.push(k);
+    }
+    for (const k of toRemove) window.localStorage.removeItem(k);
+  } catch (_e) {
+    /* ignore */
+  }
+}
+purgeNegativeCityImageLocalStorageOnce();
 
 function isRejectedCachedHeroUrl(url) {
   const s = String(url || "").trim();
@@ -1143,10 +1177,12 @@ function InviteeEmailAvatar({ email, session }) {
   );
 }
 
-function participantDisplayFromRaw(value, currentUserDisplayName) {
+function participantDisplayFromRaw(value, currentUserDisplayName, uiLang = "fr") {
   const raw = String(value || "").trim();
-  if (!raw) return "Membre";
-  if (raw.toLowerCase() === "moi") return String(currentUserDisplayName || "Moi");
+  if (!raw) return resolveUiString(uiLang, "modals.memberDefault");
+  if (raw.toLowerCase() === "moi") {
+    return String(currentUserDisplayName || resolveUiString(uiLang, "modals.selfLabel"));
+  }
   if (!raw.includes("@")) return raw;
   const local = raw.split("@")[0] || "";
   const pretty = local
@@ -1161,7 +1197,7 @@ function participantDisplayFromRaw(value, currentUserDisplayName) {
 /**
  * Libellé « Moi » : pour l’organisateur c’est le prénom du viewer ; pour un invité, « Moi » = l’hôte.
  */
-function participantDisplayFromRawForTrip(value, session, trip, ownerPeer) {
+function participantDisplayFromRawForTrip(value, session, trip, ownerPeer, uiLang = "fr") {
   const raw = String(value || "").trim();
   if (
     raw.toLowerCase() === "moi" &&
@@ -1175,16 +1211,16 @@ function participantDisplayFromRawForTrip(value, session, trip, ownerPeer) {
       const full = `${f} ${l}`.trim();
       if (full) return full;
       const em = String(ownerPeer.email || "").trim();
-      if (em) return participantDisplayFromRaw(em, getCurrentUserDisplayName(session));
+      if (em) return participantDisplayFromRaw(em, getCurrentUserDisplayName(session), uiLang);
     }
-    return "Organisateur";
+    return resolveUiString(uiLang, "modals.organizerDefault");
   }
-  return participantDisplayFromRaw(value, getCurrentUserDisplayName(session));
+  return participantDisplayFromRaw(value, getCurrentUserDisplayName(session), uiLang);
 }
 
-function resolveVoterLabel(vote, session) {
+function resolveVoterLabel(vote, session, uiLang = "fr") {
   const currentUserId = String(session?.user?.id || "");
-  if (String(vote?.voter_id || "") === currentUserId) return "Moi";
+  if (String(vote?.voter_id || "") === currentUserId) return resolveUiString(uiLang, "modals.selfLabel");
   const named = String(vote?.voter_name || vote?.author_name || "").trim();
   if (named) return named;
   const mail = String(vote?.voter_email || vote?.author_email || "").trim();
@@ -1197,7 +1233,9 @@ function resolveVoterLabel(vote, session) {
       .join(" ") || mail;
   }
   const id = String(vote?.voter_id || "");
-  return id ? `Membre ${id.slice(0, 6)}` : "Membre";
+  return id
+    ? resolveUiString(uiLang, "modals.memberWithId", { id: id.slice(0, 6) })
+    : resolveUiString(uiLang, "modals.memberDefault");
 }
 
 function getCityGlassTheme(cityInput) {
@@ -2355,8 +2393,17 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
   const ctx = String(cityInput || "").trim();
   if (!ctx) return "";
 
-  const { searchLabel, context: geoCtx } = splitResolveImageLabelContext(ctx, "");
-  const resolveContext = geoCtx || inferDefaultHeroResolveContext(ctx);
+  if (isResolveHeroEnabled()) {
+    const fromResolve = await getResolvedImageUrl({
+      kind: "hero",
+      label: ctx,
+      context: "",
+      uiLang,
+    });
+    if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
+      return upgradeLandscapeImageUrl(fromResolve);
+    }
+  }
 
   const commonsCandidates = getCityHeroImageCandidates(ctx);
   const commonsFirst =
@@ -2384,16 +2431,6 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
     (isTrustworthyHeroImageUrl(cachedRaw) || isPersistableHeroUrl(cachedRaw))
   ) {
     return upgradeLandscapeImageUrl(cachedRaw);
-  }
-
-  const fromResolve = await getResolvedImageUrl({
-    kind: "hero",
-    label: searchLabel || ctx,
-    context: resolveContext,
-    uiLang,
-  });
-  if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
-    return upgradeLandscapeImageUrl(fromResolve);
   }
 
   const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
@@ -2541,13 +2578,7 @@ async function persistCityImage(cityInput, urlInput) {
   }
 }
 
-// Guide Recherche — vue drone zenithale, vague sur sable & eau turquoise (proche visuel “luxe plage”)
-// Wikimedia Commons — CC0 — Derek Thomson / Unsplash (archivé Commons)
-/** Fond marketing (écran sans guide) — plage ; ne pas réutiliser comme repli du bandeau ville. */
-const DESTINATION_GUIDE_HERO_IMAGE =
-  "https://upload.wikimedia.org/wikipedia/commons/f/fe/Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg";
-const DESTINATION_GUIDE_HERO_IMAGE_1280 =
-  "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg/1280px-Drone_view_of_ocean_shoreline_%28Unsplash%29.jpg";
+// Guide Recherche — bandeau « Envie de partir ? » : poster + vidéo locaux (public/videos/).
 
 /**
  * Recherche — bandeau « Envie de partir ? ».
@@ -2556,6 +2587,8 @@ const DESTINATION_GUIDE_HERO_IMAGE_1280 =
  */
 /** MP4 H.264 local — même visuel plage / drone ; iOS ne lit pas le WebM par défaut (VP9). */
 const DESTINATION_GUIDE_HERO_VIDEO_MP4_FALLBACK = "/videos/plage-hero.mp4";
+/** 1re frame de plage-hero.mp4 — alignée sur la vidéo (évite le flash Wikimedia). */
+const DESTINATION_GUIDE_HERO_VIDEO_POSTER = "/videos/plage-hero-poster.jpg";
 const DESTINATION_GUIDE_HERO_VIDEO_DEFAULT = DESTINATION_GUIDE_HERO_VIDEO_MP4_FALLBACK;
 
 function inferDestinationHeroVideoMimeType(url) {
@@ -5799,21 +5832,26 @@ function buildPlannerActivityGoogleMapsUrl(activityTitle, cityLabel, dayTitle = 
  * Carte activité enrichie (vue calendrier) — image + chip moment + actions.
  * @param {{ activity: object, cityLabel: string, onView: () => void, onEdit: () => void, onDelete: () => void }} props
  */
-function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete }) {
+function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete, onPhotoResolved }) {
   const { t, language } = useI18n();
   const rawTitle = String(activity?.title || activity?.name || "").trim();
   const timeStr = String(activity?.time || "--:--");
   const period = parseActivityTimePeriod(activity?.time);
   const mapsUrl = buildPlannerActivityGoogleMapsUrl(rawTitle, cityLabel);
-  const cacheKey = `planner-v1|${String(cityLabel || "").trim()}|${String(activity?.id || "")}|${rawTitle}`;
+  const cacheKey = buildPlannerActivityImageCacheKey(cityLabel, activity?.id, rawTitle);
   const storedPhoto = getActivityImageUrl(activity);
   const taPhotoUrl = pickTripAdvisorActivityPhoto(activity) || (storedPhoto && shouldShowTripAdvisorAttribution(activity, storedPhoto) ? storedPhoto : "");
-  const initialPhoto = taPhotoUrl || storedPhoto || itineraryBulletImageCache[cacheKey] || "";
+  const initialPhoto = taPhotoUrl || storedPhoto || readItineraryBulletImageCache(cacheKey) || "";
   const [src, setSrc] = useState(() => initialPhoto);
-  const [loading, setLoading] = useState(() => !initialPhoto);
+  const [loading, setLoading] = useState(() => !initialPhoto && !isItineraryMealOrRestBulletClient(rawTitle));
   const [imgBroken, setImgBroken] = useState(false);
   const taUrl = String(activity?.tripadvisorUrl || activity?.tripadvisor_url || "").trim();
   const usingTaPhoto = shouldShowTripAdvisorAttribution(activity, src);
+  const priceEur = readActivityEstimatedPriceEur(activity);
+  const hasPriceField =
+    activity?.estimated_price_eur != null ||
+    activity?.estimatedPriceEur != null ||
+    Number(activity?.cost) > 0;
 
   useEffect(() => {
     setImgBroken(false);
@@ -5821,7 +5859,7 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
 
   useEffect(() => {
     let cancelled = false;
-    if (!rawTitle) {
+    if (!rawTitle || isItineraryMealOrRestBulletClient(rawTitle)) {
       setSrc("");
       setLoading(false);
       return undefined;
@@ -5832,8 +5870,9 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
       setLoading(false);
       return undefined;
     }
-    if (itineraryBulletImageCache[cacheKey]) {
-      setSrc(itineraryBulletImageCache[cacheKey]);
+    const memHit = readItineraryBulletImageCache(cacheKey);
+    if (memHit) {
+      setSrc(memHit);
       setLoading(false);
       return undefined;
     }
@@ -5841,10 +5880,20 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
     setLoading(true);
     scheduleItineraryBulletImageFetch(async () => {
       try {
-        const url = await fetchItineraryBulletImage(rawTitle, cityLabel, language, "");
+        const url = await resolveActivityPlaceImage({
+          title: rawTitle,
+          location: activity?.location,
+          tripTitle: cityLabel,
+          uiLang: language,
+        });
         if (cancelled) return;
         const finalUrl = String(url || "").trim();
-        if (finalUrl) itineraryBulletImageCache[cacheKey] = finalUrl;
+        if (finalUrl) {
+          noteItineraryBulletImageCache(cacheKey, finalUrl);
+          if (typeof onPhotoResolved === "function" && activity?.id) {
+            onPhotoResolved(activity.id, finalUrl);
+          }
+        }
         setSrc(finalUrl);
       } finally {
         if (!cancelled) setLoading(false);
@@ -5853,7 +5902,7 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, rawTitle, cityLabel, language, taPhotoUrl, storedPhoto]);
+  }, [cacheKey, rawTitle, cityLabel, language, taPhotoUrl, storedPhoto, activity?.id, activity?.location, onPhotoResolved]);
 
   const periodChip =
     period === "morning" ? (
@@ -5920,6 +5969,15 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
               emptyFallback={t("planner.activityNamePlaceholder")}
             />
           </p>
+          {hasPriceField ? (
+            <p className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 text-[10px] text-brand-blue-deep">
+              <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
+                {priceEur === 0
+                  ? t("destination.activityPriceFree")
+                  : t("destination.activityPriceEstimate", { n: priceEur })}
+              </span>
+            </p>
+          ) : null}
           {usingTaPhoto && taUrl ? (
             <p className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
               <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">★ TripAdvisor</span>
@@ -6093,6 +6151,39 @@ async function fetchFreshSuggestedActivityTitles(dest, language) {
 const itineraryBulletImageCache = Object.create(null);
 let itineraryBulletImageFetchChain = Promise.resolve();
 
+/** Ne jamais mémoriser un échec / URL vide — re-tentative au prochain affichage. */
+function readItineraryBulletImageCache(key) {
+  const u = String(itineraryBulletImageCache[key] || "").trim();
+  if (!/^https?:\/\//i.test(u)) {
+    if (itineraryBulletImageCache[key] != null) delete itineraryBulletImageCache[key];
+    return "";
+  }
+  return u;
+}
+
+function noteItineraryBulletImageCache(key, url) {
+  const u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return;
+  itineraryBulletImageCache[key] = u;
+}
+
+function buildItineraryModalImageCacheKey(cityLabel, dayNum, bulletIndex, bulletText) {
+  return `v5|${String(cityLabel || "").trim()}|${dayNum}|${bulletIndex}|${String(bulletText || "").trim()}`;
+}
+
+function buildPlannerActivityImageCacheKey(cityLabel, activityId, title) {
+  return `planner-v1|${String(cityLabel || "").trim()}|${String(activityId || "")}|${String(title || "").trim()}`;
+}
+
+/** Photo persistable à l'insert calendrier : TA → URL résolue modale → vide. */
+function pickActivityPhotoForCalendarInsert(meta, modalCachedUrl = "") {
+  const ta = pickTripAdvisorActivityPhoto(meta);
+  if (ta) return ta;
+  const cached = String(modalCachedUrl || "").trim();
+  if (/^https?:\/\//i.test(cached)) return cached;
+  return "";
+}
+
 /** @type {Record<string, import('react').ComponentType<{ size?: number, className?: string, strokeWidth?: number, 'aria-hidden'?: boolean }>>} */
 const ACTIVITY_CATEGORY_ICON_MAP = {
   UtensilsCrossed,
@@ -6129,10 +6220,10 @@ function ItineraryBulletRow({
 }) {
   const { t, language } = useI18n();
   const text = String(bullet || "").trim();
-  const cacheKey = `v5|${String(cityLabel || "").trim()}|${dayNum}|${bulletIndex}|${text}`;
+  const cacheKey = buildItineraryModalImageCacheKey(cityLabel, dayNum, bulletIndex, text);
   const taPhotoUrl = pickTripAdvisorActivityPhoto(activityMeta);
-  const [src, setSrc] = useState(() => taPhotoUrl || itineraryBulletImageCache[cacheKey] || "");
-  const [loading, setLoading] = useState(() => !taPhotoUrl && !itineraryBulletImageCache[cacheKey]);
+  const [src, setSrc] = useState(() => taPhotoUrl || readItineraryBulletImageCache(cacheKey) || "");
+  const [loading, setLoading] = useState(() => !taPhotoUrl && !readItineraryBulletImageCache(cacheKey));
   const [imgBroken, setImgBroken] = useState(false);
   const [mapOpening, setMapOpening] = useState(false);
   const [swapLoading, setSwapLoading] = useState(false);
@@ -6173,8 +6264,8 @@ function ItineraryBulletRow({
       setLoading(false);
       return undefined;
     }
-    if (itineraryBulletImageCache[cacheKey]) {
-      setSrc(itineraryBulletImageCache[cacheKey]);
+    if (readItineraryBulletImageCache(cacheKey)) {
+      setSrc(readItineraryBulletImageCache(cacheKey));
       setLoading(false);
       return undefined;
     }
@@ -6185,7 +6276,7 @@ function ItineraryBulletRow({
         const url = await fetchItineraryBulletImage(text, cityLabel, language, dayTitle);
         if (cancelled) return;
         const finalUrl = String(url || "").trim();
-        if (finalUrl) itineraryBulletImageCache[cacheKey] = finalUrl;
+        if (finalUrl) noteItineraryBulletImageCache(cacheKey, finalUrl);
         setSrc(finalUrl);
       } finally {
         if (!cancelled) setLoading(false);
@@ -6209,12 +6300,20 @@ function ItineraryBulletRow({
   const showRatingLine =
     (Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0) ||
     (usingTaPhoto && taUrl);
+  const priceEur = activityMeta ? readActivityEstimatedPriceEur(activityMeta) : null;
 
-  const ratingBadge = showRatingLine ? (
+  const ratingBadge = showRatingLine || priceEur != null ? (
     <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
       {Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0 ? (
         <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
           ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })}
+        </span>
+      ) : null}
+      {priceEur != null ? (
+        <span className="rounded-full px-2 py-0.5 text-brand-blue-deep ring-1 ring-slate-200">
+          {priceEur === 0
+            ? t("destination.activityPriceFree")
+            : t("destination.activityPriceEstimate", { n: priceEur })}
         </span>
       ) : null}
       {taUrl ? (
@@ -6816,6 +6915,7 @@ function normalizeActivity(activity) {
     activity?.day;
   const normalizedDate = toYMDLoose(rawDate);
   const cachedDescription = getCachedActivityDescription(activity?.id);
+  const estimatedPrice = readActivityEstimatedPriceEur(activity);
   return {
     ...activity,
     date: normalizedDate,
@@ -6824,6 +6924,8 @@ function normalizeActivity(activity) {
     title: String(activity?.title || activity?.name || "Activite"),
     name: String(activity?.name || activity?.title || "Activite"),
     description: String(activity?.description || activity?.details || activity?.notes || cachedDescription || ""),
+    estimated_price_eur: estimatedPrice,
+    estimatedPriceEur: estimatedPrice,
   };
 }
 
@@ -7427,7 +7529,7 @@ function JusttripBrand({ size = "md", className = "" }) {
 
 function TopNav({ onMenu, onAdd, title }) {
   return (
-    <header className="sticky top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
+    <header className="app-top-nav fixed inset-x-0 top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(2,6,23,0.08)] backdrop-blur-xl sm:px-6 sm:py-4">
         <button
           type="button"
@@ -9277,8 +9379,14 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
                                 <p className="text-[11px] text-slate-400">{String(a.location)}</p>
                               ) : null}
                             </div>
-                            {Number(a.cost) > 0 ? (
-                              <span className="shrink-0 text-[11px] font-semibold text-slate-400">~{Number(a.cost)}&euro;</span>
+                            {(a.estimated_price_eur != null ||
+                              a.estimatedPriceEur != null ||
+                              Number(a.cost) > 0) ? (
+                              <span className="shrink-0 text-[11px] font-semibold text-brand-blue-deep">
+                                {readActivityEstimatedPriceEur(a) === 0
+                                  ? t("destination.activityPriceFree")
+                                  : t("destination.activityPriceEstimate", { n: readActivityEstimatedPriceEur(a) })}
+                              </span>
                             ) : null}
                           </li>
                         ))}
@@ -9338,13 +9446,13 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
 /** Liste lecture seule des participants (planning) — ouverte depuis la pile d’avatars sur la carte « Voyage actif ». */
 function PlannerParticipantsListModal({ open, onClose, trip, session, peerProfileByEmail = {}, ownerPeer = null }) {
   useScrollLock(open);
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   if (!open || !trip) return null;
   const guestHere =
     Boolean(trip?.owner_id) &&
     String(session?.user?.id || "") !== String(trip.owner_id);
   const rawList = dedupeCurrentUserInAvatarRow(participantsForAvatarRow(trip), session, trip);
-  const display = (p) => participantDisplayFromRawForTrip(p, session, trip, ownerPeer);
+  const display = (p) => participantDisplayFromRawForTrip(p, session, trip, ownerPeer, language);
   return (
     <div
       className="fixed -inset-1 z-[55] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
@@ -10473,6 +10581,7 @@ function ItineraryResultModal({
   onClose,
   onRegenerate,
   onSaveToCalendar,
+  onExportPhoneCalendar,
   onSwapActivity,
   regenerating = false,
   fetchError = "",
@@ -10488,7 +10597,9 @@ function ItineraryResultModal({
   const errLine = String(fetchError || "").trim();
 
   const totalCost = days.reduce((sum, d) => sum + (Number(d?.costEur) || 0), 0);
-  const hasCostData = days.some((d) => Number(d?.costEur) > 0);
+  const hasCostData = days.some(
+    (d) => Array.isArray(d?.activities) && d.activities.length > 0
+  );
 
   useEffect(() => {
     setActiveDayIndex((i) => {
@@ -10593,22 +10704,22 @@ function ItineraryResultModal({
 
   return (
     <div
-      className="fixed -inset-1 z-[80] flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex h-[92svh] max-h-[92svh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:rounded-[1.75rem]"
+        className="flex h-[100dvh] max-h-[100dvh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-none bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Handle (mobile) ── */}
-        <div className="flex shrink-0 justify-center pt-3 sm:hidden">
+        <div className="flex shrink-0 justify-center pt-[max(0.5rem,env(safe-area-inset-top,0px))] sm:hidden">
           <div className="h-1 w-10 rounded-full bg-slate-200" />
         </div>
 
         {/* ── Header ── */}
-        <div className="shrink-0 px-5 pb-4 pt-4 sm:px-6 sm:pt-5">
+        <div className="shrink-0 px-5 pb-4 pt-2 sm:px-6 sm:pt-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -10636,10 +10747,14 @@ function ItineraryResultModal({
                     <span className="text-[12px] text-slate-500 capitalize">{budgetTierLabel}</span>
                   </>
                 )}
-                {hasCostData && totalCost > 0 && (
+                {hasCostData && (
                   <>
                     <span className="text-slate-300">·</span>
-                    <span className="text-brand-gradient text-[12px] font-bold">~{totalCost}€</span>
+                    <span className="text-brand-gradient text-[12px] font-bold">
+                      {totalCost === 0
+                        ? t("destination.activityPriceFree")
+                        : t("destination.activityPriceEstimate", { n: totalCost })}
+                    </span>
                   </>
                 )}
               </div>
@@ -10682,13 +10797,13 @@ function ItineraryResultModal({
               <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
             </div>
           ) : (
-            <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[11rem_minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:grid md:h-full md:grid-cols-[11rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
               <nav
                 ref={railScrollRef}
-                className="itinerary-day-rail min-h-0 max-h-[9.5rem] overflow-x-auto overflow-y-auto overscroll-contain border-b border-slate-100 p-3 [-webkit-overflow-scrolling:touch] md:max-h-none md:overflow-x-hidden md:border-b-0 md:border-r md:p-0 lg:w-44"
+                className="itinerary-day-rail shrink-0 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-slate-100 px-4 py-2.5 [-webkit-overflow-scrolling:touch] md:min-h-0 md:snap-none md:overflow-x-hidden md:overflow-y-auto md:border-b-0 md:border-r md:p-0 lg:w-44"
                 aria-label={t("destination.itineraryDayLabel")}
               >
-                <div className="flex gap-2 md:flex-col md:p-4">
+                <div className="flex flex-nowrap gap-2 md:flex-col md:p-4">
                   {days.map((d, idx) => {
                     const dayNum = Number(d?.day) || idx + 1;
                     const isActive = idx === activeDayIndex;
@@ -10702,17 +10817,17 @@ function ItineraryResultModal({
                         type="button"
                         onClick={() => scrollToDay(idx)}
                         aria-current={isActive ? "true" : undefined}
-                        className={`shrink-0 rounded-xl px-3 py-2.5 text-left transition md:w-full ${
+                        className={`shrink-0 snap-start rounded-xl px-3 py-2 text-left transition md:w-full md:py-2.5 ${
                           isActive
                             ? "bg-brand-blue text-white shadow-sm"
                             : "bg-slate-50 text-slate-700 ring-1 ring-slate-100 hover:bg-slate-100"
                         }`}
                       >
-                        <span className="block text-[11px] font-bold uppercase tracking-wide">
+                        <span className="block whitespace-nowrap text-[11px] font-bold uppercase tracking-wide">
                           {t("destination.itineraryDayLabel")} {dayNum}
                         </span>
                         {title ? (
-                          <span className={`mt-0.5 block line-clamp-2 text-[11px] leading-snug ${isActive ? "text-white/90" : "text-slate-500"}`}>
+                          <span className={`mt-0.5 hidden line-clamp-2 text-[11px] leading-snug md:block ${isActive ? "text-white/90" : "text-slate-500"}`}>
                             {title}
                           </span>
                         ) : null}
@@ -10724,7 +10839,7 @@ function ItineraryResultModal({
 
               <div
                 ref={detailScrollRef}
-                className="itinerary-day-rail min-h-0 overflow-y-auto overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
+                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
               >
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;
@@ -10732,6 +10847,7 @@ function ItineraryResultModal({
                   const bullets = normalizeItineraryDayBullets(d);
                   const activityMetaList = getItineraryDayActivitiesMeta(d);
                   const cost = Number(d?.costEur) || 0;
+                  const hasDayActivities = activityMetaList.length > 0 || bullets.length > 0;
                   return (
                     <section
                       key={`detail-${dayNum}`}
@@ -10756,9 +10872,11 @@ function ItineraryResultModal({
                               {title}
                             </h3>
                           </div>
-                          {cost > 0 ? (
+                          {hasDayActivities ? (
                             <p className="mt-1 text-[12px] text-slate-500">
-                              {t("destination.itineraryDayCost", { amount: cost })}
+                              {cost === 0
+                                ? t("destination.activityPriceFree")
+                                : t("destination.itineraryDayCost", { amount: cost })}
                             </p>
                           ) : null}
                         </div>
@@ -10808,20 +10926,34 @@ function ItineraryResultModal({
         ) : null}
 
         {/* ── Footer ── */}
-        <div className="shrink-0 flex items-center gap-2.5 border-t border-slate-100 px-5 pb-6 pt-3 sm:pb-4">
-          <button
-            type="button"
-            onClick={onRegenerate}
-            disabled={regenerating || saving}
-            className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
-          </button>
+        <div className="sticky bottom-0 z-10 shrink-0 flex flex-col gap-2 border-t border-slate-100 bg-white px-5 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-3 sm:static sm:pb-4">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onRegenerate}
+              disabled={regenerating || saving}
+              className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
+            </button>
+            {typeof onExportPhoneCalendar === "function" ? (
+              <button
+                type="button"
+                onClick={onExportPhoneCalendar}
+                disabled={saving || regenerating}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-brand-blue/25 bg-white px-4 py-2.5 text-[13px] font-medium text-brand-blue-deep transition hover:bg-brand-blue-tint/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={t("planner.exportPhoneCalendarAria")}
+              >
+                <CalendarPlus className="h-4 w-4" strokeWidth={2} aria-hidden />
+                {t("planner.exportPhoneCalendar")}
+              </button>
+            ) : null}
+          </div>
           <button
             type="button"
             onClick={handleSave}
             disabled={saving || regenerating}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
+            className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] ${BRAND_CTA_BTN_CLASS}`}
           >
             <Calendar className="h-4 w-4" strokeWidth={2} aria-hidden />
             {saving ? t("destination.itineraryAdding") : t("destination.itineraryAddToCalendar")}
@@ -11283,6 +11415,10 @@ function DestinationGuideView({
     const c = _readGuideCache(confirmedDestination, language);
     return c?.geminiAiActs ?? null;
   });
+  /** Lieux réels vérifiés (suggest-highlights) — source unique chips + modale « Ajouter ». */
+  const [destinationHighlights, setDestinationHighlights] = useState([]);
+  const [destinationHighlightsLoading, setDestinationHighlightsLoading] = useState(false);
+  const destinationHighlightsKeyRef = useRef("");
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
   const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
@@ -11321,6 +11457,7 @@ function DestinationGuideView({
   const [itineraryCalendarConflictErr, setItineraryCalendarConflictErr] = useState("");
   const [itineraryCalendarConflictSaving, setItineraryCalendarConflictSaving] = useState(false);
   const [itineraryLoading, setItineraryLoading] = useState(false);
+  const [itineraryProgressStep, setItineraryProgressStep] = useState(0);
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
@@ -11331,6 +11468,7 @@ function DestinationGuideView({
   });
 
   const [heroVideoFailed, setHeroVideoFailed] = useState(false);
+  const [heroVideoPlaying, setHeroVideoPlaying] = useState(false);
   const [heroFetchSettled, setHeroFetchSettled] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
@@ -11354,6 +11492,7 @@ function DestinationGuideView({
 
   useEffect(() => {
     setHeroVideoFailed(false);
+    setHeroVideoPlaying(false);
   }, [DESTINATION_GUIDE_HERO_VIDEO_URL]);
 
   // Mobile: on privilégie l'affichage vidéo même si "reduced motion" est détecté,
@@ -11423,6 +11562,52 @@ function DestinationGuideView({
     };
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
 
+  const verifiedHighlightChips = useMemo(
+    () => (destinationHighlights || []).map(highlightToActivityChip),
+    [destinationHighlights]
+  );
+
+  useEffect(() => {
+    const city = String(guide?.city || "").trim();
+    if (!city || !confirmedDestination) {
+      setDestinationHighlights([]);
+      setDestinationHighlightsLoading(false);
+      destinationHighlightsKeyRef.current = "";
+      return undefined;
+    }
+    const destLabel = buildHeroResolveLabel(confirmedDestination, guide) || city;
+    const fetchKey = `${destLabel}|${language}|${String(guide?.country || "").trim()}`;
+    if (destinationHighlightsKeyRef.current === fetchKey) {
+      return undefined;
+    }
+    let cancelled = false;
+    setDestinationHighlightsLoading(true);
+    fetchSuggestHighlights({
+      destination: destLabel,
+      country: String(guide?.country || "").trim(),
+      countryCode: String(guide?.countryCode || "").trim(),
+      language,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res?.data?.highlights) ? res.data.highlights : [];
+        destinationHighlightsKeyRef.current = fetchKey;
+        setDestinationHighlights(list);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          destinationHighlightsKeyRef.current = fetchKey;
+          setDestinationHighlights([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDestinationHighlightsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmedDestination, guide?.city, guide?.country, guide?.countryCode, guide?.adminRegion, language]);
+
   // Sauvegarder le guide en localStorage dès que les données sont disponibles
   // → permet de restaurer instantanément après veille téléphone / changement d'app
   useEffect(() => {
@@ -11457,6 +11642,9 @@ function DestinationGuideView({
     setItineraryQuotaModalOpen(false);
     setGeminiLangTips(null);
     setMustSeePlaceModalRaw(null);
+    setDestinationHighlights([]);
+    setDestinationHighlightsLoading(false);
+    destinationHighlightsKeyRef.current = "";
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
@@ -11540,7 +11728,14 @@ function DestinationGuideView({
     }
 
     const cityKey = String(instant.city || "");
-    const cacheKeyFast = getCityImageCacheKey(confirmedDestination);
+    const diskRow = _readGuideCache(confirmedDestination, language);
+    const dg = diskRow?.guide;
+    const useDiskGuide =
+      dg &&
+      normalizeTextForSearch(String(dg.city || "")) === normalizeTextForSearch(cityKey) &&
+      String(dg.description || "").trim().length > 0;
+    const heroLabelForCache = buildHeroResolveLabel(confirmedDestination, useDiskGuide ? dg : instant);
+    const cacheKeyFast = getCityImageCacheKey(heroLabelForCache || confirmedDestination);
     const memFast =
       cacheKeyFast && cityImageMemoryCache[cacheKeyFast]
         ? String(cityImageMemoryCache[cacheKeyFast])
@@ -11583,13 +11778,6 @@ function DestinationGuideView({
               ),
             }
         : null;
-
-    const diskRow = _readGuideCache(confirmedDestination, language);
-    const dg = diskRow?.guide;
-    const useDiskGuide =
-      dg &&
-      normalizeTextForSearch(String(dg.city || "")) === normalizeTextForSearch(cityKey) &&
-      String(dg.description || "").trim().length > 0;
 
     if (useDiskGuide) {
       setGuide(
@@ -11677,7 +11865,8 @@ function DestinationGuideView({
     (async () => {
       try {
         const heroWork = (async () => {
-          const heroUrl = await resolveDestinationHeroFirstPaint(confirmedDestination);
+          const heroLabel = buildHeroResolveLabel(confirmedDestination, instant);
+          const heroUrl = await resolveDestinationHeroFirstPaint(heroLabel);
           if (cancelled) return;
           const nextHero = String(heroUrl || "").trim();
           if (!nextHero) return;
@@ -11735,7 +11924,7 @@ function DestinationGuideView({
           setGuideError(t("destination.guideLoadError"));
         }
       } finally {
-        if (!cancelled) setHeroFetchSettled(true);
+        if (!cancelled && !isResolveHeroEnabled()) setHeroFetchSettled(true);
       }
     })();
 
@@ -11750,7 +11939,10 @@ function DestinationGuideView({
     const cityStem = extractCityPrompt(confirmedDestination) || normalizeCityInput(confirmedDestination);
     if (cityStem.length < 2) return undefined;
     const cityKey = String(resolveCanonicalCity(cityStem) || cityStem);
+    const heroLabel = buildHeroResolveLabel(confirmedDestination, guide);
     let cancelled = false;
+
+    setHeroFetchSettled(false);
 
     setGuide((prev) => {
       if (!prev) return prev;
@@ -11763,17 +11955,17 @@ function DestinationGuideView({
 
     (async () => {
       try {
-        const cached = await getCachedCityImage(confirmedDestination);
+        const cached = await getCachedCityImage(heroLabel);
         if (cancelled) return;
 
         const url = await pickCityHeroImageUrl(
-          confirmedDestination,
+          heroLabel,
           { cachedCityImage: cached || undefined },
           language
         );
         if (cancelled || !url || isBlockedHeroImageUrl(url)) return;
         const hero = upgradeLandscapeImageUrl(url);
-        void persistCityImage(confirmedDestination, hero);
+        void persistCityImage(heroLabel, hero);
         setGuide((prev) => {
           if (!prev) return prev;
           if (normalizeTextForSearch(String(prev.city || "")) !== normalizeTextForSearch(cityKey)) return prev;
@@ -11802,7 +11994,7 @@ function DestinationGuideView({
     return () => {
       cancelled = true;
     };
-  }, [confirmedDestination, language]);
+  }, [confirmedDestination, language, guide?.city, guide?.country, guide?.adminRegion]);
 
   useEffect(() => {
     const dest = String(
@@ -11998,9 +12190,17 @@ function DestinationGuideView({
 
   async function runItineraryGenerationWithDates(dest, startDate, endDate, prefs, kind) {
     const regen = kind === "regenerate";
+    const progressTimers = [];
     if (regen) setItineraryRegenerating(true);
     else setItineraryLoading(true);
     setItineraryError("");
+    if (isVerifiedPlannerEnabled() && !regen) {
+      setItineraryProgressStep(0);
+      progressTimers.push(setTimeout(() => setItineraryProgressStep(1), 3500));
+      progressTimers.push(setTimeout(() => setItineraryProgressStep(2), 9000));
+    } else {
+      setItineraryProgressStep(0);
+    }
     try {
       const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
       const ideas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
@@ -12030,6 +12230,8 @@ function DestinationGuideView({
         setItineraryModalOpen(false);
       }
     } finally {
+      for (const id of progressTimers) clearTimeout(id);
+      setItineraryProgressStep(0);
       if (regen) setItineraryRegenerating(false);
       else setItineraryLoading(false);
     }
@@ -12133,17 +12335,9 @@ function DestinationGuideView({
     persistGeneratedDayIdeas(updateItineraryDayBullet(generatedDayIdeas, dayIndex, bulletIndex, newBullet));
   }
 
-  const saveProgramToCalendar = useCallback(
-    async (rangeStartRaw, rangeEndRaw) => {
+  const buildItineraryActivitySchedule = useCallback(
+    (rangeStartRaw) => {
       const rangeStart = toYMD(String(rangeStartRaw || getTodayStr()), getTodayStr());
-      const rangeEnd = toYMD(String(rangeEndRaw || rangeStart), rangeStart);
-      if (String(rangeStart) > String(rangeEnd)) return false;
-      const conflicts = findTripsOverlappingDateRange(trips, rangeStart, rangeEnd, null);
-      if (conflicts.length > 0) {
-        setItineraryCalendarConflict({ conflictingTrips: conflicts, draftStart: rangeStart, draftEnd: rangeEnd });
-        setItineraryCalendarConflictErr("");
-        return false;
-      }
       const timeMap = (bullet) => {
         const b = String(bullet || "").trim().toLowerCase();
         if (/^matin|^morning|^morgen|^ma[ñn]ana|^mattina|^上午|^早/.test(b)) return "09:00";
@@ -12161,31 +12355,90 @@ function DestinationGuideView({
       const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
       const schedule = [];
       const ideas = generatedDayIdeas;
-      if (!Array.isArray(ideas) || ideas.length === 0) return false;
+      if (!Array.isArray(ideas) || ideas.length === 0) return schedule;
       for (const d of ideas) {
         const dayNum = Number(d?.day) || 1;
         const actDate = addDaysToDate(rangeStart, dayNum - 1);
-        const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
+        const dayTitle = String(d?.title || "");
+        const city = String(displayGuide?.city || "");
         const activityMetaList = getItineraryDayActivitiesMeta(d);
-        const perActCost =
-          bullets.length > 0 && Number(d?.costEur) > 0
-            ? Math.round(Number(d.costEur) / bullets.length)
-            : 0;
+        const scheduleActs =
+          activityMetaList.length > 0
+            ? activityMetaList
+                .map((meta, j) => {
+                  const desc = String(meta?.description || meta?.name || "").trim();
+                  if (!desc || isItineraryMealOrRestBulletClient(desc)) return null;
+                  const bulletText = formatItineraryActivityBullet(meta?.period, desc, language);
+                  const modalCacheKey = buildItineraryModalImageCacheKey(city, dayNum, j, bulletText);
+                  const photo = pickActivityPhotoForCalendarInsert(
+                    meta,
+                    readItineraryBulletImageCache(modalCacheKey)
+                  );
+                  const actPrice = readActivityEstimatedPriceEur(meta);
+                  return {
+                    title: stripPrefix(bulletText) || String(meta?.name || "").trim(),
+                    date: actDate,
+                    time:
+                      timeMap(bulletText) ||
+                      (meta?.period === "morning"
+                        ? "09:00"
+                        : meta?.period === "afternoon"
+                          ? "14:00"
+                          : SLOT_DEFAULTS[j % SLOT_DEFAULTS.length]),
+                    location: city,
+                    cost: actPrice,
+                    estimated_price_eur: actPrice,
+                    description: `Jour ${dayNum} — ${dayTitle}`,
+                    photo_url: photo,
+                    image_url: photo,
+                  };
+                })
+                .filter(Boolean)
+            : [];
+        if (scheduleActs.length > 0) {
+          schedule.push(...scheduleActs);
+          continue;
+        }
+        const bullets = normalizeItineraryDayBullets(d);
         bullets.forEach((b, j) => {
           const meta = activityMetaList[j] || null;
-          const taPhoto = pickTripAdvisorActivityPhoto(meta);
+          const modalCacheKey = buildItineraryModalImageCacheKey(city, dayNum, j, b);
+          const photo = pickActivityPhotoForCalendarInsert(
+            meta,
+            readItineraryBulletImageCache(modalCacheKey)
+          );
+          const actPrice = readActivityEstimatedPriceEur(meta);
           schedule.push({
             title: stripPrefix(b),
             date: actDate,
             time: timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
-            location: String(displayGuide?.city || ""),
-            cost: perActCost,
-            description: `Jour ${dayNum} — ${String(d?.title || "")}`,
-            photo_url: taPhoto,
-            image_url: taPhoto,
+            location: city,
+            cost: actPrice,
+            estimated_price_eur: actPrice,
+            description: `Jour ${dayNum} — ${dayTitle}`,
+            photo_url: photo,
+            image_url: photo,
           });
         });
       }
+      return schedule;
+    },
+    [generatedDayIdeas, displayGuide, language]
+  );
+
+  const saveProgramToCalendar = useCallback(
+    async (rangeStartRaw, rangeEndRaw) => {
+      const rangeStart = toYMD(String(rangeStartRaw || getTodayStr()), getTodayStr());
+      const rangeEnd = toYMD(String(rangeEndRaw || rangeStart), rangeStart);
+      if (String(rangeStart) > String(rangeEnd)) return false;
+      const conflicts = findTripsOverlappingDateRange(trips, rangeStart, rangeEnd, null);
+      if (conflicts.length > 0) {
+        setItineraryCalendarConflict({ conflictingTrips: conflicts, draftStart: rangeStart, draftEnd: rangeEnd });
+        setItineraryCalendarConflictErr("");
+        return false;
+      }
+      const schedule = buildItineraryActivitySchedule(rangeStart);
+      if (!schedule.length) return false;
       const dest = String(displayGuide?.city || confirmedDestination || "");
       return onCreateTrip({
         title: dest,
@@ -12198,8 +12451,33 @@ function DestinationGuideView({
         plannerFocusTripAndCalendar: true,
       });
     },
-    [trips, generatedDayIdeas, displayGuide, confirmedDestination, onCreateTrip]
+    [trips, buildItineraryActivitySchedule, displayGuide, confirmedDestination, onCreateTrip]
   );
+
+  const exportItineraryToPhoneCalendar = useCallback(async () => {
+    const rangeStart = String(
+      lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || getTodayStr()
+    );
+    const schedule = buildItineraryActivitySchedule(rangeStart);
+    if (!schedule.length) {
+      setNotice(t("planner.exportNoActivities"));
+      return;
+    }
+    const dest = String(displayGuide?.city || confirmedDestination || "");
+    try {
+      await exportTripActivitiesToIcs({ destination: dest, activities: schedule });
+    } catch (e) {
+      setNotice(String(e?.message || t("planner.exportNoActivities")));
+    }
+  }, [
+    buildItineraryActivitySchedule,
+    lastItineraryRequest,
+    pendingTripRequest,
+    programStartDate,
+    displayGuide,
+    confirmedDestination,
+    t,
+  ]);
 
   const destinationOverlayOpen =
     addModalOpen
@@ -12244,7 +12522,7 @@ function DestinationGuideView({
             <div className="relative p-4">
               <div className="relative h-[15.5rem] w-full overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-slate-200 via-brand-blue-tint to-slate-300 ring-1 ring-white/25 sm:h-[17.5rem]">
                 {(() => {
-                  const heroCtx = [displayGuide.city, displayGuide.country, displayGuide.adminRegion]
+                  const heroCtx = [displayGuide.city, displayGuide.adminRegion, displayGuide.country]
                     .filter(Boolean)
                     .join(", ")
                     .trim();
@@ -12437,7 +12715,9 @@ function DestinationGuideView({
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   {(() => {
                     const rawList = (displayGuide.places || []).map(String).filter(Boolean);
-                    const visible = rawList.filter((p) => !isGenericExplorationPlaceName(p));
+                    const visible = rawList.filter(
+                      (p) => !isGenericExplorationPlaceName(p) && !isUninformativeMustSeePlaceLabel(p)
+                    );
                     const showSkel = visible.length === 0;
                     return (
                       <>
@@ -12546,6 +12826,7 @@ function DestinationGuideView({
                 );
               })()}
 
+              {verifiedHighlightChips.length > 0 ? (
               <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
                   <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
@@ -12559,16 +12840,16 @@ function DestinationGuideView({
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  {(displayGuide.suggestedActivities || []).map((a, i) => {
+                  {verifiedHighlightChips.map((a, i) => {
+                    const highlight = destinationHighlights[i];
                     const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
-                    const isFreeNote = /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || ""));
+                    const priceEur = readActivityEstimatedPriceEur(highlight || a);
                     const costBadge =
-                      cell.cost > 0
-                        ? `~${cell.cost}€`
-                        : isFreeNote
-                          ? t("destination.activityFree")
-                          : null;
-                    const isFreeBadge = costBadge != null && cell.cost === 0;
+                      priceEur > 0
+                        ? t("destination.activityPriceEstimate", { n: priceEur })
+                        : t("destination.activityPriceFree");
+                    const isFreeBadge = priceEur === 0;
+                    const showRating = highlightShowsRatingBadge(highlight);
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
@@ -12577,17 +12858,20 @@ function DestinationGuideView({
                         <span>
                           <UiTranslatedActivityTitle raw={cell.title} />
                         </span>
-                        {costBadge != null && (
-                          <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              isFreeBadge
-                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                                : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
-                            }`}
-                          >
-                            {costBadge}
+                        {showRating ? (
+                          <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                            ★{Number(highlight.rating).toFixed(1)}
                           </span>
-                        )}
+                        ) : null}
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            isFreeBadge
+                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                              : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                          }`}
+                        >
+                          {costBadge}
+                        </span>
                       </span>
                     );
                   })}
@@ -12625,6 +12909,22 @@ function DestinationGuideView({
                   );
                 })()}
               </section>
+              ) : destinationHighlightsLoading ? (
+                <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
+                  <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
+                      <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    </span>
+                    <div>
+                      <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
+                        {t("destination.activitiesTitle")}
+                      </h4>
+                      <p className="text-[11px] text-brand-orange-ink/75">{t("destination.activitiesSubtitle")}</p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-xs text-slate-500">{t("destination.itineraryGenerating")}</p>
+                </section>
+              ) : null}
 
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
                 <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -12713,32 +13013,45 @@ function DestinationGuideView({
         ) : (
           <div className="relative mx-auto w-full max-w-full min-h-[15rem] h-[min(52svh,22rem)] overflow-hidden rounded-2xl shadow-[0_22px_50px_rgba(8,47,73,0.22)] ring-1 ring-cyan-100/30 sm:h-[22rem] sm:min-h-0 sm:max-h-none sm:rounded-[2.2rem]">
             {showDestinationHeroVideo ? (
-              <video
-                ref={destHeroVideoRef}
-                key={DESTINATION_GUIDE_HERO_VIDEO_URL}
-                className="absolute inset-0 z-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="auto"
-                poster={DESTINATION_GUIDE_HERO_IMAGE_1280}
-                aria-label={t("destination.heroImageAlt")}
-                onError={() => setHeroVideoFailed(true)}
-              >
-                {DESTINATION_GUIDE_HERO_VIDEO_SOURCES.map((s) => (
-                  <source key={s.src} src={s.src} type={s.type} />
-                ))}
-              </video>
+              <>
+                <img
+                  src={DESTINATION_GUIDE_HERO_VIDEO_POSTER}
+                  alt=""
+                  aria-hidden
+                  className="absolute inset-0 z-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
+                  width={1280}
+                  height={720}
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
+                />
+                <video
+                  ref={destHeroVideoRef}
+                  key={DESTINATION_GUIDE_HERO_VIDEO_URL}
+                  className={`absolute inset-0 z-[1] h-full w-full object-cover object-[center_34%] sm:object-[center_42%] transition-opacity duration-[400ms] ease-out ${
+                    heroVideoPlaying ? "opacity-100" : "opacity-0"
+                  }`}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="auto"
+                  aria-label={t("destination.heroImageAlt")}
+                  onPlaying={() => setHeroVideoPlaying(true)}
+                  onError={() => setHeroVideoFailed(true)}
+                >
+                  {DESTINATION_GUIDE_HERO_VIDEO_SOURCES.map((s) => (
+                    <source key={s.src} src={s.src} type={s.type} />
+                  ))}
+                </video>
+              </>
             ) : (
               <img
-                src={DESTINATION_GUIDE_HERO_IMAGE_1280}
-                srcSet={`${DESTINATION_GUIDE_HERO_IMAGE_1280} 1280w, ${DESTINATION_GUIDE_HERO_IMAGE} 3992w`}
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
+                src={DESTINATION_GUIDE_HERO_VIDEO_POSTER}
                 alt={t("destination.heroImageAlt")}
                 className="absolute inset-0 h-full w-full object-cover object-[center_34%] sm:object-[center_42%]"
-                width={3992}
-                height={2242}
+                width={1280}
+                height={720}
                 loading="eager"
                 decoding="async"
                 fetchPriority="high"
@@ -12781,7 +13094,15 @@ function DestinationGuideView({
           <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
             <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-brand-blue border-t-transparent" aria-hidden />
             <p className="text-sm font-normal tracking-[0.03em] text-slate-700">
-              {t("destination.itineraryGenerating")}
+              {isVerifiedPlannerEnabled()
+                ? t(
+                    [
+                      "destination.itineraryProgressSearch",
+                      "destination.itineraryProgressVerify",
+                      "destination.itineraryProgressBuild",
+                    ][itineraryProgressStep] || "destination.itineraryGenerating"
+                  )
+                : t("destination.itineraryGenerating")}
             </p>
           </div>
         </div>
@@ -12808,6 +13129,7 @@ function DestinationGuideView({
           }}
           onRegenerate={handleRegenerateItinerary}
           onSwapActivity={handleSwapItineraryActivity}
+          onExportPhoneCalendar={exportItineraryToPhoneCalendar}
           onSaveToCalendar={async () => {
             const rangeStart = String(
               lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || ""
@@ -13064,6 +13386,7 @@ function DestinationGuideView({
                 setEndDate(e);
               }}
             />
+            {verifiedHighlightChips.length > 0 ? (
             <div className="mt-5">
               <p className="text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
                 {t("destination.addActivitiesTitle")}
@@ -13075,23 +13398,18 @@ function DestinationGuideView({
                 {t("destination.addActivitiesBudgetHint")}
               </p>
               <div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3">
-                {(displayGuide.suggestedActivities || []).length === 0 ? (
-                  <p className="text-xs text-slate-500">
-                    {t("destination.noActivitiesProposed")}
-                  </p>
-                ) : (
-                  (displayGuide.suggestedActivities || []).map((a, i) => {
+                  {verifiedHighlightChips.map((a, i) => {
+                    const highlight = destinationHighlights[i];
                     const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
                     const rawLabel = cell.title;
                     const checked = pickedActivityIndices.has(i);
-                    const isFreeNote = /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || ""));
+                    const priceEur = readActivityEstimatedPriceEur(highlight || a);
                     const costBadge =
-                      cell.cost > 0
-                        ? `~${cell.cost}€`
-                        : isFreeNote
-                          ? t("destination.activityFree")
-                          : null;
-                    const isFreeBadge = costBadge != null && cell.cost === 0;
+                      priceEur > 0
+                        ? t("destination.activityPriceEstimate", { n: priceEur })
+                        : t("destination.activityPriceFree");
+                    const isFreeBadge = priceEur === 0;
+                    const showRating = highlightShowsRatingBadge(highlight);
                     return (
                       <label
                         key={`pick-act-${i}-${rawLabel.slice(0, 32)}`}
@@ -13122,23 +13440,23 @@ function DestinationGuideView({
                         <span className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
                           <UiTranslatedActivityTitle raw={rawLabel} />
                         </span>
-                        {costBadge != null ? (
-                          <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              isFreeBadge
-                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                                : "bg-brand-blue-tint text-brand-blue ring-1 ring-brand-blue/20"
-                            }`}
-                          >
-                            {costBadge}
+                        {showRating ? (
+                          <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                            ★{Number(highlight.rating).toFixed(1)}
                           </span>
-                        ) : (
-                          <span className="shrink-0 text-[10px] text-slate-300">—</span>
-                        )}
+                        ) : null}
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            isFreeBadge
+                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                              : "bg-brand-blue-tint text-brand-blue ring-1 ring-brand-blue/20"
+                          }`}
+                        >
+                          {costBadge}
+                        </span>
                       </label>
                     );
-                  })
-                )}
+                  })}
               </div>
               {sortedPickedIndices.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-brand-blue/15 bg-brand-blue-tint/40 p-3">
@@ -13148,11 +13466,8 @@ function DestinationGuideView({
                     </p>
                     {(() => {
                       const total = sortedPickedIndices.reduce((sum, actIndex) => {
-                        const cell = normalizeSuggestedActivityShape(
-                          (displayGuide.suggestedActivities || [])[actIndex],
-                          displayGuide.city
-                        );
-                        return sum + Number(cell.cost || 0);
+                        const h = destinationHighlights[actIndex];
+                        return sum + readActivityEstimatedPriceEur(h);
                       }, 0);
                       return total > 0 ? (
                         <span className="rounded-full bg-brand-blue-tint px-2.5 py-0.5 text-[10px] font-bold text-brand-blue-deep ring-1 ring-brand-blue/20">
@@ -13166,13 +13481,15 @@ function DestinationGuideView({
                   ) : (
                     <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
                       {sortedPickedIndices.map((actIndex, j) => {
+                        const highlight = destinationHighlights[actIndex];
                         const cell = normalizeSuggestedActivityShape(
-                          (displayGuide.suggestedActivities || [])[actIndex],
+                          verifiedHighlightChips[actIndex],
                           displayGuide.city
                         );
                         const rawPick = String(
                           pickedActivityLabelsRef.current.get(actIndex) || cell.title || ""
                         );
+                        const priceEur = readActivityEstimatedPriceEur(highlight);
                         const defDate =
                           tripDatesForModal[j % tripDatesForModal.length] || startDate;
                         const defTime =
@@ -13190,15 +13507,15 @@ function DestinationGuideView({
                               <span className="min-w-0 flex-1 text-xs font-normal leading-snug tracking-[0.02em] text-slate-800">
                                 <UiTranslatedActivityTitle raw={rawPick} />
                               </span>
-                              {cell.cost > 0 ? (
+                              {priceEur > 0 ? (
                                 <span className="shrink-0 rounded-full bg-brand-blue-tint px-1.5 py-0.5 text-[9px] font-semibold text-brand-blue ring-1 ring-brand-blue/20">
-                                  ~{cell.cost}€
+                                  {t("destination.activityPriceEstimate", { n: priceEur })}
                                 </span>
-                              ) : /gratuit|free|kostenlos|gratis|gratuito|免费/i.test(String(cell.costNote || "")) ? (
+                              ) : (
                                 <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                                  {t("destination.activityFree")}
+                                  {t("destination.activityPriceFree")}
                                 </span>
-                              ) : null}
+                              )}
                             </div>
                             <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:w-auto sm:max-w-none sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
                               <select
@@ -13254,6 +13571,7 @@ function DestinationGuideView({
                 </div>
               ) : null}
             </div>
+            ) : null}
             <button
               type="button"
               disabled={
@@ -13262,7 +13580,6 @@ function DestinationGuideView({
               onClick={async () => {
                 if (creatingVoyage) return;
                 setCreatingVoyage(true);
-                const suggested = displayGuide.suggestedActivities || [];
                 const selectedActivitiesWithSchedule = sortedPickedIndices.map((actIndex, j) => {
                   const defDate =
                     tripDatesForModal[j % Math.max(1, tripDatesForModal.length)] || startDate;
@@ -13272,17 +13589,26 @@ function DestinationGuideView({
                   let date = sched.date || defDate;
                   if (tripDatesForModal.length > 0 && !tripDatesForModal.includes(date)) date = defDate;
                   const time = normalizeActivityTimeHHMM(sched.time) || defTime;
-                  const cell = normalizeSuggestedActivityShape(suggested[actIndex], displayGuide.city);
-                  const rawTitle = pickedActivityLabelsRef.current.get(actIndex) || cell.title;
+                  const highlight = destinationHighlights[actIndex];
+                  const chip = highlight ? highlightToActivityChip(highlight) : null;
+                  const rawTitle = pickedActivityLabelsRef.current.get(actIndex) || chip?.title || "";
                   const title = String(rawTitle).trim() || `Activite ${j + 1}`;
-                  const description = [cell.description, cell.costNote].filter(Boolean).join("\n\n");
+                  const priceEur = readActivityEstimatedPriceEur(highlight || chip);
+                  const photo =
+                    String(chip?.photo_url || chip?.image_url || "").trim() ||
+                    (highlight ? pickTripAdvisorActivityPhoto(highlight) : "");
                   return {
                     title,
                     date,
                     time,
-                    location: cell.location,
-                    cost: cell.cost,
-                    description,
+                    location: String(chip?.location || displayGuide.city || "").trim(),
+                    cost: priceEur,
+                    estimated_price_eur: priceEur,
+                    photo_url: photo,
+                    image_url: photo,
+                    latitude: highlight?.latitude,
+                    longitude: highlight?.longitude,
+                    description: String(highlight?.tripadvisorUrl || "").trim(),
                   };
                 });
                 try {
@@ -13830,6 +14156,7 @@ function PlannerView({
                 key={String(a.id)}
                 activity={a}
                 cityLabel={tripCityLabel}
+                onPhotoResolved={persistResolvedActivityPhoto}
                 onView={() => {
                   setViewingActivity(a);
                   setActivityDetailsOpen(true);
@@ -14591,7 +14918,7 @@ function TripExpenseDetail({
   const safeActivities = Array.isArray(activities) ? activities : [];
   const safeGroup = Array.isArray(groupExpenses) ? groupExpenses : [];
   const participants = useMemo(() => participantsForExpenseSplit(trip, session), [trip, session]);
-  const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session));
+  const displayName = (p) => participantDisplayFromRaw(p, getCurrentUserDisplayName(session), language);
 
   const budgetSummary = useMemo(
     () => computeTripBudgetSummary(safeGroup, safeActivities),
@@ -15233,6 +15560,7 @@ export default function App() {
   const [plannerInviteOpen, setPlannerInviteOpen] = useState(false);
   const [plannerParticipantsListOpen, setPlannerParticipantsListOpen] = useState(false);
   const [budgetMemoriesOpen, setBudgetMemoriesOpen] = useState(false);
+  const [tripRemindersOn, setTripRemindersOn] = useState(true);
 
   const inviteeProfilesFetchKey = useMemo(
     () =>
@@ -15380,6 +15708,80 @@ export default function App() {
 
   const selectedTrip =
     trips.find((t) => normTripId(t.id) === normTripId(selectedTripId)) || null;
+
+  useEffect(() => {
+    if (!selectedTrip?.id) return;
+    setTripRemindersOn(isTripRemindersEnabled(selectedTrip.id));
+  }, [selectedTrip?.id]);
+
+  const syncActivityReminder = useCallback(
+    async (activity, tripId) => {
+      await scheduleActivityReminders(normalizeActivity(activity), {
+        tripId,
+        t,
+        onPermissionHint: (key) => setNotice(t(key)),
+      });
+    },
+    [t]
+  );
+
+  const syncActivityRemindersForTrip = useCallback(
+    async (rows, tripId) => {
+      await scheduleActivityRemindersBatch(
+        (Array.isArray(rows) ? rows : []).map((a) => normalizeActivity(a)),
+        {
+          tripId,
+          t,
+          onPermissionHint: (key) => setNotice(t(key)),
+        }
+      );
+    },
+    [t]
+  );
+
+  const exportSelectedTripToPhoneCalendar = useCallback(async () => {
+    if (!selectedTrip) return;
+    const tripId = normTripId(selectedTrip.id);
+    const tripActs = (activities || [])
+      .filter((a) => normTripId(a?.trip_id) === tripId)
+      .sort((a, b) => {
+        const da = String(a?.date || a?.date_key || "");
+        const db = String(b?.date || b?.date_key || "");
+        if (da !== db) return da.localeCompare(db);
+        return String(a?.time || "").localeCompare(String(b?.time || ""));
+      });
+    if (!tripActs.length) {
+      setNotice(t("planner.exportNoActivities"));
+      return;
+    }
+    try {
+      await exportTripActivitiesToIcs({
+        destination: String(selectedTrip.destination || selectedTrip.title || ""),
+        activities: tripActs,
+      });
+    } catch (e) {
+      setNotice(String(e?.message || t("planner.exportNoActivities")));
+    }
+  }, [selectedTrip, activities, t]);
+
+  const handleTripRemindersToggle = useCallback(
+    async (enabled) => {
+      if (!selectedTrip?.id) return;
+      const tripId = normTripId(selectedTrip.id);
+      setTripRemindersEnabled(tripId, enabled);
+      setTripRemindersOn(enabled);
+      const tripActs = (activities || []).filter((a) => normTripId(a?.trip_id) === tripId);
+      if (!enabled) {
+        for (const act of tripActs) {
+          void cancelActivityReminders(act.id);
+        }
+        return;
+      }
+      await syncActivityRemindersForTrip(tripActs, tripId);
+    },
+    [selectedTrip, activities, syncActivityRemindersForTrip]
+  );
+
   const uiTitle =
     activeTab === "trips"
       ? t("nav.trips")
@@ -15752,7 +16154,7 @@ export default function App() {
     const safeEmail = String(email || "").trim();
     const safePassword = String(password || "");
     if (!safeFirstName || !safeLastName || !safeEmail) {
-      setNotice("Nom, prenom et email sont obligatoires.");
+      setNotice(t("modals.profileRequiredFields"));
       return;
     }
     setSavingAccount(true);
@@ -16001,7 +16403,12 @@ export default function App() {
           time: String(item?.time || "").trim(),
           location: String(item?.location || "").trim(),
           cost: clampActivityCostEUR(item?.cost),
+          estimated_price_eur: readActivityEstimatedPriceEur(item),
           description: String(item?.description || "").trim(),
+          photo_url: String(item?.photo_url || item?.image_url || "").trim(),
+          image_url: String(item?.image_url || item?.photo_url || "").trim(),
+          latitude: Number.isFinite(Number(item?.latitude)) ? Number(item.latitude) : undefined,
+          longitude: Number.isFinite(Number(item?.longitude)) ? Number(item.longitude) : undefined,
         };
       })
       .filter((x) => x.title);
@@ -16013,12 +16420,19 @@ export default function App() {
     let rows = normalizedItems.map((item, i) => {
       const safeDate = item.date && tripDaySet.has(item.date) ? item.date : toYMD(fallbackDates[i], toYMD(startYmd, getTodayStr()));
       const assignedTime = normalizeActivityTimeHHMM(item.time) || String(slots[i % slots.length]).slice(0, 5);
+      const photo = String(item.photo_url || item.image_url || "").trim();
+      const estimatedPrice = readActivityEstimatedPriceEur(item);
       const row = {
         trip_id: normTripId(tripId), date: safeDate, date_key: safeDate, activity_date: safeDate,
         time: assignedTime, title: item.title, name: item.title, description: String(item.description || ""),
-        cost: clampActivityCostEUR(item.cost), location: String(item.location || ""),
-        photo_url: "", image_url: "",
+        cost: clampActivityCostEUR(item.cost ?? estimatedPrice),
+        estimated_price_eur: estimatedPrice,
+        location: String(item.location || ""),
+        photo_url: photo,
+        image_url: photo || String(item.image_url || "").trim(),
       };
+      if (Number.isFinite(item.latitude)) row.latitude = item.latitude;
+      if (Number.isFinite(item.longitude)) row.longitude = item.longitude;
       if (String(userId || "").trim()) row.owner_id = String(userId).trim();
       return row;
     });
@@ -16044,6 +16458,9 @@ export default function App() {
     try {
       const fresh = await fetchActivitiesRowsForTrip(tripId);
       replaceTripActivitiesInState(normTripId(tripId), fresh);
+      if (insertOk) {
+        void syncActivityRemindersForTrip(fresh, normTripId(tripId));
+      }
     } catch (_e) { /* ignore */ }
 
     if (insertOk) {
@@ -16060,7 +16477,7 @@ export default function App() {
               tripTitle,
               uiLang: language,
             });
-            if (!photo) continue;
+            if (!photo || !/^https?:\/\//i.test(String(photo))) continue;
             await supabase
               .from("activities")
               .update({ photo_url: String(photo), image_url: String(photo) })
@@ -16153,7 +16570,12 @@ export default function App() {
                     time: String(row?.time || "").trim(),
                     location: String(row?.location || "").trim(),
                     cost: clampActivityCostEUR(row?.cost),
+                    estimated_price_eur: readActivityEstimatedPriceEur(row),
                     description: String(row?.description || "").trim(),
+                    photo_url: String(row?.photo_url || row?.image_url || "").trim(),
+                    image_url: String(row?.image_url || row?.photo_url || "").trim(),
+                    latitude: Number.isFinite(Number(row?.latitude)) ? Number(row.latitude) : undefined,
+                    longitude: Number.isFinite(Number(row?.longitude)) ? Number(row.longitude) : undefined,
                   };
                 })
                 .filter((r) => r.title)
@@ -16277,6 +16699,26 @@ export default function App() {
     return parts.length ? parts.join(" — ") : t("modals.unknownError");
   };
 
+  const persistResolvedActivityPhoto = useCallback(async (activityId, photoUrl) => {
+    const id = String(activityId || "").trim();
+    const photo = String(photoUrl || "").trim();
+    if (!id || !/^https?:\/\//i.test(photo)) return;
+    try {
+      const { error } = await supabase
+        .from("activities")
+        .update({ photo_url: photo, image_url: photo })
+        .eq("id", id);
+      if (error) return;
+      setActivities((prev) =>
+        (prev || []).map((a) =>
+          String(a.id) === id ? normalizeActivity({ ...a, photo_url: photo, image_url: photo }) : a
+        )
+      );
+    } catch (_e) {
+      /* ignore */
+    }
+  }, []);
+
   const addActivity = async (input) => {
     const tid = normTripId(selectedTripId);
     if (!tid) {
@@ -16303,7 +16745,7 @@ export default function App() {
       const rawCost = Number(input?.cost);
       const safeCost = Number.isFinite(rawCost) ? rawCost : 0;
       const tripTitle = String(selectedTrip?.title || "").trim();
-      // Insertion immédiate sans fausse photo ; résolution lieu réel en arrière-plan.
+      const initialPhoto = String(input?.photo_url || input?.image_url || "").trim();
       let payload = {
         trip_id: tid,
         date: safeSelectedDate,
@@ -16315,8 +16757,8 @@ export default function App() {
         description: String(input.description || ""),
         cost: safeCost,
         location: String(input.location || ""),
-        photo_url: "",
-        image_url: "",
+        photo_url: initialPhoto,
+        image_url: initialPhoto,
       };
       if (String(userId || "").trim()) {
         payload.owner_id = String(userId).trim();
@@ -16347,6 +16789,7 @@ export default function App() {
           if (insertedId) {
             activityInsertGraceRef.current.set(insertedId, Date.now());
             cacheActivityDescription(insertedId, input?.description || "");
+            void syncActivityReminder(match || { ...payload, id: insertedId, trip_id: tid }, tid);
             if (tripExpensesTableReady && safeCost > 0) {
               const actRow = match || {
                 ...payload,
@@ -16356,29 +16799,31 @@ export default function App() {
               };
               void syncActivityBudgetExpense(actRow);
             }
-            (async () => {
-              try {
-                const betterPhoto = await resolveActivityPlaceImage({
-                  title: input.title || input.name,
-                  location: input.location,
-                  tripTitle,
-                  uiLang: language,
-                });
-                if (!betterPhoto) return;
-                await supabase
-                  .from("activities")
-                  .update({ photo_url: String(betterPhoto), image_url: String(betterPhoto) })
-                  .eq("id", insertedId);
+            if (!initialPhoto) {
+              (async () => {
                 try {
-                  const fresh2 = await fetchActivitiesRowsForTrip(tid);
-                  replaceTripActivitiesInState(tid, fresh2);
-                } catch (_refreshErr) {
+                  const betterPhoto = await resolveActivityPlaceImage({
+                    title: input.title || input.name,
+                    location: input.location,
+                    tripTitle,
+                    uiLang: language,
+                  });
+                  if (!betterPhoto || !/^https?:\/\//i.test(String(betterPhoto))) return;
+                  await supabase
+                    .from("activities")
+                    .update({ photo_url: String(betterPhoto), image_url: String(betterPhoto) })
+                    .eq("id", insertedId);
+                  try {
+                    const fresh2 = await fetchActivitiesRowsForTrip(tid);
+                    replaceTripActivitiesInState(tid, fresh2);
+                  } catch (_refreshErr) {
+                    /* ignore */
+                  }
+                } catch (_bgErr) {
                   /* ignore */
                 }
-              } catch (_bgErr) {
-                /* ignore */
-              }
-            })();
+              })();
+            }
           }
 
           setNotice("");
@@ -16453,6 +16898,10 @@ export default function App() {
             ...payload,
             description: desiredDescription,
           });
+          void syncActivityReminder(
+            { ...activity, ...payload, description: desiredDescription },
+            normTripId(activity?.trip_id || selectedTripId)
+          );
           setNotice("");
           return;
         }
@@ -16476,6 +16925,7 @@ export default function App() {
       if (linked?.id) await deleteGroupExpense(linked);
       const { error } = await supabase.from("activities").delete().eq("id", activity.id);
       if (error) throw error;
+      void cancelActivityReminders(activity.id);
       cacheActivityDescription(activity.id, "");
       setActivities((prev) => (prev || []).filter((a) => String(a.id) !== String(activity.id)));
       setNotice("");
@@ -17002,7 +17452,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip pb-[calc(8.25rem+env(safe-area-inset-bottom,0px))]"
+      className="min-h-screen min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip pb-[var(--app-bottom-nav-clearance)]"
       style={{
         color: TEXT,
         background:
@@ -17028,7 +17478,7 @@ export default function App() {
         : null}
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
-      <main className="mx-auto mt-5 w-full min-w-0 max-w-6xl px-3 sm:px-5">
+      <main className="mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 pt-[calc(var(--app-header-clearance)+0.5rem)] sm:px-5">
         {notice ? (
           <div className="mb-4 break-words rounded-[1.25rem] bg-white/90 px-4 py-3 text-sm shadow-[0_10px_28px_rgba(2,6,23,0.08)] ring-1 ring-slate-200/70">
             {String(notice)}
@@ -17086,7 +17536,7 @@ export default function App() {
         <div style={{ display: activeTab === "planner" ? undefined : "none" }}>
           <div
             id="tp-planner-main"
-            className="space-y-4 scroll-mt-[max(6rem,env(safe-area-inset-top,0px)+4.5rem)]"
+            className="space-y-4 scroll-mt-[var(--app-header-clearance)]"
           >
             <div className="rounded-[2rem] bg-white/70 p-3 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/55 backdrop-blur-lg sm:p-5">
               {selectedTrip ? (
@@ -17127,7 +17577,7 @@ export default function App() {
                           peerOwnerProfileByTripId[String(selectedTrip?.id || "")] || null;
                         const rawList = stackOrderedAvatarRaws(selectedTrip, session);
                         const displayNameFn = (p) =>
-                          participantDisplayFromRawForTrip(p, session, selectedTrip, ownerP);
+                          participantDisplayFromRawForTrip(p, session, selectedTrip, ownerP, language);
                         const maxStack = 5;
                         const visible = rawList.slice(0, maxStack);
                         const extra = Math.max(0, rawList.length - visible.length);
@@ -17189,6 +17639,30 @@ export default function App() {
                         >
                           <Mail size={16} />
                         </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void exportSelectedTripToPhoneCalendar()}
+                        className="rounded-full border border-white/55 bg-white/85 p-2 text-slate-700 hover:bg-white"
+                        title={t("planner.exportPhoneCalendar")}
+                        aria-label={t("planner.exportPhoneCalendarAria")}
+                      >
+                        <CalendarPlus size={16} />
+                      </button>
+                      {isNativeRemindersAvailable() ? (
+                        <label
+                          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-white/55 bg-white/85 px-2.5 py-1.5 text-[10px] font-medium text-slate-700 hover:bg-white"
+                          title={t("planner.remindersToggleAria")}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tripRemindersOn}
+                            onChange={(e) => void handleTripRemindersToggle(e.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-brand-blue focus:ring-brand-blue"
+                            aria-label={t("planner.remindersToggleAria")}
+                          />
+                          <span className="max-w-[5.5rem] leading-tight">{t("planner.remindersToggle")}</span>
+                        </label>
                       ) : null}
                     </div>
                   </div>

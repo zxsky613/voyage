@@ -1,11 +1,13 @@
 import { sendJson } from "../_helpers.js";
 import { handler as generateItineraryHandler } from "./_generateItinerary.js";
 import { handler as verifyItineraryHandler } from "./_verifyItinerary.js";
+import { handler as suggestHighlightsHandler } from "./_suggestHighlights.js";
 
 /** @type {Record<string, (req: import('@vercel/node').VercelRequest, res: import('@vercel/node').VercelResponse) => Promise<void>>} */
 const ROUTES = {
   "generate-itinerary": generateItineraryHandler,
   "verify-itinerary": verifyItineraryHandler,
+  "suggest-highlights": suggestHighlightsHandler,
 };
 
 /**

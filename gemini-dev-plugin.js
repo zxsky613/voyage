@@ -466,7 +466,8 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
 
     if (
       pathname === "/api/planner/generate-itinerary" ||
-      pathname === "/api/planner/verify-itinerary"
+      pathname === "/api/planner/verify-itinerary" ||
+      pathname === "/api/planner/suggest-highlights"
     ) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -501,7 +502,12 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       }
       try {
         const action = pathname.split("/").pop();
-        req.query = { ...(req.query || {}), action };
+        const urlObj = new URL(req.url || "/", "http://localhost");
+        req.query = {
+          ...(req.query || {}),
+          action,
+          ...Object.fromEntries(urlObj.searchParams.entries()),
+        };
         const mod = await import("./api/planner/[action].js");
         await routeVercelApiHandler(req, res, mod.default, body);
       } catch (e) {

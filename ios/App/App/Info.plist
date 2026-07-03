@@ -47,5 +47,7 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Justtrip peut te rappeler tes activités la veille et 2 heures avant le début.</string>
 </dict>
 </plist>

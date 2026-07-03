@@ -4,6 +4,92 @@ const THAI_LAO_SCRIPT_RE = /[\u0E00-\u0EFF]/;
 /** Grec (OSM / églises locales en Crète, etc.) : à filtrer quand l’UI n’est pas el. */
 const GREEK_SCRIPT_RE = /[\u0370-\u03FF\u1F00-\u1FFF]/;
 
+/** Libellés OSM trop vagues (1 mot générique) — ex. « Church », « Museum ». */
+const GENERIC_PLACE_LABELS = new Set([
+  "church",
+  "cathedral",
+  "chapelle",
+  "chapel",
+  "mosque",
+  "temple",
+  "synagogue",
+  "museum",
+  "gallery",
+  "galerie",
+  "monument",
+  "memorial",
+  "memorial",
+  "cemetery",
+  "park",
+  "parc",
+  "library",
+  "bibliotheque",
+  "theatre",
+  "theater",
+  "cinema",
+  "school",
+  "hospital",
+  "hotel",
+  "restaurant",
+  "cafe",
+  "station",
+  "market",
+  "marche",
+  "eglise",
+  "cathedrale",
+  "musee",
+  "monastere",
+  "monastery",
+  "fort",
+  "castle",
+  "chateau",
+  "viewpoint",
+  "attraction",
+  "building",
+  "townhall",
+  "placeofworship",
+]);
+
+/**
+ * Repère un libellé trop générique pour une pastille « lieu incontournable »
+ * (ex. « Church » seul, sans nom propre).
+ * @param {unknown} raw
+ * @returns {boolean}
+ */
+export function isUninformativeMustSeePlaceLabel(raw) {
+  const s = String(raw || "").trim();
+  if (!s || s.length < 2) return true;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  if (words.length >= 2) {
+    const informative = words.filter((w) => !isGenericPlaceToken(w));
+    return informative.length === 0;
+  }
+  return isGenericPlaceToken(words[0]);
+}
+
+/** @param {string} word */
+function isGenericPlaceToken(word) {
+  const folded = String(word || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (!folded) return true;
+  return GENERIC_PLACE_LABELS.has(folded);
+}
+
+/**
+ * @param {unknown[]} places
+ * @returns {string[]}
+ */
+export function dropUninformativeMustSeePlaceLabels(places) {
+  if (!Array.isArray(places)) return [];
+  return places
+    .map((p) => String(p || "").trim())
+    .filter((s) => s.length >= 2 && !isUninformativeMustSeePlaceLabel(s));
+}
+
 /** Hiragana/katakana/CJC/Hangul : souvent mélangés au français/anglais dans les tips si l’UI est en alphabet latin. */
 const LATIN_UI_EXCLUDE_CJK_HANGUL_RE = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af]/;
 
@@ -43,7 +129,9 @@ export function dropPlacesWrongScriptForUiLang(places, uiLanguage = "fr") {
  */
 export function pickPlacesListAfterScriptFilter(sanitized, uiLanguage = "fr") {
   if (!Array.isArray(sanitized)) return [];
-  const ok = dropPlacesWrongScriptForUiLang(sanitized, uiLanguage);
+  const ok = dropUninformativeMustSeePlaceLabels(
+    dropPlacesWrongScriptForUiLang(sanitized, uiLanguage)
+  );
   if (ok.length > 0) return ok;
   const lang = String(uiLanguage || "fr")
     .toLowerCase()

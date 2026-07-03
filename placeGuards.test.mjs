@@ -6,6 +6,7 @@ import {
   sanitizeMustSeePlaces,
   filterTipLinesForUiLang,
   filterSuggestedActivitiesForUiLang,
+  isUninformativeMustSeePlaceLabel,
 } from "./placeGuards.js";
 
 test("dropPlacesWrongScriptForUiLang removes Thai when UI is French", () => {
@@ -38,6 +39,16 @@ test("dropPlacesWrongScriptForUiLang removes Greek when UI is Chinese", () => {
   const mixed = ["Folk Museum of Ano Asites", "Ι.Ν. Αγίου Νικολάου", "Church"];
   const zh = dropPlacesWrongScriptForUiLang(mixed, "zh");
   assert.deepEqual(zh, ["Folk Museum of Ano Asites", "Church"]);
+});
+
+test("pickPlacesListAfterScriptFilter drops generic Church label", () => {
+  const mixed = ["Folk Museum of Ano Asites", "Church"];
+  assert.deepEqual(pickPlacesListAfterScriptFilter(mixed, "zh"), ["Folk Museum of Ano Asites"]);
+});
+
+test("isUninformativeMustSeePlaceLabel rejects single generic tokens", () => {
+  assert.equal(isUninformativeMustSeePlaceLabel("Church"), true);
+  assert.equal(isUninformativeMustSeePlaceLabel("Folk Museum of Ano Asites"), false);
 });
 
 test("pickPlacesListAfterScriptFilter returns [] when all Greek and UI is FR", () => {

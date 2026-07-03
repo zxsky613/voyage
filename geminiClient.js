@@ -5,6 +5,7 @@
 
 const ITIN_FETCH_TIMEOUT_MS = 120000;
 const VERIFIED_ITIN_FETCH_TIMEOUT_MS = 180000;
+const SUGGEST_HIGHLIGHTS_TIMEOUT_MS = 90000;
 
 async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -116,9 +117,11 @@ export async function fetchVerifiedItinerary({
   prefs = null,
   countryCode = "",
   country = "",
+  debug = false,
 }) {
+  const debugQ = debug || import.meta.env.DEV ? "?debug=1" : "";
   const r = await fetchPostJsonWithTimeout(
-    "/api/planner/generate-itinerary",
+    `/api/planner/generate-itinerary${debugQ}`,
     {
       destination,
       startDate,
@@ -133,6 +136,44 @@ export async function fetchVerifiedItinerary({
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(typeof j.error === "string" ? j.error : `Planner erreur ${r.status}`);
+  }
+  if (import.meta.env.DEV && j?.data?.timings) {
+    console.info("[planner/generate-itinerary timings]", j.data.timings);
+  }
+  return j;
+}
+
+/** Lieux réels vérifiés pour activités proposées + modale « Ajouter destination ». */
+export async function fetchSuggestHighlights({
+  destination,
+  language = "fr",
+  country = "",
+  countryCode = "",
+  prefs = null,
+  debug = false,
+}) {
+  const debugQ = debug || import.meta.env.DEV ? "?debug=1" : "";
+  const r = await fetchPostJsonWithTimeout(
+    `/api/planner/suggest-highlights${debugQ}`,
+    {
+      destination: String(destination || "").trim(),
+      language,
+      country: String(country || "").trim(),
+      countryCode: String(countryCode || "").trim(),
+      prefs,
+    },
+    SUGGEST_HIGHLIGHTS_TIMEOUT_MS
+  );
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(typeof j.error === "string" ? j.error : `Planner erreur ${r.status}`);
+  }
+  if (import.meta.env.DEV && j?.data?.tripAdvisorCalls != null) {
+    console.info("[planner/suggest-highlights]", {
+      count: Array.isArray(j?.data?.highlights) ? j.data.highlights.length : 0,
+      tripAdvisorCalls: j.data.tripAdvisorCalls,
+      cached: Boolean(j?.data?.cached),
+    });
   }
   return j;
 }

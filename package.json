@@ -21,14 +21,18 @@
     "warmup:image-cache": "node scripts/warmup-image-resolve-top-cities.mjs --limit 30 --delay 500",
     "purge:unverified-enrichment": "node scripts/purge-unverified-enrichment.mjs",
     "audit:city-heroes": "node scripts/audit-city-heroes-criteria.mjs",
+    "audit:images": "node scripts/audit-images-coverage.mjs",
     "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
     "fix:logo": "node scripts/fix-logo-white-dot.mjs",
-    "test": "node --test placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs lib/planner/activityImageSource.test.mjs lib/planner/geoGuard.test.mjs lib/images/normalizeLabel.test.mjs lib/images/entitySearchPlan.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
+    "test": "node --test placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs lib/planner/activityImageSource.test.mjs lib/planner/activityPricing.test.mjs lib/planner/highlightShape.test.mjs lib/planner/geoGuard.test.mjs lib/calendar/buildTripIcs.test.mjs lib/images/normalizeLabel.test.mjs lib/images/entitySearchPlan.test.mjs lib/images/heroResolveLabel.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
+    "@capacitor/filesystem": "^8.1.2",
     "@capacitor/ios": "^8.3.0",
+    "@capacitor/local-notifications": "^8.2.0",
+    "@capacitor/share": "^8.0.1",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.49.4",
     "lucide-react": "^0.511.0",

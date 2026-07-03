@@ -16,6 +16,10 @@ import {
 import { capPlacesPerDay, dayFeasible } from "../../lib/planner/feasibility.js";
 import { normalizeVerifiedDayIdeas } from "../../lib/planner/itineraryShape.js";
 import { isGeoMismatchPlace } from "../../lib/planner/geoGuard.js";
+import {
+  attachPricingToRegistryPlace,
+  buildPass1CandidatePriceMap,
+} from "../../lib/planner/activityPricing.js";
 
 function padDayClusters(clusters, days, fallbackPool) {
   const out = Array.from({ length: days }, (_, i) => [...(clusters[i] || [])]);
@@ -46,11 +50,11 @@ function buildPass1Prompt({ destination, days, startDate, endDate, prefsBlock, e
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
     enrichBlock +
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide:\n` +
-    `{"candidates":[{"id":"c1","name":"Nom affiché (langue voyageur)","searchName":"Official English/local TripAdvisor name","category":"museum|park|landmark|neighborhood|viewpoint","durationHours":2}, ...]}\n` +
+    `{"candidates":[{"id":"c1","name":"Nom affiché (langue voyageur)","searchName":"Official English/local TripAdvisor name","category":"museum|park|landmark|neighborhood|viewpoint","durationHours":2,"estimatedPriceEur":15}, ...]}\n` +
     `Règles STRICTES :\n` +
     `- Propose exactement ${candidateCount} candidats uniques (lieux réels, noms propres).\n` +
-    `- Chaque candidat a un "id" unique (c1, c2, …), un "name" NON VIDE (affichage), un "searchName" NON VIDE (nom officiel anglais/local tel que sur TripAdvisor/Google Maps), category et durationHours (1–8).\n` +
-    `- Exemple : name="Vieux port de La Canée", searchName="Old Venetian Harbour Chania".\n` +
+    `- Chaque candidat a un "id" unique (c1, c2, …), un "name" NON VIDE (affichage), un "searchName" NON VIDE (nom officiel anglais/local tel que sur TripAdvisor/Google Maps), category, durationHours (1–8) et estimatedPriceEur (entier JSON, 0–300 : coût estimé entrée/visite en euros, 0 si gratuit).\n` +
+    `- Exemple : name="Vieux port de La Canée", searchName="Old Venetian Harbour Chania", estimatedPriceEur=0.\n` +
     `- Pas de repas, pas d'hôtels, pas de transport seul.\n` +
     `- Pas de doublons ni quasi-doublons entre candidats.\n` +
     `- Couvre plusieurs quartiers/zones de ${destination}.\n` +
@@ -85,13 +89,13 @@ function buildPass2Prompt({
     `Catalogue vérifié (utilise UNIQUEMENT ces IDs dans activities[].id):\n${catalogLines}\n\n` +
     `Affectation géographique imposée par le moteur:\n${assignLines}\n\n` +
     `Réponds UNIQUEMENT avec:\n` +
-    `{"dayIdeas":[{"day":1,"title":"titre thématique","costEur":95,"activities":[{"id":"c1","period":"morning","description":"phrase de visite concrète"}, ...]}, ...]}\n` +
+    `{"dayIdeas":[{"day":1,"title":"titre thématique","activities":[{"id":"c1","period":"morning","description":"phrase de visite concrète"}, ...]}, ...]}\n` +
     `Règles STRICTES:\n` +
     `- Exactement ${days} objets dayIdeas, day = 1 … ${days}.\n` +
     `- Chaque activities[].id DOIT être dans la liste autorisée du jour correspondant.\n` +
     `- period = "morning" ou "afternoon". Max 2 activities/jour.\n` +
     `- description : visite concrète, sans repas ni repos hôtel.\n` +
-    `- costEur entier JSON, cohérent budget : ${budgetHint}.\n` +
+    `- Ne fournis PAS de costEur journalier (calculé côté serveur).\n` +
     `${langRule}\n`
   );
 }
@@ -112,12 +116,13 @@ function fallbackDayIdeasFromClusters(dayAssignments, registry) {
         latitude: meta.latitude,
         longitude: meta.longitude,
         photos: meta.photos,
+        estimatedPriceEur: meta.estimatedPriceEur ?? 0,
+        priceSource: meta.priceSource || "estimate",
       };
     });
     return {
       day: i + 1,
       title: places.length ? places.map((p) => p.name).slice(0, 2).join(" · ") : `Jour ${i + 1}`,
-      costEur: 0,
       activities,
     };
   });
@@ -141,6 +146,8 @@ function mergeDayIdeasWithRegistry(dayIdeas, registry) {
         longitude: meta.longitude,
         photos: Array.isArray(meta.photos) && meta.photos.length ? meta.photos : a.photos,
         priceLevel: meta.priceLevel,
+        estimatedPriceEur: meta.estimatedPriceEur ?? 0,
+        priceSource: meta.priceSource || a.priceSource || "estimate",
       };
     });
     return {
@@ -174,7 +181,13 @@ export async function handler(req, res) {
   const langRule = langRuleParagraph(uiLang);
   const prefsBlock = formatPrefsForPrompt(prefs);
   const bHint = budgetRangeHint(prefs);
-  const candidateCount = Math.min(Math.max(days * 3, 6), 42);
+  const candidateCount = Math.min(Math.max(days * 2, 4), 28);
+  const debugMode =
+    String(req.query?.debug || body.debug || "").trim() === "1" ||
+    String(req.query?.debug || body.debug || "").trim() === "true";
+  /** @type {Record<string, number>} */
+  const timings = {};
+  const tPipeline = Date.now();
 
   let enrichBlock = "";
   try {
@@ -186,7 +199,8 @@ export async function handler(req, res) {
   try {
     const pass1System =
       "Tu produis uniquement un objet JSON valide avec le tableau candidates. " +
-      "Chaque lieu a name (affichage) et searchName (nom officiel anglais/local pour TripAdvisor). Pas de markdown.";
+      "Chaque lieu a name (affichage), searchName (nom officiel anglais/local pour TripAdvisor) et estimatedPriceEur (entier 0–300). Pas de markdown.";
+    const tPass1 = Date.now();
     const pass1 = await runPlannerLlmJson({
       prompt: buildPass1Prompt({
         destination,
@@ -202,29 +216,39 @@ export async function handler(req, res) {
       systemPrompt: pass1System,
       temperature: 0.35,
     });
+    timings.pass1Ms = Date.now() - tPass1;
 
     const rawCandidates = Array.isArray(pass1?.candidates) ? pass1.candidates : [];
     if (!rawCandidates.length) {
       return sendJson(res, 502, { error: "Passe 1 : aucun candidat proposé." });
     }
 
+    const tVerify = Date.now();
     const { places: verifiedPlaces, tripAdvisorCalls } = await verifyCandidatePlaces(rawCandidates, {
       city: destination,
       near,
       locale: uiLang,
+      concurrency: 6,
     });
+    timings.verifyMs = Date.now() - tVerify;
 
     const eligiblePlaces = verifiedPlaces.filter((p) => !isGeoMismatchPlace(p));
 
-    const registry = new Map(eligiblePlaces.map((p) => [p.id, p]));
-    const scored = scoreAndSortPlaces(eligiblePlaces, prefs || {});
+    const pass1PriceMap = buildPass1CandidatePriceMap(rawCandidates);
+    const pricedPlaces = eligiblePlaces.map((p) =>
+      attachPricingToRegistryPlace(p, pass1PriceMap.get(String(p.id || "").trim()))
+    );
+
+    const registry = new Map(pricedPlaces.map((p) => [p.id, p]));
+    const scored = scoreAndSortPlaces(pricedPlaces, prefs || {});
     const geoPlaces = scored.filter(
       (p) => Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))
     );
     const spread = inferGeoSpreadKm(geoPlaces.length ? geoPlaces : scored);
     const { sanityKm } = thresholdsForSpread(spread);
 
-    let dayClusters = clusterPlacesIntoDays(scored.slice(0, Math.max(days * 3, days * 2)), days);
+    const tCluster = Date.now();
+    let dayClusters = clusterPlacesIntoDays(scored.slice(0, Math.max(days * 2, days)), days);
     dayClusters = padDayClusters(dayClusters, days, scored);
 
     const dayAssignments = dayClusters.map((cluster) => {
@@ -240,8 +264,10 @@ export async function handler(req, res) {
     const placeCatalog = scored.filter((p) =>
       dayAssignments.some((day) => day.some((x) => x.id === p.id))
     );
+    timings.clusterMs = Date.now() - tCluster;
 
     let dayIdeas = [];
+    const tPass2 = Date.now();
     try {
       const pass2System =
         "Tu produis uniquement un objet JSON dayIdeas. " +
@@ -269,6 +295,7 @@ export async function handler(req, res) {
     } catch {
       dayIdeas = [];
     }
+    timings.pass2Ms = Date.now() - tPass2;
 
     if (
       !dayIdeas.length ||
@@ -284,7 +311,16 @@ export async function handler(req, res) {
     let list = normalizeVerifiedDayIdeas(dayIdeas, uiLang);
     list = dedupeItineraryDayIdeas(list, uiLang, { skipFallbackPadding: true });
 
-    sendJson(res, 200, {
+    timings.totalMs = Date.now() - tPipeline;
+    console.info("[planner/generate-itinerary]", {
+      destination,
+      days,
+      candidateCount,
+      ...timings,
+      tripAdvisorCalls,
+    });
+
+    const payload = {
       ok: true,
       data: {
         dayIdeas: list,
@@ -301,7 +337,9 @@ export async function handler(req, res) {
           tripAdvisorCalls,
         },
       },
-    });
+    };
+    if (debugMode) payload.data.timings = timings;
+    sendJson(res, 200, payload);
   } catch (e) {
     sendJson(res, 502, { error: formatError(e) });
   }

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BedDouble, Calendar, ExternalLink, MapPin, Users, Wallet } from "lucide-react";
 import { useI18n } from "./i18n/I18nContext.jsx";
+import { useUiTranslatedCityName } from "./i18n/userContentTranslate.jsx";
+import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { buildAllStaySearchUrls } from "./lib/stays/staySearchLinks.js";
 import { EXPENSE_SOURCE, expenseCategory, filterExpensesForTrip } from "./lib/budget/expenseSources.js";
 
@@ -15,10 +17,10 @@ function toYMD(value, fallback = "") {
   return `${y}-${mo}-${da}`;
 }
 
-function formatEuroFR(value) {
+function formatEuro(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("fr-FR", {
+  return new Intl.NumberFormat(getAppDateLocale(), {
     style: "currency",
     currency: "EUR",
     maximumFractionDigits: 2,
@@ -41,7 +43,8 @@ export default function StaysView({
   onAddLodgingExpense,
   onOpenTripBudget,
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const { text: translatedDestination } = useUiTranslatedCityName(destination, language);
   const sortedTrips = useMemo(
     () =>
       [...(trips || [])].sort((a, b) =>
@@ -67,12 +70,19 @@ export default function StaysView({
       setDestination(tripDestination(activeTrip));
       setCheckIn(toYMD(activeTrip.start_date, ""));
       setCheckOut(toYMD(activeTrip.end_date, ""));
-      const dest = tripDestination(activeTrip);
-      setLodgingTitle(dest ? t("stays.lodgingDefaultTitle", { place: dest }) : "");
       return;
     }
     if (destinationHint) setDestination(String(destinationHint).trim());
-  }, [activeTrip, destinationHint, t]);
+  }, [activeTrip, destinationHint]);
+
+  useEffect(() => {
+    const dest = String(translatedDestination || destination || "").trim();
+    if (!dest) {
+      setLodgingTitle("");
+      return;
+    }
+    setLodgingTitle(t("stays.lodgingDefaultTitle", { place: dest }));
+  }, [translatedDestination, destination, t, activeTrip?.id]);
 
   useEffect(() => {
     if (tripId || sortedTrips.length === 0) return;
@@ -111,7 +121,9 @@ export default function StaysView({
     try {
       const title =
         String(lodgingTitle || "").trim() ||
-        t("stays.lodgingDefaultTitle", { place: destination.trim() || t("stays.tripFallback") });
+        t("stays.lodgingDefaultTitle", {
+          place: String(translatedDestination || destination || "").trim() || t("stays.tripFallback"),
+        });
       const ok = await onAddLodgingExpense({
         tripId,
         title,
@@ -345,7 +357,7 @@ export default function StaysView({
                       className="flex items-center justify-between gap-2 rounded-xl bg-white/90 px-3 py-2 text-sm ring-1 ring-brand-blue/15"
                     >
                       <span className="min-w-0 truncate text-slate-800">{e.title}</span>
-                      <span className="shrink-0 tabular-nums text-slate-700">{formatEuroFR(e.amount)}</span>
+                      <span className="shrink-0 tabular-nums text-slate-700">{formatEuro(e.amount)}</span>
                     </li>
                   ))}
                 </ul>

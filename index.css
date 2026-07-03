@@ -4,6 +4,8 @@
 
 /* ── Palette marque Justtrip (source unique) ── */
 :root {
+  --app-header-clearance: calc(env(safe-area-inset-top, 0px) + 4.75rem);
+  --app-bottom-nav-clearance: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
   --brand-blue: #1d4ed8;
   --brand-blue-deep: #1e3a8a;
   --brand-blue-tint: #e5ebfb;
@@ -52,6 +54,7 @@ body,
 @layer base {
   html {
     -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: var(--app-header-clearance);
   }
   #root {
     min-height: 100dvh;
@@ -121,13 +124,15 @@ html.modal-open,
 html.modal-open body {
   background: #8b8f94 !important;
 }
-html.modal-open .sticky {
+html.modal-open .sticky,
+html.modal-open .app-top-nav {
   background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-html.modal-open .sticky > * {
+html.modal-open .sticky > *,
+html.modal-open .app-top-nav {
   opacity: 0 !important;
   pointer-events: none !important;
 }

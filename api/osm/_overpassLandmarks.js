@@ -21,6 +21,8 @@ function pickLocalizedNameFromOsmTags(tags, preferredLang) {
     tryKeys.push("name:es", "name:es-ES", "name:es-MX");
   } else if (code === "it") {
     tryKeys.push("name:it", "name:it-IT", "name:it-CH");
+  } else if (code === "zh") {
+    tryKeys.push("name:zh", "name:zh-CN", "name:zh-TW", "name:cmn", "name:zh-Hans", "name:zh-Hant");
   } else {
     tryKeys.push(`name:${code}`);
   }
