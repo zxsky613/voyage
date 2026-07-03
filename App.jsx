@@ -11419,6 +11419,7 @@ function DestinationGuideView({
   const [destinationHighlights, setDestinationHighlights] = useState([]);
   const [destinationHighlightsLoading, setDestinationHighlightsLoading] = useState(false);
   const destinationHighlightsKeyRef = useRef("");
+  const pendingItineraryPopupRef = useRef(false);
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
   const [itineraryQuotaModalOpen, setItineraryQuotaModalOpen] = useState(false);
@@ -11687,11 +11688,17 @@ function DestinationGuideView({
             endDate: String(data.endDate).trim(),
           });
         }
-        if (data.popupOpen) setItineraryResultOpen(true);
+        if (data.popupOpen) pendingItineraryPopupRef.current = true;
       }
     } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!visible || !pendingItineraryPopupRef.current) return;
+    pendingItineraryPopupRef.current = false;
+    setItineraryResultOpen(true);
+  }, [visible]);
 
   const addModalWasOpenRef = useRef(false);
   /** Libellés figés au moment du cochet (si la liste Gemini change avant « Créer », on garde le bon titre). */
@@ -13076,6 +13083,8 @@ function DestinationGuideView({
         )}
       </div>
 
+      {visible ? (
+        <>
       {tripPrefsOpen && pendingTripRequest ? (
         <TripPrefsModal
           cityLabel={displayCityForLocale(String(pendingTripRequest.dest), language)}
@@ -13843,6 +13852,8 @@ function DestinationGuideView({
             </div>
           </div>
         </div>
+      ) : null}
+        </>
       ) : null}
     </section>
   );
