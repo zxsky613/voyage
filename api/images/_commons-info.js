@@ -1,4 +1,5 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
+import { fetchJsonWithRetry } from "./_fetchRetry.js";
 
 /** Extrait le nom de fichier Commons depuis une URL upload.wikimedia.org. */
 export function commonsFileTitleFromUrl(url) {
@@ -45,14 +46,12 @@ export async function handler(req, res) {
       `&titles=${encodeURIComponent(filePage)}` +
       "&prop=imageinfo&iiprop=url|extmetadata";
 
-    const r = await fetch(api, {
-      headers: { "User-Agent": "Justtrip/1.0 (Commons attribution; travel-planner)" },
-    });
-    if (!r.ok) {
-      return sendJson(res, 502, { ok: false, error: `Commons API ${r.status}` });
+    const { ok, json, status } = await fetchJsonWithRetry(api);
+    if (!ok || !json) {
+      return sendJson(res, 502, { ok: false, error: `Commons API ${status || "error"}` });
     }
 
-    const j = await r.json();
+    const j = json;
     const page = Object.values(j?.query?.pages || {})[0];
     const info = page?.imageinfo?.[0];
     const meta = info?.extmetadata || {};

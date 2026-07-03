@@ -2,21 +2,43 @@ import { createClient } from "@supabase/supabase-js";
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from "../_helpers.js";
 
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const UNVERIFIED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 let supabaseAdmin = null;
-let warnedMissingServiceKey = false;
+let cacheDisabledReason = null;
+let loggedCacheDisabled = false;
+
+/**
+ * @param {import('@supabase/supabase-js').PostgrestError | { message?: string, code?: string } | null | undefined} error
+ */
+function formatSupabaseCacheError(error) {
+  if (!error) return "unknown Supabase error";
+  const code = String(error.code || "").trim();
+  const msg = String(error.message || error).trim();
+  if (code === "42P01" || /relation .* does not exist/i.test(msg)) {
+    return `table public.place_enrichment_cache does not exist — run supabase/sql/place_enrichment_cache.sql (${msg})`;
+  }
+  return msg || code || "unknown Supabase error";
+}
+
+function logCacheDisabled(reason) {
+  cacheDisabledReason = reason;
+  if (!loggedCacheDisabled) {
+    loggedCacheDisabled = true;
+    console.error(`[place-enrichment-cache] DISABLED: ${reason}`);
+  }
+}
 
 function getAdmin() {
   if (supabaseAdmin) return supabaseAdmin;
   const url = getSupabaseUrl();
   const key = getSupabaseServiceRoleKey();
   if (!url || !key) {
-    if (!warnedMissingServiceKey) {
-      warnedMissingServiceKey = true;
-      console.warn(
-        "[place-enrichment-cache] SUPABASE_SERVICE_ROLE_KEY absente — cache enrichissement désactivé."
-      );
-    }
+    logCacheDisabled(
+      !key
+        ? "SUPABASE_SERVICE_ROLE_KEY missing (set in .env.local and Vercel Production)"
+        : "SUPABASE_URL missing"
+    );
     return null;
   }
   supabaseAdmin = createClient(url, key, {
@@ -39,10 +61,17 @@ export function normalizePlaceCacheKey(name, city) {
   };
 }
 
+function cacheTtlForStatus(status) {
+  return String(status || "").trim().toLowerCase() === "unverified"
+    ? UNVERIFIED_CACHE_TTL_MS
+    : CACHE_TTL_MS;
+}
+
 function mapRow(row) {
   if (!row) return null;
   const updated = row.updated_at ? Date.parse(String(row.updated_at)) : 0;
-  if (updated && Date.now() - updated > CACHE_TTL_MS) return null;
+  const ttl = cacheTtlForStatus(row.status);
+  if (updated && Date.now() - updated > ttl) return null;
   return {
     locationId: row.location_id || undefined,
     status: row.status,
@@ -74,7 +103,17 @@ export async function readPlaceEnrichmentCache(name, city) {
     .eq("place_name_normalized", keys.place_name_normalized)
     .eq("city_normalized", keys.city_normalized)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    const formatted = formatSupabaseCacheError(error);
+    const code = String(error.code || "").trim();
+    if (code === "42P01" || /relation .* does not exist/i.test(formatted)) {
+      logCacheDisabled(formatted);
+    } else {
+      console.error(`[place-enrichment-cache] read failed: ${formatted}`);
+    }
+    return null;
+  }
+  if (!data) return null;
   return mapRow(data);
 }
 
@@ -106,7 +145,11 @@ export async function writePlaceEnrichmentCache(name, city, enrichment) {
   const { error } = await db.from("place_enrichment_cache").upsert(row, {
     onConflict: "place_name_normalized,city_normalized",
   });
-  return !error;
+  if (error) {
+    logCacheDisabled(`upsert failed — ${formatSupabaseCacheError(error)}`);
+    return false;
+  }
+  return true;
 }
 
 export function isPlaceEnrichmentCacheConfigured() {

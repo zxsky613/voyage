@@ -4,7 +4,7 @@ import {
   getLocationDetails,
   getLocationPhotos,
   isTripAdvisorConfigured,
-  searchLocation,
+  searchLocationDetailed,
 } from "./_tripadvisorClient.js";
 import { readPlaceEnrichmentCache, writePlaceEnrichmentCache, normalizePlaceCacheKey } from "./_enrichCache.js";
 import { searchFoursquarePlace } from "../foursquare/_textSearch.js";
@@ -35,21 +35,51 @@ async function mapPool(items, fn, concurrency = 5) {
  * @param {string} near
  * @param {string} locale
  * @param {{ inc: () => void, get: () => number }} taCounter
+ * @param {{ searchName?: string, category?: string, collectDebug?: boolean }} [opts]
  */
-export async function enrichPlaceByName(name, city, near, locale, taCounter) {
+export async function enrichPlaceByName(name, city, near, locale, taCounter, opts = {}) {
   const placeName = String(name || "").trim();
   const cityNorm = String(city || "").trim();
+  const searchName = String(opts.searchName || "").trim();
+  const category = String(opts.category || "").trim();
+  /** @type {object|null} */
+  let debugEntry = opts.collectDebug
+    ? { name: placeName, searchName: searchName || placeName, city: cityNorm }
+    : null;
+
   if (!placeName) {
-    return { status: "unverified", source: "none", name: placeName };
+    const out = { status: "unverified", source: "none", name: placeName };
+    if (debugEntry) debugEntry.reason = "empty_name";
+    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
   }
 
   const cached = await readPlaceEnrichmentCache(placeName, cityNorm);
-  if (cached) return { ...cached, name: cached.name || placeName };
+  if (cached) {
+    const out = { ...cached, name: cached.name || placeName };
+    if (debugEntry) {
+      debugEntry.reason = "cache_hit";
+      debugEntry.status = cached.status;
+    }
+    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
+  }
 
   if (isTripAdvisorConfigured()) {
     taCounter.inc();
-    const searchQ = cityNorm ? `${placeName}, ${cityNorm}` : placeName;
-    const hit = await searchLocation(searchQ, { language: locale, category: "attractions" });
+    const taQuery = searchName || placeName;
+    const searchQ = cityNorm ? `${taQuery}, ${cityNorm}` : taQuery;
+    const { hit, trace } = await searchLocationDetailed(searchQ, {
+      language: locale,
+      category,
+      searchName: taQuery,
+      geoName: cityNorm,
+    });
+
+    if (debugEntry) {
+      debugEntry.taQuery = searchQ;
+      debugEntry.taAttempts = trace?.attempts || [];
+      debugEntry.taReason = trace?.reason || "";
+    }
+
     if (hit?.locationId) {
       taCounter.inc();
       const details = await getLocationDetails(hit.locationId, locale);
@@ -64,12 +94,25 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter) {
           photos,
         };
         await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-        return enrichment;
+        if (debugEntry) {
+          debugEntry.reason = "verified";
+          debugEntry.locationId = hit.locationId;
+          debugEntry.firstResult = hit.name;
+          debugEntry.results = trace?.attempts?.slice(-1)[0]?.results;
+        }
+        return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
       }
+      if (debugEntry) debugEntry.reason = "details_failed";
+    } else if (debugEntry) {
+      debugEntry.reason = trace?.reason || "ta_miss";
+      debugEntry.results = trace?.attempts?.slice(-1)[0]?.results ?? 0;
+      debugEntry.firstResult = trace?.attempts?.slice(-1)[0]?.firstResult || "";
     }
+  } else if (debugEntry) {
+    debugEntry.reason = "ta_not_configured";
   }
 
-  const fsq = await searchFoursquarePlace(placeName, near || cityNorm, locale);
+  const fsq = await searchFoursquarePlace(searchName || placeName, near || cityNorm, locale);
   if (fsq && (Number.isFinite(fsq.latitude) || Number.isFinite(fsq.longitude))) {
     const enrichment = {
       name: fsq.name || placeName,
@@ -82,22 +125,27 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter) {
       fsqId: fsq.fsqId,
     };
     await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-    return enrichment;
+    if (debugEntry) debugEntry.reason = "partial_foursquare";
+    return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
   }
 
   const unverified = { name: placeName, status: "unverified", source: "none" };
   await writePlaceEnrichmentCache(placeName, cityNorm, unverified);
-  return unverified;
+  if (debugEntry && !debugEntry.reason) debugEntry.reason = "unverified";
+  return opts.collectDebug ? { ...unverified, _debug: debugEntry } : unverified;
 }
 
 /**
- * @param {Array<{ id?: string, name: string }>} candidates
- * @param {{ city: string, near: string, locale: string, concurrency?: number }} options
+ * @param {Array<{ id?: string, name: string, searchName?: string, category?: string }>} candidates
+ * @param {{ city: string, near: string, locale: string, concurrency?: number, debug?: boolean }} options
  */
 export async function verifyCandidatePlaces(candidates, options) {
   const taCounter = createTripAdvisorCallCounter();
   const seen = new Set();
   const unique = [];
+  /** @type {object[]} */
+  const debugRows = [];
+
   for (const c of Array.isArray(candidates) ? candidates : []) {
     const name = String(c?.name || "").trim();
     if (!name) continue;
@@ -107,6 +155,7 @@ export async function verifyCandidatePlaces(candidates, options) {
     unique.push({
       id: String(c?.id || "").trim() || `p${unique.length + 1}`,
       name,
+      searchName: String(c?.searchName || "").trim(),
       category: c?.category,
       durationHours: c?.durationHours,
     });
@@ -115,7 +164,15 @@ export async function verifyCandidatePlaces(candidates, options) {
   const enriched = await mapPool(
     unique,
     async (c) => {
-      const meta = await enrichPlaceByName(c.name, options.city, options.near, options.locale, taCounter);
+      const meta = await enrichPlaceByName(c.name, options.city, options.near, options.locale, taCounter, {
+        searchName: c.searchName,
+        category: c.category,
+        collectDebug: Boolean(options.debug),
+      });
+      if (options.debug && meta._debug) {
+        debugRows.push(meta._debug);
+        delete meta._debug;
+      }
       return {
         id: c.id,
         name: meta.name || c.name,
@@ -127,7 +184,11 @@ export async function verifyCandidatePlaces(candidates, options) {
     options.concurrency || 5
   );
 
-  return { places: enriched, tripAdvisorCalls: taCounter.get() };
+  return {
+    places: enriched,
+    tripAdvisorCalls: taCounter.get(),
+    debug: options.debug ? debugRows : undefined,
+  };
 }
 
 export async function handler(req, res) {
@@ -138,23 +199,33 @@ export async function handler(req, res) {
   const country = String(body.country || "").trim();
   const near = country ? `${destination}, ${country}` : destination;
   const locale = resolveUiLanguage(body);
+  const debugMode = String(req.query?.debug || "").trim() === "1";
   const rawPlaces = Array.isArray(body.places) ? body.places : [];
   const candidates = rawPlaces.map((p, i) =>
     typeof p === "string"
       ? { id: `p${i + 1}`, name: p }
-      : { id: p?.id, name: p?.name, category: p?.category, durationHours: p?.durationHours }
+      : {
+          id: p?.id,
+          name: p?.name,
+          searchName: p?.searchName,
+          category: p?.category,
+          durationHours: p?.durationHours,
+        }
   );
 
   if (!destination) return sendJson(res, 400, { error: "destination requise" });
   if (!candidates.length) return sendJson(res, 400, { error: "places[] requis" });
 
   try {
-    const { places, tripAdvisorCalls } = await verifyCandidatePlaces(candidates, {
+    const { places, tripAdvisorCalls, debug } = await verifyCandidatePlaces(candidates, {
       city: destination,
       near,
       locale,
+      debug: debugMode,
     });
-    sendJson(res, 200, { ok: true, data: { places, tripAdvisorCalls } });
+    const payload = { ok: true, data: { places, tripAdvisorCalls } };
+    if (debugMode && debug) payload.debug = debug;
+    sendJson(res, 200, payload);
   } catch (e) {
     sendJson(res, 502, { error: String(e?.message || e) });
   }

@@ -53,22 +53,26 @@ export async function handler(req, res) {
   try {
     const outcome = await Promise.race([
       resolveImage({ kind: /** @type {import('../../lib/images/types.js').ImageKind} */ (kind), label, context, uiLang }),
-      new Promise((resolve) => setTimeout(() => resolve({ image: null, reason: "timeout" }), 12000)),
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ image: null, reason: "timeout", cache: "miss" }), 12000)
+      ),
     ]);
 
     const result = outcome?.image || null;
     const reason = outcome?.reason;
+    const cache = outcome?.cache || "miss";
 
     if (!result?.url) {
       const failReason = reason || "not_found";
       console.error(
-        `[images/resolve] failed kind=${kind} label="${label.slice(0, 80)}" context="${context.slice(0, 40)}" reason=${failReason}`
+        `[images/resolve] failed kind=${kind} label="${label.slice(0, 80)}" context="${context.slice(0, 40)}" reason=${failReason} cache=${cache}`
       );
       return sendJson(res, 200, {
         ok: false,
         url: "",
         source: "fallback",
         reason: failReason,
+        cache,
         error: "Aucune image résolue — utiliser le fallback legacy.",
       });
     }
@@ -84,6 +88,7 @@ export async function handler(req, res) {
       attribution: result.attribution,
       entityId: result.entityId,
       cached: Boolean(result.cached),
+      cache,
     });
   } catch (e) {
     console.error(
@@ -94,6 +99,7 @@ export async function handler(req, res) {
       url: "",
       source: "fallback",
       reason: "not_found",
+      cache: "miss",
       error: String(e?.message || e),
     });
   }

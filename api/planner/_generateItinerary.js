@@ -45,10 +45,11 @@ function buildPass1Prompt({ destination, days, startDate, endDate, prefsBlock, e
     `Le voyageur séjourne du ${startDate} au ${endDate} (${days} jour(s) inclus).${prefsBlock}\n` +
     enrichBlock +
     `Réponds UNIQUEMENT avec un JSON UTF-8 valide:\n` +
-    `{"candidates":[{"id":"c1","name":"Nom propre du lieu","category":"museum|park|landmark|neighborhood|viewpoint","durationHours":2}, ...]}\n` +
+    `{"candidates":[{"id":"c1","name":"Nom affiché (langue voyageur)","searchName":"Official English/local TripAdvisor name","category":"museum|park|landmark|neighborhood|viewpoint","durationHours":2}, ...]}\n` +
     `Règles STRICTES :\n` +
     `- Propose exactement ${candidateCount} candidats uniques (lieux réels, noms propres).\n` +
-    `- Chaque candidat a un "id" unique (c1, c2, …), un "name" NON VIDE, category et durationHours (1–8).\n` +
+    `- Chaque candidat a un "id" unique (c1, c2, …), un "name" NON VIDE (affichage), un "searchName" NON VIDE (nom officiel anglais/local tel que sur TripAdvisor/Google Maps), category et durationHours (1–8).\n` +
+    `- Exemple : name="Vieux port de La Canée", searchName="Old Venetian Harbour Chania".\n` +
     `- Pas de repas, pas d'hôtels, pas de transport seul.\n` +
     `- Pas de doublons ni quasi-doublons entre candidats.\n` +
     `- Couvre plusieurs quartiers/zones de ${destination}.\n` +
@@ -184,7 +185,7 @@ export async function handler(req, res) {
   try {
     const pass1System =
       "Tu produis uniquement un objet JSON valide avec le tableau candidates. " +
-      "Chaque lieu est un nom propre réel. Pas de markdown.";
+      "Chaque lieu a name (affichage) et searchName (nom officiel anglais/local pour TripAdvisor). Pas de markdown.";
     const pass1 = await runPlannerLlmJson({
       prompt: buildPass1Prompt({
         destination,

@@ -2,6 +2,7 @@ import { normalizeLabelKey, splitResolveImageLabelContext, inferDefaultHeroResol
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
 import {
   isCacheConfigured,
+  noteCacheStatusAtResolveStart,
   readCacheByEntity,
   readCacheByLabel,
   writeCache,
@@ -99,7 +100,8 @@ async function resolvePlaceFromEntity(entity, kind) {
 /**
  * @typedef {import('../../lib/images/types.js').ResolvedImage} ResolvedImage
  * @typedef {'wikidata_throttled' | 'not_found' | 'timeout' | 'cache_disabled' | 'filtered'} ResolveImageReason
- * @typedef {{ image: ResolvedImage|null, reason?: ResolveImageReason }} ResolveImageOutcome
+ * @typedef {'hit' | 'miss' | 'disabled'} ImageCacheField
+ * @typedef {{ image: ResolvedImage|null, reason?: ResolveImageReason, cache: ImageCacheField }} ResolveImageOutcome
  */
 
 /**
@@ -114,19 +116,26 @@ export async function resolveImage(params) {
   const effectiveContext = geoContext || (kind === "hero" ? inferDefaultHeroResolveContext(params.label) : "");
   const labelNormalized = normalizeLabelKey(params.label, context || effectiveContext);
 
+  let cacheField = noteCacheStatusAtResolveStart();
+  const cacheReady = isCacheConfigured() && cacheField !== "disabled";
+
   if (!labelNormalized && !searchLabel) {
-    return { image: null, reason: "not_found" };
+    return { image: null, reason: "not_found", cache: cacheField };
   }
 
-  if (isCacheConfigured()) {
-    const cached = await readCacheByLabel(labelNormalized, kind);
-    if (cached?.url) {
+  if (cacheReady) {
+    const labelCached = await readCacheByLabel(labelNormalized, kind);
+    if (labelCached.cache === "disabled") cacheField = "disabled";
+    else if (labelCached.cache === "hit" && labelCached.entry?.url) {
+      const cached = labelCached.entry;
       const decodedTitle = decodeURIComponent(cached.url);
       const blocked =
         kind === "hero" &&
         (isLikelyOrbitalOrMapImagery(cached.url, decodedTitle, "") ||
           isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle));
-      if (!blocked) return { image: cached };
+      if (!blocked) return { image: cached, cache: "hit" };
+    } else if (labelCached.cache === "miss") {
+      cacheField = "miss";
     }
   }
 
@@ -144,21 +153,27 @@ export async function resolveImage(params) {
   })();
 
   if (!entity) {
-    if (wikiThrottled && !isCacheConfigured()) {
-      return { image: null, reason: "cache_disabled" };
+    if (wikiThrottled && cacheField === "disabled") {
+      return { image: null, reason: "cache_disabled", cache: "disabled" };
     }
-    return { image: null, reason: wikiThrottled ? "wikidata_throttled" : "not_found" };
+    return {
+      image: null,
+      reason: wikiThrottled ? "wikidata_throttled" : "not_found",
+      cache: cacheField,
+    };
   }
 
-  if (entity?.qid && isCacheConfigured()) {
+  if (entity?.qid && cacheReady && cacheField !== "disabled") {
     const byEntity = await readCacheByEntity(entity.qid, kind);
-    if (byEntity?.url) {
-      const decodedTitle = decodeURIComponent(byEntity.url);
+    if (byEntity.cache === "disabled") cacheField = "disabled";
+    else if (byEntity.cache === "hit" && byEntity.entry?.url) {
+      const byEntityImage = byEntity.entry;
+      const decodedTitle = decodeURIComponent(byEntityImage.url);
       const blocked =
         kind === "hero" &&
-        (isLikelyOrbitalOrMapImagery(byEntity.url, decodedTitle, "") ||
-          isLikelyWikiBrandOrLogoImage(byEntity.url, decodedTitle));
-      if (!blocked) return { image: { ...byEntity, cached: true } };
+        (isLikelyOrbitalOrMapImagery(byEntityImage.url, decodedTitle, "") ||
+          isLikelyWikiBrandOrLogoImage(byEntityImage.url, decodedTitle));
+      if (!blocked) return { image: { ...byEntityImage, cached: true }, cache: "hit" };
     }
   }
 
@@ -168,13 +183,13 @@ export async function resolveImage(params) {
       : await resolvePlaceFromEntity(entity, kind);
 
   if (!valid?.url) {
-    return { image: null, reason: "not_found" };
+    return { image: null, reason: "not_found", cache: cacheField };
   }
 
   const resolved = candidateToResolved(valid, entity.qid);
   resolved.cached = false;
 
-  if (isCacheConfigured()) {
+  if (cacheReady && cacheField !== "disabled") {
     await writeCache({
       labelNormalized,
       kind,
@@ -183,5 +198,5 @@ export async function resolveImage(params) {
     });
   }
 
-  return { image: resolved };
+  return { image: resolved, cache: cacheField === "disabled" ? "disabled" : "miss" };
 }

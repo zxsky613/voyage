@@ -1,22 +1,43 @@
 import { createClient } from "@supabase/supabase-js";
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from "../_helpers.js";
 
+/** @typedef {'hit' | 'miss' | 'disabled'} ImageCacheField */
+
 let supabaseAdmin = null;
-let warnedMissingServiceKey = false;
+let cacheDisabledReason = null;
+let loggedCacheDisabled = false;
+
+/**
+ * @param {import('@supabase/supabase-js').PostgrestError | { message?: string, code?: string } | null | undefined} error
+ */
+function formatSupabaseCacheError(error) {
+  if (!error) return "unknown Supabase error";
+  const code = String(error.code || "").trim();
+  const msg = String(error.message || error).trim();
+  if (code === "42P01" || /relation .* does not exist/i.test(msg)) {
+    return `table public.image_resolve_cache does not exist — run supabase/sql/image_resolve_cache.sql (${msg})`;
+  }
+  return msg || code || "unknown Supabase error";
+}
+
+function logCacheDisabled(reason) {
+  cacheDisabledReason = reason;
+  if (!loggedCacheDisabled) {
+    loggedCacheDisabled = true;
+    console.error(`[image-cache] DISABLED: ${reason}`);
+  }
+}
 
 function getAdmin() {
   if (supabaseAdmin) return supabaseAdmin;
   const url = getSupabaseUrl();
   const key = getSupabaseServiceRoleKey();
   if (!url || !key) {
-    if (!warnedMissingServiceKey) {
-      warnedMissingServiceKey = true;
-      console.warn(
-        "[image-resolve-cache] SUPABASE_SERVICE_ROLE_KEY absente — cache Supabase désactivé ; " +
-          "le resolver Wikidata/Commons risque d’être rate-limité (429). Ajoutez la clé service-role " +
-          "en local (.env) et sur Vercel."
-      );
-    }
+    logCacheDisabled(
+      !key
+        ? "SUPABASE_SERVICE_ROLE_KEY missing (set in .env.local and Vercel Production)"
+        : "SUPABASE_URL missing"
+    );
     return null;
   }
   supabaseAdmin = createClient(url, key, {
@@ -25,30 +46,60 @@ function getAdmin() {
   return supabaseAdmin;
 }
 
+/** Appelé au début de chaque résolution — log une fois si le cache est indisponible. */
+export function noteCacheStatusAtResolveStart() {
+  if (!isCacheConfigured()) {
+    getAdmin();
+    return /** @type {ImageCacheField} */ ("disabled");
+  }
+  if (cacheDisabledReason) {
+    return /** @type {ImageCacheField} */ ("disabled");
+  }
+  return /** @type {ImageCacheField} */ ("miss");
+}
+
 /**
  * @param {string} labelNormalized
  * @param {import('../../lib/images/types.js').ImageKind} kind
+ * @returns {Promise<{ entry: import('../../lib/images/types.js').ResolvedImage|null, cache: ImageCacheField }>}
  */
 export async function readCacheByLabel(labelNormalized, kind) {
   const db = getAdmin();
-  if (!db || !labelNormalized || !kind) return null;
+  if (!db || !labelNormalized || !kind) {
+    return { entry: null, cache: "disabled" };
+  }
   const { data, error } = await db
     .from("image_resolve_cache")
     .select("*")
     .eq("label_normalized", labelNormalized)
     .eq("kind", kind)
     .maybeSingle();
-  if (error || !data?.image_url) return null;
-  return mapRow(data);
+  if (error) {
+    const formatted = formatSupabaseCacheError(error);
+    const code = String(error.code || "").trim();
+    if (code === "42P01" || /relation .* does not exist/i.test(formatted)) {
+      logCacheDisabled(formatted);
+      return { entry: null, cache: "disabled" };
+    }
+    console.error(`[image-cache] read failed (label): ${formatted}`);
+    return { entry: null, cache: "miss" };
+  }
+  if (!data?.image_url) {
+    return { entry: null, cache: "miss" };
+  }
+  return { entry: mapRow(data), cache: "hit" };
 }
 
 /**
  * @param {string} entityId
  * @param {import('../../lib/images/types.js').ImageKind} kind
+ * @returns {Promise<{ entry: import('../../lib/images/types.js').ResolvedImage|null, cache: ImageCacheField }>}
  */
 export async function readCacheByEntity(entityId, kind) {
   const db = getAdmin();
-  if (!db || !entityId || !kind) return null;
+  if (!db || !entityId || !kind) {
+    return { entry: null, cache: "disabled" };
+  }
   const { data, error } = await db
     .from("image_resolve_cache")
     .select("*")
@@ -56,8 +107,20 @@ export async function readCacheByEntity(entityId, kind) {
     .eq("kind", kind)
     .limit(1)
     .maybeSingle();
-  if (error || !data?.image_url) return null;
-  return mapRow(data);
+  if (error) {
+    const formatted = formatSupabaseCacheError(error);
+    const code = String(error.code || "").trim();
+    if (code === "42P01" || /relation .* does not exist/i.test(formatted)) {
+      logCacheDisabled(formatted);
+      return { entry: null, cache: "disabled" };
+    }
+    console.error(`[image-cache] read failed (label): ${formatted}`);
+    return { entry: null, cache: "miss" };
+  }
+  if (!data?.image_url) {
+    return { entry: null, cache: "miss" };
+  }
+  return { entry: mapRow(data), cache: "hit" };
 }
 
 function mapRow(row) {
@@ -103,7 +166,11 @@ export async function writeCache({ labelNormalized, kind, entityId, candidate })
   const { error } = await db.from("image_resolve_cache").upsert(row, {
     onConflict: "label_normalized,kind",
   });
-  return !error;
+  if (error) {
+    logCacheDisabled(`upsert failed — ${formatSupabaseCacheError(error)}`);
+    return false;
+  }
+  return true;
 }
 
 export function isCacheConfigured() {

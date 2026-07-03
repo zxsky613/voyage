@@ -1,7 +1,20 @@
-const UA = "Justtrip/1.0 (image-resolve; travel-planner)";
+export const WIKIMEDIA_USER_AGENT =
+  "JustTrip/1.0 (https://justtrip.fr; contact@justtrip.fr)";
 
 export function wikiUserAgent() {
-  return UA;
+  return WIKIMEDIA_USER_AGENT;
+}
+
+/** @param {string} url */
+export function isWikimediaApiUrl(url) {
+  try {
+    const host = new URL(String(url || "")).hostname.toLowerCase();
+    if (!host) return false;
+    const roots = ["wikidata.org", "wikimedia.org", "wikipedia.org", "wikivoyage.org"];
+    return roots.some((root) => host === root || host.endsWith(`.${root}`));
+  } catch {
+    return false;
+  }
 }
 
 export function parseExtMetaValue(raw) {
@@ -28,15 +41,21 @@ export async function headCheckUrl(url, timeoutMs = 8000) {
   if (!u.startsWith("http")) return false;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const wikiHeaders = isWikimediaApiUrl(u) ? { "User-Agent": wikiUserAgent() } : {};
   try {
-    let r = await fetch(u, { method: "HEAD", signal: ctrl.signal, redirect: "follow" });
+    let r = await fetch(u, {
+      method: "HEAD",
+      signal: ctrl.signal,
+      redirect: "follow",
+      headers: wikiHeaders,
+    });
     if (r.ok) return true;
     if (r.status === 405 || r.status === 403) {
       r = await fetch(u, {
         method: "GET",
         signal: ctrl.signal,
         redirect: "follow",
-        headers: { Range: "bytes=0-0" },
+        headers: { ...wikiHeaders, Range: "bytes=0-0" },
       });
       return r.ok || r.status === 206;
     }
