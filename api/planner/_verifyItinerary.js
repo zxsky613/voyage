@@ -8,6 +8,7 @@ import {
 } from "./_tripadvisorClient.js";
 import { readPlaceEnrichmentCache, writePlaceEnrichmentCache, normalizePlaceCacheKey } from "./_enrichCache.js";
 import { searchFoursquarePlace } from "../foursquare/_textSearch.js";
+import { applyGeoMismatchGuard } from "../../lib/planner/geoGuard.js";
 
 /**
  * @template T
@@ -85,7 +86,7 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
       const details = await getLocationDetails(hit.locationId, locale);
       if (details) {
         taCounter.inc();
-        const photos = await getLocationPhotos(hit.locationId, locale, 3);
+        const photos = await getLocationPhotos(hit.locationId, locale, 5);
         const enrichment = {
           ...details,
           name: details.name || hit.name || placeName,
@@ -184,8 +185,10 @@ export async function verifyCandidatePlaces(candidates, options) {
     options.concurrency || 5
   );
 
+  const guarded = applyGeoMismatchGuard(enriched);
+
   return {
-    places: enriched,
+    places: guarded,
     tripAdvisorCalls: taCounter.get(),
     debug: options.debug ? debugRows : undefined,
   };

@@ -15,6 +15,7 @@ import {
 } from "../../lib/planner/geoCluster.js";
 import { capPlacesPerDay, dayFeasible } from "../../lib/planner/feasibility.js";
 import { normalizeVerifiedDayIdeas } from "../../lib/planner/itineraryShape.js";
+import { isGeoMismatchPlace } from "../../lib/planner/geoGuard.js";
 
 function padDayClusters(clusters, days, fallbackPool) {
   const out = Array.from({ length: days }, (_, i) => [...(clusters[i] || [])]);
@@ -138,7 +139,7 @@ function mergeDayIdeasWithRegistry(dayIdeas, registry) {
         tripadvisorUrl: meta.tripadvisorUrl,
         latitude: meta.latitude,
         longitude: meta.longitude,
-        photos: meta.photos,
+        photos: Array.isArray(meta.photos) && meta.photos.length ? meta.photos : a.photos,
         priceLevel: meta.priceLevel,
       };
     });
@@ -213,8 +214,10 @@ export async function handler(req, res) {
       locale: uiLang,
     });
 
-    const registry = new Map(verifiedPlaces.map((p) => [p.id, p]));
-    const scored = scoreAndSortPlaces(verifiedPlaces, prefs || {});
+    const eligiblePlaces = verifiedPlaces.filter((p) => !isGeoMismatchPlace(p));
+
+    const registry = new Map(eligiblePlaces.map((p) => [p.id, p]));
+    const scored = scoreAndSortPlaces(eligiblePlaces, prefs || {});
     const geoPlaces = scored.filter(
       (p) => Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))
     );
@@ -294,6 +297,7 @@ export async function handler(req, res) {
           verifiedCount: verifiedPlaces.filter((p) => p.status === "verified").length,
           partialCount: verifiedPlaces.filter((p) => p.status === "partial").length,
           unverifiedCount: verifiedPlaces.filter((p) => p.status === "unverified").length,
+          geoMismatchCount: verifiedPlaces.filter((p) => isGeoMismatchPlace(p)).length,
           tripAdvisorCalls,
         },
       },

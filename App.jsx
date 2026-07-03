@@ -96,6 +96,11 @@ import {
 import { isVerifiedPlannerEnabled } from "./lib/planner/featureFlags.js";
 import { categoryForActivityTitle } from "./lib/planner/activityCategoryThumb.js";
 import {
+  pickTripAdvisorActivityPhoto,
+  pickActivityDisplayPhotoUrl,
+  shouldShowTripAdvisorAttribution,
+} from "./lib/planner/activityImageSource.js";
+import {
   inferDefaultHeroResolveContext,
   splitResolveImageLabelContext,
 } from "./lib/images/normalizeLabel.js";
@@ -5483,15 +5488,29 @@ function assignActivityDatesRoundRobin(startYmd, endYmd, count) {
 }
 
 function getActivityImageUrl(activity) {
-  return String(activity?.photo_url || activity?.image_url || "").trim();
+  return pickActivityDisplayPhotoUrl(
+    activity,
+    String(activity?.photo_url || activity?.image_url || "").trim()
+  );
 }
 
 function getActivityPlaceholderStyle(activity) {
   return activityPlaceholderStyle(activity);
 }
 
-/** Résolution image activité / bullet — getResolvedImage ou legacy. */
-async function resolveActivityPlaceImage({ title, location, tripTitle, uiLang = "fr", dayTitle = "" }) {
+/** Résolution image activité / bullet — TripAdvisor photos[] puis getResolvedImage. */
+async function resolveActivityPlaceImage({
+  title,
+  location,
+  tripTitle,
+  uiLang = "fr",
+  dayTitle = "",
+  photos,
+  activityMeta,
+}) {
+  const taPhoto = pickTripAdvisorActivityPhoto(activityMeta || { photos });
+  if (taPhoto) return taPhoto;
+
   const cityLabel = String(location || tripTitle || "").trim();
   const { label, context } = buildActivityResolveParams(String(title || "").trim(), cityLabel, dayTitle);
   if (!label) return "";
@@ -5787,9 +5806,14 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
   const period = parseActivityTimePeriod(activity?.time);
   const mapsUrl = buildPlannerActivityGoogleMapsUrl(rawTitle, cityLabel);
   const cacheKey = `planner-v1|${String(cityLabel || "").trim()}|${String(activity?.id || "")}|${rawTitle}`;
-  const [src, setSrc] = useState(() => itineraryBulletImageCache[cacheKey] || "");
-  const [loading, setLoading] = useState(() => !itineraryBulletImageCache[cacheKey]);
+  const storedPhoto = getActivityImageUrl(activity);
+  const taPhotoUrl = pickTripAdvisorActivityPhoto(activity) || (storedPhoto && shouldShowTripAdvisorAttribution(activity, storedPhoto) ? storedPhoto : "");
+  const initialPhoto = taPhotoUrl || storedPhoto || itineraryBulletImageCache[cacheKey] || "";
+  const [src, setSrc] = useState(() => initialPhoto);
+  const [loading, setLoading] = useState(() => !initialPhoto);
   const [imgBroken, setImgBroken] = useState(false);
+  const taUrl = String(activity?.tripadvisorUrl || activity?.tripadvisor_url || "").trim();
+  const usingTaPhoto = shouldShowTripAdvisorAttribution(activity, src);
 
   useEffect(() => {
     setImgBroken(false);
@@ -5799,6 +5823,12 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
     let cancelled = false;
     if (!rawTitle) {
       setSrc("");
+      setLoading(false);
+      return undefined;
+    }
+    const prefetched = taPhotoUrl || storedPhoto;
+    if (prefetched) {
+      setSrc(prefetched);
       setLoading(false);
       return undefined;
     }
@@ -5823,7 +5853,7 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, rawTitle, cityLabel, language]);
+  }, [cacheKey, rawTitle, cityLabel, language, taPhotoUrl, storedPhoto]);
 
   const periodChip =
     period === "morning" ? (
@@ -5890,6 +5920,19 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete 
               emptyFallback={t("planner.activityNamePlaceholder")}
             />
           </p>
+          {usingTaPhoto && taUrl ? (
+            <p className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+              <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">★ TripAdvisor</span>
+              <a
+                href={taUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full px-2 py-0.5 ring-1 ring-slate-200 transition hover:bg-slate-50"
+              >
+                {t("destination.itineraryTaAttribution")}
+              </a>
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
             <a
               href={mapsUrl}
@@ -6087,8 +6130,9 @@ function ItineraryBulletRow({
   const { t, language } = useI18n();
   const text = String(bullet || "").trim();
   const cacheKey = `v5|${String(cityLabel || "").trim()}|${dayNum}|${bulletIndex}|${text}`;
-  const [src, setSrc] = useState(() => itineraryBulletImageCache[cacheKey] || "");
-  const [loading, setLoading] = useState(() => !itineraryBulletImageCache[cacheKey]);
+  const taPhotoUrl = pickTripAdvisorActivityPhoto(activityMeta);
+  const [src, setSrc] = useState(() => taPhotoUrl || itineraryBulletImageCache[cacheKey] || "");
+  const [loading, setLoading] = useState(() => !taPhotoUrl && !itineraryBulletImageCache[cacheKey]);
   const [imgBroken, setImgBroken] = useState(false);
   const [mapOpening, setMapOpening] = useState(false);
   const [swapLoading, setSwapLoading] = useState(false);
@@ -6124,6 +6168,11 @@ function ItineraryBulletRow({
 
   useEffect(() => {
     let cancelled = false;
+    if (taPhotoUrl) {
+      setSrc(taPhotoUrl);
+      setLoading(false);
+      return undefined;
+    }
     if (itineraryBulletImageCache[cacheKey]) {
       setSrc(itineraryBulletImageCache[cacheKey]);
       setLoading(false);
@@ -6145,7 +6194,7 @@ function ItineraryBulletRow({
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, text, cityLabel, dayTitle, language]);
+  }, [cacheKey, text, cityLabel, dayTitle, language, taPhotoUrl]);
 
   if (!text) return null;
 
@@ -6155,14 +6204,19 @@ function ItineraryBulletRow({
   const placeLabel = extractItineraryBulletPlaceHint(text, dayTitle) || displayText.slice(0, 48);
   const rating = Number(activityMeta?.rating);
   const numReviews = Number(activityMeta?.numReviews);
-  const showRatingBadge = Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0;
   const taUrl = String(activityMeta?.tripadvisorUrl || "").trim();
+  const usingTaPhoto = shouldShowTripAdvisorAttribution(activityMeta, src);
+  const showRatingLine =
+    (Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0) ||
+    (usingTaPhoto && taUrl);
 
-  const ratingBadge = showRatingBadge ? (
+  const ratingBadge = showRatingLine ? (
     <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-      <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
-        ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })}
-      </span>
+      {Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0 ? (
+        <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
+          ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })}
+        </span>
+      ) : null}
       {taUrl ? (
         <a
           href={taUrl}
@@ -12112,11 +12166,14 @@ function DestinationGuideView({
         const dayNum = Number(d?.day) || 1;
         const actDate = addDaysToDate(rangeStart, dayNum - 1);
         const bullets = Array.isArray(d?.bullets) ? d.bullets : [];
+        const activityMetaList = getItineraryDayActivitiesMeta(d);
         const perActCost =
           bullets.length > 0 && Number(d?.costEur) > 0
             ? Math.round(Number(d.costEur) / bullets.length)
             : 0;
         bullets.forEach((b, j) => {
+          const meta = activityMetaList[j] || null;
+          const taPhoto = pickTripAdvisorActivityPhoto(meta);
           schedule.push({
             title: stripPrefix(b),
             date: actDate,
@@ -12124,6 +12181,8 @@ function DestinationGuideView({
             location: String(displayGuide?.city || ""),
             cost: perActCost,
             description: `Jour ${dayNum} — ${String(d?.title || "")}`,
+            photo_url: taPhoto,
+            image_url: taPhoto,
           });
         });
       }

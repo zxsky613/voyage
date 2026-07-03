@@ -1,5 +1,6 @@
 import { wikiUserAgent } from "./_headCheck.js";
 import { fetchJsonWithRetry, WikiApiThrottledError } from "./_fetchRetry.js";
+import { buildEntitySearchAttempts } from "../../lib/images/entitySearchPlan.js";
 
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
 
@@ -127,7 +128,7 @@ function parseContextTokens(context) {
   if (!c) return [];
   return c
     .split(/[,;|]/)
-    .map((s) => normalizeForLookup(s))
+    .map((s) => normalizeForLookup(s).replace(/^region\s+/, ""))
     .filter((s) => s.length >= 2);
 }
 
@@ -141,6 +142,10 @@ const GEO_TOKEN_ALIAS_GROUPS = [
   ["nebraska", "saline county"],
   ["spain", "espagne", "espana", "spanish", "espagnol", "kingdom of spain"],
   ["canary islands", "canaries", "islas canarias", "ile canaries", "iles canaries", "canarie"],
+  ["france", "french", "republique francaise"],
+  ["paca", "provence alpes cote d azur", "provence-alpes-cote d azur", "provence", "cote d azur"],
+  ["germany", "deutschland", "allemagne", "german"],
+  ["bayern", "bavaria", "baviere"],
 ];
 
 function expandTokenAliases(token) {
@@ -355,39 +360,6 @@ function scoreEntityBase(entity, searchLabel, kind = "hero") {
   return score;
 }
 
-/** Score si l'entité provient d'une requête wbsearch incluant le contexte. */
-function searchQueryMatchesContext(searchQuery, contextTokens) {
-  if (!contextTokens.length) return false;
-  const q = normalizeForLookup(searchQuery);
-  if (!q) return false;
-  let hits = 0;
-  for (const token of contextTokens) {
-    if (token.length < 3) continue;
-    if (q.includes(token)) hits += 1;
-  }
-  return hits >= Math.min(2, contextTokens.length) || contextTokens.some((t) => t.length >= 5 && q.includes(t));
-}
-
-function stripDiacritics(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-/** Variantes de requête wbsearch : avec accents puis sans accents. */
-function searchQueryVariants(query) {
-  const t = String(query || "").trim();
-  if (!t) return [];
-  const stripped = stripDiacritics(t);
-  return stripped !== t ? [t, stripped] : [t];
-}
-
-function resolveSearchLanguages(uiLang) {
-  const lang = String(uiLang || "fr").slice(0, 2);
-  const order = [lang, "en", "es", "fr"];
-  return [...new Set(order)];
-}
-
 /**
  * @param {string} searchLabel
  * @param {string} uiLang
@@ -396,41 +368,39 @@ function resolveSearchLanguages(uiLang) {
  */
 export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
   const lang = String(uiLang || "fr").slice(0, 2);
-  const contextTokens = parseContextTokens(context);
-  const queries = [];
-  const add = (s) => {
-    const t = String(s || "").trim();
-    if (t.length >= 2 && !queries.includes(t)) queries.push(t);
-  };
-  /** Requêtes avec contexte en premier pour le provenance scoring. */
-  if (context) {
-    add(`${searchLabel}, ${context}`);
-    add(`${searchLabel} ${context}`);
-  }
-  add(searchLabel);
+  const cityLabel = String(searchLabel || "").trim();
+  const geoContext = String(context || "").trim();
+  const contextTokens = parseContextTokens(geoContext);
+  const attempts = buildEntitySearchAttempts(cityLabel);
 
-  /** @type {{ id: string, searchQuery: string }[]} */
-  const hits = [];
-  const seen = new Set();
+  for (const { query, language } of attempts) {
+    const batch = await wbSearchEntities(query, language, 10);
+    if (!batch.length) continue;
 
-  for (const q of queries.slice(0, 4)) {
-    for (const qTry of searchQueryVariants(q)) {
-      for (const langTry of resolveSearchLanguages(lang)) {
-        const batch = await wbSearchEntities(qTry, langTry, 10);
-        for (const hit of batch) {
-          const id = String(hit?.id || "").trim();
-          if (!id) continue;
-          if (!seen.has(id)) {
-            seen.add(id);
-            hits.push({ id, searchQuery: qTry });
-          } else if (searchQueryMatchesContext(qTry, contextTokens)) {
-            const row = hits.find((h) => h.id === id);
-            if (row) row.searchQuery = qTry;
-          }
-        }
-      }
-    }
+    /** @type {{ id: string, searchQuery: string }[]} */
+    const hits = batch
+      .map((hit) => ({
+        id: String(hit?.id || "").trim(),
+        searchQuery: query,
+      }))
+      .filter((h) => h.id);
+
+    const picked = await pickBestEntityFromHits(hits, cityLabel, geoContext, contextTokens, kind, lang);
+    if (picked) return picked;
   }
+
+  return null;
+}
+
+/**
+ * @param {{ id: string, searchQuery: string }[]} hits
+ * @param {string} searchLabel
+ * @param {string} context
+ * @param {string[]} contextTokens
+ * @param {import('../../lib/images/types.js').ImageKind} kind
+ * @param {string} lang
+ */
+async function pickBestEntityFromHits(hits, searchLabel, context, contextTokens, kind, lang) {
   if (!hits.length) return null;
 
   const entities = await wbGetEntitiesFull(hits.map((h) => h.id));
@@ -448,69 +418,55 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
     const base = scoreEntityBase(ent, searchLabel, kind);
     if (base <= -500) continue;
 
-    const hit = hitById[ent.id];
     const { matched: geoMatched, score: ctxScore } = entityContextMatchScore(
       ent,
       contextTokens,
       geoLabelMap
     );
-    const searchMatched = searchQueryMatchesContext(hit?.searchQuery || "", contextTokens);
-    const contextOk = !contextTokens.length || geoMatched || searchMatched;
+    const contextOk = !contextTokens.length || geoMatched;
 
     if (contextTokens.length && !contextOk) continue;
 
-    const provenanceBonus = searchMatched ? 45 : 0;
-    ranked.push({ ent, score: base + ctxScore + provenanceBonus });
+    ranked.push({ ent, score: base + ctxScore });
   }
 
   if (!ranked.length) return null;
 
   ranked.sort((a, b) => b.score - a.score);
 
-  /** @type {object|null} */
-  let best = null;
-  /** @type {string[]} */
-  let p31Ids = [];
-  /** @type {Set<string>} */
-  let expandedP279 = new Set();
-
   for (const { ent } of ranked.slice(0, 8)) {
     const ids = entityP31Ids(ent);
     const p279Direct = [...entityP279Ids(ent), ...ids];
     const expanded = await expandP279(p279Direct);
     if (!matchesKindType(ids, kind, expanded)) continue;
-    best = ent;
-    p31Ids = ids;
-    expandedP279 = expanded;
-    break;
+
+    const p18Filenames = claimValues(ent, "P18")
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+    const p373 = claimValues(ent, "P373")
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+    const commonsCategory = p373[0] || "";
+
+    const sitelinks = [];
+    const wikivoyageSitelinks = [];
+    const links = ent.sitelinks || {};
+    for (const l of [lang, "en", "fr", "de", "es", "it", "zh"]) {
+      const title = String(links[`${l}wiki`]?.title || "").trim();
+      if (title) sitelinks.push({ lang: l, title });
+      const wvTitle = String(links[`${l}wikivoyage`]?.title || "").trim();
+      if (wvTitle) wikivoyageSitelinks.push({ lang: l, title: wvTitle });
+    }
+
+    return {
+      qid: String(ent.id),
+      p18Filenames,
+      commonsCategory,
+      sitelinks,
+      wikivoyageSitelinks,
+      p31Ids: ids,
+    };
   }
 
-  if (!best?.id) return null;
-
-  const p18Filenames = claimValues(best, "P18")
-    .map((v) => String(v || "").trim())
-    .filter(Boolean);
-  const p373 = claimValues(best, "P373")
-    .map((v) => String(v || "").trim())
-    .filter(Boolean);
-  const commonsCategory = p373[0] || "";
-
-  const sitelinks = [];
-  const wikivoyageSitelinks = [];
-  const links = best.sitelinks || {};
-  for (const l of [lang, "en", "fr", "de", "es", "it", "zh"]) {
-    const title = String(links[`${l}wiki`]?.title || "").trim();
-    if (title) sitelinks.push({ lang: l, title });
-    const wvTitle = String(links[`${l}wikivoyage`]?.title || "").trim();
-    if (wvTitle) wikivoyageSitelinks.push({ lang: l, title: wvTitle });
-  }
-
-  return {
-    qid: String(best.id),
-    p18Filenames,
-    commonsCategory,
-    sitelinks,
-    wikivoyageSitelinks,
-    p31Ids,
-  };
+  return null;
 }
