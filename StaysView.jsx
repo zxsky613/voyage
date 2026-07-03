@@ -44,15 +44,6 @@ export default function StaysView({
   onOpenTripBudget,
 }) {
   const { t, language } = useI18n();
-  const { text: translatedDestination } = useUiTranslatedCityName(destination, language);
-  const sortedTrips = useMemo(
-    () =>
-      [...(trips || [])].sort((a, b) =>
-        String(a?.start_date || "").localeCompare(String(b?.start_date || ""))
-      ),
-    [trips]
-  );
-
   const [tripId, setTripId] = useState("");
   const [destination, setDestination] = useState("");
   const [checkIn, setCheckIn] = useState("");
@@ -62,6 +53,14 @@ export default function StaysView({
   const [lodgingTitle, setLodgingTitle] = useState("");
   const [lodgingAmount, setLodgingAmount] = useState("");
   const [savingLodging, setSavingLodging] = useState(false);
+  const { text: translatedDestination } = useUiTranslatedCityName(destination, language);
+  const sortedTrips = useMemo(
+    () =>
+      [...(trips || [])].sort((a, b) =>
+        String(a?.start_date || "").localeCompare(String(b?.start_date || ""))
+      ),
+    [trips]
+  );
 
   const activeTrip = sortedTrips.find((tr) => String(tr.id) === String(tripId)) || null;
 
