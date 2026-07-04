@@ -235,10 +235,10 @@ export const WIKIMEDIA_CURATED_CITY_HEROES = Object.freeze({
     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Attica_06-13_Athens_50_View_from_Philopappos_-_Acropolis_Hill.jpg/1920px-Attica_06-13_Athens_50_View_from_Philopappos_-_Acropolis_Hill.jpg",
   ],
   crete: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Island_of_Crete%2C_Greece.JPG/1920px-Island_of_Crete%2C_Greece.JPG",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Balos_gramvousa_2013.jpg/1920px-Balos_gramvousa_2013.jpg",
   ],
   crète: [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Island_of_Crete%2C_Greece.JPG/1920px-Island_of_Crete%2C_Greece.JPG",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Balos_gramvousa_2013.jpg/1920px-Balos_gramvousa_2013.jpg",
   ],
   chicago: [
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg/1920px-Chicago_from_North_Avenue_Beach_June_2015_panorama_2.jpg",

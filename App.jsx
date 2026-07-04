@@ -122,6 +122,7 @@ import {
 } from "./lib/images/normalizeLabel.js";
 import {
   isLikelyOrbitalOrMapImagery,
+  isLikelyNonScenicHeroImagery,
   isLikelyWikiBrandOrLogoImage,
   isLikelyWikiFlagOrSealThumb,
 } from "./lib/images/wikiImageFilters.js";
@@ -2365,6 +2366,7 @@ function isBlockedHeroImageUrl(url) {
   if (isLikelyWikiFlagOrSealThumb(s)) return true;
   if (isLikelyOrbitalOrMapImagery(s, decoded)) return true;
   if (isLikelyWikiBrandOrLogoImage(s, decoded)) return true;
+  if (isLikelyNonScenicHeroImagery(s, decoded)) return true;
   return false;
 }
 
@@ -2412,6 +2414,7 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
       const s = String(u || "").trim();
       if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
       if (isLikelyOrbitalOrMapImagery(s, s)) return false;
+      if (isLikelyNonScenicHeroImagery(s, decodeURIComponent(s))) return false;
       return true;
     }) || "";
   if (commonsFirst) return upgradeLandscapeImageUrl(String(commonsFirst));
@@ -6228,6 +6231,7 @@ function ItineraryBulletRow({
   const [imgBroken, setImgBroken] = useState(false);
   const [mapOpening, setMapOpening] = useState(false);
   const [swapLoading, setSwapLoading] = useState(false);
+  const imgRetryRef = useRef(0);
 
   const handleSwapActivity = async () => {
     if (swapLoading || !onSwapActivity) return;
@@ -6256,6 +6260,7 @@ function ItineraryBulletRow({
 
   useEffect(() => {
     setImgBroken(false);
+    imgRetryRef.current = 0;
   }, [cacheKey, src]);
 
   useEffect(() => {
@@ -6358,6 +6363,29 @@ function ItineraryBulletRow({
       decoding="async"
       onError={() => {
         delete itineraryBulletImageCache[cacheKey];
+        if (imgRetryRef.current < 1) {
+          imgRetryRef.current += 1;
+          setImgBroken(false);
+          setLoading(true);
+          scheduleItineraryBulletImageFetch(async () => {
+            try {
+              const url = await fetchItineraryBulletImage(text, cityLabel, language, dayTitle);
+              const finalUrl = String(url || "").trim();
+              if (finalUrl) {
+                noteItineraryBulletImageCache(cacheKey, finalUrl);
+                setSrc(finalUrl);
+                setLoading(false);
+                return;
+              }
+            } catch {
+              /* retry failed */
+            }
+            setImgBroken(true);
+            setSrc("");
+            setLoading(false);
+          });
+          return;
+        }
         setImgBroken(true);
         setSrc("");
       }}
@@ -10711,7 +10739,7 @@ function ItineraryResultModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex h-[100dvh] max-h-[100dvh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-none bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
+        className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Handle (mobile) ── */}
@@ -10774,7 +10802,7 @@ function ItineraryResultModal({
         <div className="h-px shrink-0 bg-slate-100 mx-5" />
 
         {/* ── Rail jours + détail ── */}
-        <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="relative min-h-0 flex-1 overflow-hidden max-sm:max-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-14.5rem)] max-sm:overflow-y-auto">
           {regenerating ? (
             <div
               className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[2px]"
@@ -10798,7 +10826,7 @@ function ItineraryResultModal({
               <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:grid md:h-full md:grid-cols-[11rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-col overflow-hidden md:grid md:h-full md:grid-cols-[11rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
               <nav
                 ref={railScrollRef}
                 className="itinerary-day-rail shrink-0 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-slate-100 px-4 py-2.5 [-webkit-overflow-scrolling:touch] md:min-h-0 md:snap-none md:overflow-x-hidden md:overflow-y-auto md:border-b-0 md:border-r md:p-0 lg:w-44"
@@ -10840,7 +10868,7 @@ function ItineraryResultModal({
 
               <div
                 ref={detailScrollRef}
-                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-28 [-webkit-overflow-scrolling:touch] sm:p-5 sm:pb-8 md:p-6"
+                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-6 [-webkit-overflow-scrolling:touch] max-sm:flex-none max-sm:overflow-visible sm:p-5 md:p-6"
               >
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;

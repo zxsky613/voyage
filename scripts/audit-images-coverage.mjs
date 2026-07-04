@@ -26,6 +26,7 @@ import {
 import { resolveCanonicalCity } from "../cityHeroStem.js";
 import { normalizeKeyPart, normalizeLabel, inferDefaultHeroResolveContext } from "../lib/images/normalizeLabel.js";
 import {
+  isLikelyNonScenicHeroImagery,
   isLikelyOrbitalOrMapImagery,
   isLikelyWikiBrandOrLogoImage,
 } from "../lib/images/wikiImageFilters.js";
@@ -372,10 +373,12 @@ function filterCheck(url, kind) {
   const decoded = decodeURIComponent(String(url || ""));
   const brand = isLikelyWikiBrandOrLogoImage(url, decoded);
   const orbital = kind === "hero" && isLikelyOrbitalOrMapImagery(url, decoded, "");
-  if (brand || orbital) {
+  const nonScenic = kind === "hero" && isLikelyNonScenicHeroImagery(url, decoded, "");
+  if (brand || orbital || nonScenic) {
     const reasons = [];
     if (brand) reasons.push("logo/flag/map-brand");
     if (orbital) reasons.push("orbital/satellite/map");
+    if (nonScenic) reasons.push("non-scenic/monochrome/detail");
     return { suspect: true, reason: reasons.join("; ") };
   }
   return { suspect: false, reason: "" };

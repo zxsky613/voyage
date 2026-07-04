@@ -1,5 +1,6 @@
 import {
   HERO_MIN_WIDTH,
+  isLikelyNonScenicHeroImagery,
   isLikelyOrbitalOrMapImagery,
   isLikelyWikiBrandOrLogoImage,
   isOrbitalCommonsCategoryName,
@@ -36,10 +37,12 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const url = String(info?.url || info?.thumburl || "").trim();
   if (!url || isLikelyWikiBrandOrLogoImage(url, title)) return null;
   if (hero && isLikelyOrbitalOrMapImagery(url, title)) return null;
+  if (hero && isLikelyNonScenicHeroImagery(url, title)) return null;
 
   const meta = info?.extmetadata || {};
   const categoriesRaw = String(parseExtMetaValue(meta.Categories) || "").toLowerCase();
   if (hero && isLikelyOrbitalOrMapImagery(url, title, categoriesRaw)) return null;
+  if (hero && isLikelyNonScenicHeroImagery(url, title, categoriesRaw)) return null;
   const w = Number(info?.width || 0);
   const h = Number(info?.height || 0);
   if (source === "commons-category" && w < HERO_MIN_WIDTH) return null;
@@ -111,7 +114,9 @@ export async function fetchCommonsCategoryScenicCandidates(categoryName, options
       chunk.map((t) => fetchCommonsFileCandidate(t, "commons-category", options))
     );
     for (const c of chunkResults) {
-      if (c && (c.score || 0) > 0) all.push(c);
+      if (!c) continue;
+      const minScore = options.kind === "hero" ? 40 : 0;
+      if ((c.score || 0) >= minScore) all.push(c);
     }
   }
   return all.sort((a, b) => (b.score || 0) - (a.score || 0));

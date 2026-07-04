@@ -5,6 +5,7 @@
  * Live Wikidata/API: VERIFY_RESOLVE_LIVE=1 node scripts/verify-resolve-image-regression.mjs
  */
 import {
+  isLikelyNonScenicHeroImagery,
   isLikelyOrbitalOrMapImagery,
   isLikelyWikiBrandOrLogoImage,
   isOrbitalCommonsCategoryName,
@@ -69,6 +70,23 @@ const photoScore = scoreScenicCommonsFile("Polignano a Mare, Puglia.jpg", "https
 });
 assert(svgScore < 0, "SVG locator hero score must be strongly negative");
 assert(photoScore > 0, "JPEG hero should score well (photo bias)");
+
+const birdsScore = scoreScenicCommonsFile("Birds_in_Crete_coast_(24779355731).jpg", "https://x/b.jpg", 2000, 1200, {
+  hero: true,
+});
+const barrelScore = scoreScenicCommonsFile("Barrel_with_pigeons_black_and_white.jpg", "https://x/barrel.jpg", 2000, 1200, {
+  hero: true,
+});
+assert(birdsScore < 0, "birds-only hero must score negative");
+assert(barrelScore < 0, "barrel/monochrome hero must score negative");
+assert(
+  isLikelyNonScenicHeroImagery("https://x/bird.jpg", "Birds_in_Crete_coast.jpg"),
+  "birds without scenic context"
+);
+assert(
+  !isLikelyNonScenicHeroImagery("https://x/h.jpg", "Harbour_of_Heraklion_panorama.jpg"),
+  "harbour panorama should stay scenic"
+);
 
 const mustReject = [
   ["", "File:Apulia in Italy.svg"],

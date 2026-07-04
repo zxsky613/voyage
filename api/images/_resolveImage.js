@@ -1,5 +1,5 @@
 import { normalizeLabel, splitResolveImageLabelContext, inferDefaultHeroResolveContext } from "../../lib/images/normalizeLabel.js";
-import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage } from "../../lib/images/wikiImageFilters.js";
+import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage, isLikelyNonScenicHeroImagery } from "../../lib/images/wikiImageFilters.js";
 import {
   isCacheConfigured,
   noteCacheStatusAtResolveStart,
@@ -26,6 +26,7 @@ function passesKindFilters(c, kind) {
   if (kind === "hero") {
     if (isLikelyOrbitalOrMapImagery(c.url, "", "")) return false;
     if (isLikelyWikiBrandOrLogoImage(c.url, "")) return false;
+    if (isLikelyNonScenicHeroImagery(c.url, decodeURIComponent(c.url), "")) return false;
   }
   return true;
 }
@@ -132,7 +133,8 @@ export async function resolveImage(params) {
       const blocked =
         kind === "hero" &&
         (isLikelyOrbitalOrMapImagery(cached.url, decodedTitle, "") ||
-          isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle));
+          isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle) ||
+          isLikelyNonScenicHeroImagery(cached.url, decodedTitle, ""));
       if (!blocked) return { image: cached, cache: "hit" };
     } else if (labelCached.cache === "miss") {
       cacheField = "miss";
@@ -172,7 +174,8 @@ export async function resolveImage(params) {
       const blocked =
         kind === "hero" &&
         (isLikelyOrbitalOrMapImagery(byEntityImage.url, decodedTitle, "") ||
-          isLikelyWikiBrandOrLogoImage(byEntityImage.url, decodedTitle));
+          isLikelyWikiBrandOrLogoImage(byEntityImage.url, decodedTitle) ||
+          isLikelyNonScenicHeroImagery(byEntityImage.url, decodedTitle, ""));
       if (!blocked) return { image: { ...byEntityImage, cached: true }, cache: "hit" };
     }
   }
