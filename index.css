@@ -24,6 +24,13 @@
   --brand-blue-gradient-h: linear-gradient(90deg, var(--brand-blue) 0%, var(--brand-blue-deep) 100%);
 }
 
+@media (max-width: 639px) {
+  :root {
+    --app-header-clearance: calc(env(safe-area-inset-top, 0px) + 5.35rem);
+    --app-bottom-nav-clearance: calc(env(safe-area-inset-bottom, 0px) + 7rem);
+  }
+}
+
 /* Titres (onglets, etc.) : nom à deux mots — sans guillemets, le navigateur ignore la police (repli Arial / sans-serif). */
 .font-display {
   font-family: "Yeseva One", Georgia, serif;

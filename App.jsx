@@ -10840,7 +10840,7 @@ function ItineraryResultModal({
 
               <div
                 ref={detailScrollRef}
-                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
+                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-28 [-webkit-overflow-scrolling:touch] sm:p-5 sm:pb-8 md:p-6"
               >
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;
@@ -12505,8 +12505,8 @@ function DestinationGuideView({
   useScrollLock(visible && destinationOverlayOpen);
 
   return (
-    <section className="space-y-6">
-      <div className="flex items-center justify-between">
+    <section className="space-y-6 pb-4">
+      <div className="flex items-center justify-between pt-1 sm:pt-0">
         <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-brand-blue-deep/45">
           {t("destination.guideHeading")}
         </h2>
@@ -13961,6 +13961,7 @@ function PlannerView({
   onAddActivity,
   onUpdateActivity,
   onDeleteActivity,
+  onPhotoResolved,
   monthCursor,
   setMonthCursor,
 }) {
@@ -14168,7 +14169,7 @@ function PlannerView({
                 key={String(a.id)}
                 activity={a}
                 cityLabel={tripCityLabel}
-                onPhotoResolved={persistResolvedActivityPhoto}
+                onPhotoResolved={onPhotoResolved}
                 onView={() => {
                   setViewingActivity(a);
                   setActivityDetailsOpen(true);
@@ -17512,7 +17513,7 @@ export default function App() {
         : null}
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
-      <main className="mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 pt-[calc(var(--app-header-clearance)+0.5rem)] sm:px-5">
+      <main className="mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 pt-[calc(var(--app-header-clearance)+0.85rem)] sm:px-5 sm:pt-[calc(var(--app-header-clearance)+0.5rem)]">
         {notice ? (
           <div className="mb-4 break-words rounded-[1.25rem] bg-white/90 px-4 py-3 text-sm shadow-[0_10px_28px_rgba(2,6,23,0.08)] ring-1 ring-slate-200/70">
             {String(notice)}
@@ -17716,6 +17717,7 @@ export default function App() {
               onAddActivity={addActivity}
               onUpdateActivity={updateActivity}
               onDeleteActivity={deleteActivity}
+              onPhotoResolved={persistResolvedActivityPhoto}
               monthCursor={monthCursor}
               setMonthCursor={setMonthCursor}
             />
