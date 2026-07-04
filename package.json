@@ -24,7 +24,7 @@
     "audit:images": "node scripts/audit-images-coverage.mjs",
     "verify:iconic-coverage": "node scripts/verify-iconic-coverage.mjs",
     "fix:logo": "node scripts/fix-logo-white-dot.mjs",
-    "test": "node --test placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs lib/planner/activityImageSource.test.mjs lib/planner/activityPricing.test.mjs lib/planner/highlightShape.test.mjs lib/planner/geoGuard.test.mjs lib/calendar/buildTripIcs.test.mjs lib/images/normalizeLabel.test.mjs lib/images/entitySearchPlan.test.mjs lib/images/heroResolveLabel.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
+    "test": "node --test criticalRegressions.test.mjs placeGuards.test.mjs lib/planner/activityCategoryThumb.test.mjs lib/planner/activityImageSource.test.mjs lib/planner/activityPricing.test.mjs lib/planner/highlightShape.test.mjs lib/planner/geoGuard.test.mjs lib/calendar/buildTripIcs.test.mjs lib/images/normalizeLabel.test.mjs lib/images/entitySearchPlan.test.mjs lib/images/heroResolveLabel.test.mjs scripts/_helpers.script.test.mjs && npm run verify:catalog-hero && npm run verify:hero-stem && npm run verify:resolve-image && npm run verify:planner-geo"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.0",
