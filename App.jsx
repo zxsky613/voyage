@@ -17391,29 +17391,34 @@ export default function App() {
     if (tid == null || tid === "") return;
     const idStr = String(tid);
     setDeletingTrip(true);
-
-    // Optimistic UI : fermer la modal et retirer le voyage immédiatement
-    setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
-    setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
-    if (String(selectedTripId) === idStr) setSelectedTripId("");
-    setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
-    setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
-    setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
-    setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
-    setTripToDelete(null);
-    setDeletingTrip(false);
-
-    // Suppression serveur en arrière-plan (enfants en parallèle)
     try {
-      await Promise.all([
+      const { error } = await supabase.from("trips").delete().eq("id", tid);
+      if (error) throw error;
+
+      setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
+      setActivities((prev) => (prev || []).filter((a) => String(a?.trip_id) !== idStr));
+      setTripExpenses((prev) => (prev || []).filter((e) => String(e?.trip_id) !== idStr));
+      if (String(selectedTripId) === idStr) setSelectedTripId("");
+      setEditingTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setShareTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setTricountTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
+      setTripToDelete(null);
+      setNotice("");
+
+      // Optional cleanup for installs without older cascade FKs; failure here must not resurrect a deleted trip.
+      await Promise.allSettled([
         supabase.from("activity_votes").delete().eq("trip_id", idStr),
         supabase.from("chat_messages").delete().eq("trip_id", idStr),
         supabase.from("activities").delete().eq("trip_id", idStr),
+        ...(tripExpensesTableReady
+          ? [supabase.from("trip_expenses").delete().eq("trip_id", idStr)]
+          : []),
       ]);
-      const { error } = await supabase.from("trips").delete().eq("id", tid);
-      if (error) throw error;
     } catch (e) {
       setNotice(String(e?.message || "Erreur suppression voyage"));
+    } finally {
+      setDeletingTrip(false);
     }
   };
 
