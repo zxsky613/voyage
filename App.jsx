@@ -10739,7 +10739,7 @@ function ItineraryResultModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
+        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Handle (mobile) ── */}
@@ -10802,7 +10802,7 @@ function ItineraryResultModal({
         <div className="h-px shrink-0 bg-slate-100 mx-5" />
 
         {/* ── Rail jours + détail ── */}
-        <div className="relative min-h-0 flex-1 overflow-hidden max-sm:max-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-14.5rem)] max-sm:overflow-y-auto">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           {regenerating ? (
             <div
               className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[2px]"
@@ -10868,7 +10868,7 @@ function ItineraryResultModal({
 
               <div
                 ref={detailScrollRef}
-                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-6 [-webkit-overflow-scrolling:touch] max-sm:flex-none max-sm:overflow-visible sm:p-5 md:p-6"
+                className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-6 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
               >
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;
@@ -10955,7 +10955,7 @@ function ItineraryResultModal({
         ) : null}
 
         {/* ── Footer ── */}
-        <div className="sticky bottom-0 z-10 shrink-0 flex flex-col gap-2 border-t border-slate-100 bg-white px-5 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-3 sm:static sm:pb-4">
+        <div className="z-10 shrink-0 flex flex-col gap-2 border-t border-slate-100 bg-white px-5 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-3 sm:pb-4">
           <div className="flex items-center gap-2.5">
             <button
               type="button"

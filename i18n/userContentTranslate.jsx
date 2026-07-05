@@ -10,6 +10,19 @@ const CITY_INFLIGHT = new Map();
 const LS_KEY = "tp_ui_tr_v1";
 const LS_MAX = 120;
 
+/** Circuit breaker : un 404/503 coupe les appels pour toute la session (évite le spam réseau). */
+let uiTranslateApiCircuitOpen = false;
+
+/**
+ * /api/ui-translate n'existe qu'en dev (gemini-dev-plugin), pas sur Vercel.
+ * Prod : dictionnaire interne uniquement, sauf VITE_UI_TRANSLATE_API=1 explicite.
+ */
+function isUiTranslateApiEnabled() {
+  if (uiTranslateApiCircuitOpen) return false;
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) return true;
+  return String(import.meta.env?.VITE_UI_TRANSLATE_API || "").trim() === "1";
+}
+
 function normLang(code) {
   const c = String(code || "fr")
     .toLowerCase()
@@ -86,6 +99,39 @@ function peekCityMemoryOrLs(raw, lang) {
 }
 
 /**
+ * @param {string[]} unique — textes uniques à traduire
+ * @param {string} lang
+ * @returns {Promise<Map<string, string>|null>} null si API indisponible / désactivée
+ */
+async function postUiTranslateBatch(unique, lang) {
+  if (!isUiTranslateApiEnabled() || unique.length === 0) return null;
+
+  const r = await fetch("/api/ui-translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language: lang, texts: unique }),
+  });
+
+  if (r.status === 404 || r.status === 501 || r.status === 503) {
+    uiTranslateApiCircuitOpen = true;
+    return null;
+  }
+
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data?.ok || !Array.isArray(data.translations)) {
+    if (r.status >= 500) uiTranslateApiCircuitOpen = true;
+    return null;
+  }
+
+  const map = new Map();
+  unique.forEach((s, i) => {
+    const out = String(data.translations[i] ?? s).trim() || s;
+    map.set(s, out);
+  });
+  return map;
+}
+
+/**
  * @param {string[]} texts
  * @param {string} language
  * @returns {Promise<string[]>}
@@ -103,19 +149,11 @@ export async function fetchUiTranslations(texts, language) {
     unique.push(s);
   }
 
-  const r = await fetch("/api/ui-translate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language: lang, texts: unique }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data?.ok || !Array.isArray(data.translations)) {
-    throw new Error(String(data?.error || `translate ${r.status}`));
-  }
-  const map = new Map();
-  unique.forEach((s, i) => {
-    const out = String(data.translations[i] ?? s).trim() || s;
-    map.set(s, out);
+  const map = await postUiTranslateBatch(unique, lang);
+  if (!map) return list;
+
+  unique.forEach((s) => {
+    const out = map.get(s) || s;
     const k = cacheKey(s, lang);
     MEMORY.set(k, out);
     writeLsEntry(k, out);
@@ -135,6 +173,8 @@ async function translateOneCached(raw, language) {
   if (MEMORY.has(k)) return MEMORY.get(k);
   const fromLs = peekMemoryOrLs(trimmed, lang);
   if (fromLs) return fromLs;
+
+  if (!isUiTranslateApiEnabled()) return trimmed;
 
   if (INFLIGHT.has(k)) return INFLIGHT.get(k);
 
@@ -166,19 +206,11 @@ async function fetchCityTranslations(texts, language) {
     unique.push(s);
   }
 
-  const r = await fetch("/api/ui-translate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language: lang, texts: unique }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data?.ok || !Array.isArray(data.translations)) {
-    throw new Error(String(data?.error || `translate ${r.status}`));
-  }
-  const map = new Map();
-  unique.forEach((s, i) => {
-    const out = String(data.translations[i] ?? s).trim() || s;
-    map.set(s, out);
+  const map = await postUiTranslateBatch(unique, lang);
+  if (!map) return list;
+
+  unique.forEach((s) => {
+    const out = map.get(s) || s;
     const ck = cityCacheKey(s, lang);
     CITY_MEMORY.set(ck, out);
     writeLsEntry(ck, out);
@@ -198,6 +230,8 @@ async function translateCityOneCached(raw, language) {
   if (CITY_MEMORY.has(ck)) return CITY_MEMORY.get(ck);
   const fromLs = peekCityMemoryOrLs(trimmed, lang);
   if (fromLs) return fromLs;
+
+  if (!isUiTranslateApiEnabled()) return localized;
 
   if (CITY_INFLIGHT.has(ck)) return CITY_INFLIGHT.get(ck);
 
@@ -244,6 +278,10 @@ export function useUiTranslatedCityName(raw, language) {
     const cached = peekCityMemoryOrLs(trimmed, lang);
     if (cached) {
       setLine(cached);
+      return;
+    }
+    if (!isUiTranslateApiEnabled()) {
+      setLine(dictLine);
       return;
     }
     let cancelled = false;
@@ -303,6 +341,10 @@ export function useUiTranslatedText(raw, language) {
     const cached = peekMemoryOrLs(trimmed, lang);
     if (cached) {
       setLine(cached);
+      return;
+    }
+    if (!isUiTranslateApiEnabled()) {
+      setLine(trimmed);
       return;
     }
     let cancelled = false;
