@@ -12411,6 +12411,8 @@ function DestinationGuideView({
                     readItineraryBulletImageCache(modalCacheKey)
                   );
                   const actPrice = readActivityEstimatedPriceEur(meta);
+                  const lat = Number(meta?.latitude);
+                  const lon = Number(meta?.longitude);
                   return {
                     title: stripPrefix(bulletText) || String(meta?.name || "").trim(),
                     date: actDate,
@@ -12427,6 +12429,9 @@ function DestinationGuideView({
                     description: `Jour ${dayNum} — ${dayTitle}`,
                     photo_url: photo,
                     image_url: photo,
+                    ...(Number.isFinite(lat) && Number.isFinite(lon)
+                      ? { latitude: lat, longitude: lon }
+                      : {}),
                   };
                 })
                 .filter(Boolean)
@@ -12444,6 +12449,8 @@ function DestinationGuideView({
             readItineraryBulletImageCache(modalCacheKey)
           );
           const actPrice = readActivityEstimatedPriceEur(meta);
+          const lat = Number(meta?.latitude);
+          const lon = Number(meta?.longitude);
           schedule.push({
             title: stripPrefix(b),
             date: actDate,
@@ -12454,6 +12461,9 @@ function DestinationGuideView({
             description: `Jour ${dayNum} — ${dayTitle}`,
             photo_url: photo,
             image_url: photo,
+            ...(Number.isFinite(lat) && Number.isFinite(lon)
+              ? { latitude: lat, longitude: lon }
+              : {}),
           });
         });
       }
