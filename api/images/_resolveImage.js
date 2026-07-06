@@ -16,6 +16,7 @@ import {
   fetchCommonsCategoryScenicCandidates,
   fetchP18Candidates,
 } from "./_commonsClient.js";
+import { fetchHeroEmotionalCandidates } from "./_heroEmotionalCommons.js";
 import { resolveEntity } from "./_entityResolver.js";
 import { WikiApiThrottledError } from "./_fetchRetry.js";
 import { candidateToResolved, headCheckUrl } from "./_headCheck.js";
@@ -78,7 +79,7 @@ async function firstValidSequential(candidates, kind) {
 }
 
 /**
- * Résolution entité héro — P18 → pageimages Wikipedia → Wikivoyage → Commons catégorie (dernier recours).
+ * Résolution entité héro — émotion (Featured/Quality/geosearch) → P18/pageimages → Wikivoyage → Commons P373.
  * @param {NonNullable<Awaited<ReturnType<typeof resolveEntity>>>} entity
  * @param {string} uiLang
  * @param {string} searchLabel
@@ -89,6 +90,10 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
     uiLang,
     destinationTokens: destinationTokensForHero(searchLabel),
   };
+
+  const emotional = await fetchHeroEmotionalCandidates(entity, searchLabel, heroOpts);
+  const emotionalHit = await firstValidSequential(emotional, "hero");
+  if (emotionalHit) return emotionalHit;
 
   if (entity.p18Filenames?.length) {
     const p18 = (await fetchP18Candidates(entity.p18Filenames, heroOpts)).map((c) => ({

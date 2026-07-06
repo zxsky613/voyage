@@ -6,6 +6,7 @@ import {
   isLikelyOrbitalOrMapImagery,
   isLikelyWikiBrandOrLogoImage,
   isOrbitalCommonsCategoryName,
+  scoreEmotionalHeroCategory,
   scoreScenicCommonsFile,
 } from "../../lib/images/wikiImageFilters.js";
 import { commonsThumbUrl, parseExtMetaValue, wikiUserAgent } from "./_headCheck.js";
@@ -63,7 +64,12 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
     sourceUrl: String(info?.descriptionurl || "").trim() || undefined,
     width: w,
     height: h,
-    score: scoreScenicCommonsFile(title, url, w, h, { hero, categories: categoriesRaw, destinationTokens: options.destinationTokens }),
+    score: scoreScenicCommonsFile(title, url, w, h, {
+      hero,
+      categories: categoriesRaw,
+      destinationTokens: options.destinationTokens,
+      emotionalCategory: options.emotionalCategory,
+    }),
   };
 }
 
@@ -85,7 +91,7 @@ export async function fetchP18Candidates(filenames, options = {}) {
 /**
  * Liste fichiers d'une catégorie Commons P373, score scénique, retourne candidats triés.
  * @param {string} categoryName — sans préfixe « Category: »
- * @param {{ kind?: import('../../lib/images/types.js').ImageKind, destinationTokens?: string[] }} [options]
+ * @param {{ kind?: import('../../lib/images/types.js').ImageKind, destinationTokens?: string[], emotionalCategory?: string, minHeroScore?: number }} [options]
  */
 export async function fetchCommonsCategoryScenicCandidates(categoryName, options = {}) {
   const cat = String(categoryName || "").trim();
@@ -114,11 +120,23 @@ export async function fetchCommonsCategoryScenicCandidates(categoryName, options
   for (let i = 0; i < titles.length; i += batchSize) {
     const chunk = titles.slice(i, i + batchSize);
     const chunkResults = await Promise.all(
-      chunk.map((t) => fetchCommonsFileCandidate(t, "commons-category", options))
+      chunk.map((t) =>
+        fetchCommonsFileCandidate(t, "commons-category", {
+          ...options,
+          emotionalCategory: options.emotionalCategory || cat,
+        })
+      )
     );
     for (const c of chunkResults) {
       if (!c) continue;
-      const minScore = options.kind === "hero" ? 60 : 0;
+      const minScore =
+        options.minHeroScore != null
+          ? Number(options.minHeroScore)
+          : options.kind === "hero"
+            ? scoreEmotionalHeroCategory(cat) > 0
+              ? 45
+              : 60
+            : 0;
       if ((c.score || 0) >= minScore) all.push(c);
     }
   }

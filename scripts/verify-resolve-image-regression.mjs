@@ -83,7 +83,10 @@ assert(
   isLikelyOrbitalOrMapImagery("", "", "Satellite pictures of Crete"),
   "satellite category"
 );
-assert(!isLikelyOrbitalOrMapImagery("", "Harbour_of_Heraklion.jpg"), "harbour not orbital");
+assert(
+  isLikelyOrbitalOrMapImagery("https://x/i.jpg", "Island_of_Crete,_Greece.JPG"),
+  "island overview without scenic bonus must be blocked for hero"
+);
 assert(isOrbitalCommonsCategoryName("Maps of Capri"), "maps category");
 
 const satScore = scoreScenicCommonsFile("Crete_satellite_view.jpg", "https://x/y.jpg", 2000, 1200, {

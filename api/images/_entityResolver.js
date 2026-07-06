@@ -448,6 +448,15 @@ async function pickBestEntityFromHits(hits, searchLabel, context, contextTokens,
       .filter(Boolean);
     const commonsCategory = p373[0] || "";
 
+    const coords = (() => {
+      for (const v of claimValues(ent, "P625")) {
+        const lat = Number(v?.latitude);
+        const lon = Number(v?.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+      }
+      return null;
+    })();
+
     const sitelinks = [];
     const wikivoyageSitelinks = [];
     const links = ent.sitelinks || {};
@@ -462,6 +471,7 @@ async function pickBestEntityFromHits(hits, searchLabel, context, contextTokens,
       qid: String(ent.id),
       p18Filenames,
       commonsCategory,
+      coordinates: coords,
       sitelinks,
       wikivoyageSitelinks,
       p31Ids: ids,

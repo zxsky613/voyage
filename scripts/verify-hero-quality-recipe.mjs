@@ -1,9 +1,12 @@
 /**
- * Recette qualité héros — Crète + hors catalogue + régression catalogue (resolve API).
+ * Recette hero v2 — émotion avant officiel ; HTTP 200 + thumb 1280 + URLs complètes.
  * Usage: node scripts/verify-hero-quality-recipe.mjs
  */
 import { resolveImage } from "../api/images/_resolveImage.js";
-import { isLikelyNonScenicHeroImagery } from "../lib/images/wikiImageFilters.js";
+import {
+  isLikelyNonScenicHeroImagery,
+  isLikelyOrbitalOrMapImagery,
+} from "../lib/images/wikiImageFilters.js";
 import {
   HERO_COMMONS_THUMB_WIDTH,
   isAllowedThumbWidth,
@@ -16,14 +19,14 @@ const CASES = [
   { label: "Crete, Greece", context: "", uiLang: "fr" },
   { label: "Annecy", context: "France", uiLang: "fr" },
   { label: "Split", context: "Croatia", uiLang: "en" },
+  { label: "Ronda", context: "Spain", uiLang: "es" },
+  { label: "Marseille", context: "France", uiLang: "fr" },
+  { label: "Santorini", context: "Greece", uiLang: "en" },
 ];
 
 const WIKI_UA = "JustTrip/1.0 (https://justtrip.fr; contact@justtrip.fr) verify-hero";
 
-/**
- * Vérifie que la miniature Commons répond 200 (HEAD, repli GET partiel).
- * @param {string} url
- */
+/** @param {string} url */
 async function verifyThumbHttp(url) {
   const headers = { "User-Agent": WIKI_UA };
   let r = await fetch(url, { method: "HEAD", redirect: "follow", headers });
@@ -45,12 +48,12 @@ function thumbWidthFromUrl(url) {
   return m ? Number(m[1]) : 0;
 }
 
-console.log("=== Recette hero-quality (resolve API + HTTP thumb) ===\n");
-console.log(`Hero thumb width attendu: ${HERO_COMMONS_THUMB_WIDTH}px (standard w.wiki/GHai)\n`);
-console.log("| Destination | heroSource | HTTP | width | size | status |");
-console.log("|-------------|------------|------|-------|------|--------|");
+console.log("=== Recette hero v2 (resolve API + HTTP thumb + URLs) ===\n");
+console.log(`Thumb attendu: ${HERO_COMMONS_THUMB_WIDTH}px | sources émotion: commons-featured, commons-quality, geosearch\n`);
 
 let failed = 0;
+/** @type {{ label: string, heroSource: string, url: string, status: string }[]} */
+const report = [];
 
 for (const c of CASES) {
   const outcome = await resolveImage({
@@ -61,53 +64,54 @@ for (const c of CASES) {
   });
   const url = String(outcome.image?.url || "");
   const heroSource = String(outcome.heroSource || outcome.image?.heroSource || "fallback");
-  const isCommons = isWikimediaUploadUrl(url);
+  const decoded = decodeURIComponent(url);
 
   if (!url) {
-    console.log(`| ${c.label} | ${heroSource} | — | — | — | fallback |`);
+    console.log(`FAIL ${c.label} — fallback (pas d'URL)`);
+    failed += 1;
+    report.push({ label: c.label, heroSource, url: "", status: "FAIL" });
     continue;
   }
 
+  const isCommons = isWikimediaUploadUrl(url);
+  const satellite = isLikelyOrbitalOrMapImagery(url, decoded, "");
   const scenicBad =
-    isLikelyNonScenicHeroImagery(url, decodeURIComponent(url)) ||
-    /besser|toilet|wc|restroom|lavatory/i.test(decodeURIComponent(url));
-
+    isLikelyNonScenicHeroImagery(url, decoded) ||
+    /besser|toilet|wc|restroom|lavatory/i.test(decoded);
   const width = isCommons ? thumbWidthFromUrl(url) : 0;
-  const widthOk = !isCommons || (isCommonsThumbPath(url) && width === HERO_COMMONS_THUMB_WIDTH && isAllowedThumbWidth(width));
+  const widthOk =
+    !isCommons ||
+    (isCommonsThumbPath(url) && width === HERO_COMMONS_THUMB_WIDTH && isAllowedThumbWidth(width));
 
-  let httpStatus = "—";
+  let httpStatus = 0;
   let httpOk = !isCommons;
-  let sizeKb = "—";
-
   if (isCommons) {
     try {
       const http = await verifyThumbHttp(url);
-      httpStatus = String(http.status);
+      httpStatus = http.status;
       httpOk = http.ok;
-      if (http.ok) {
-        const head = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "User-Agent": WIKI_UA } });
-        const cl = Number(head.headers.get("content-length") || 0);
-        if (cl > 0) sizeKb = `${Math.round(cl / 1024)} Ko`;
-      }
-    } catch (err) {
-      httpStatus = "err";
+    } catch {
       httpOk = false;
     }
   }
 
-  const bad = scenicBad || !widthOk || (isCommons && !httpOk);
+  const officialOnly = heroSource === "pageimage" || heroSource === "p18";
+  const bad = satellite || scenicBad || !widthOk || (isCommons && !httpOk);
   const status = bad ? "FAIL" : "OK";
   if (bad) failed += 1;
 
-  console.log(
-    `| ${c.label} | ${heroSource} | ${httpStatus} | ${width || "—"} | ${sizeKb} | ${status} |`
-  );
-  if (bad && url) {
-    console.log(`  url: ${url.slice(0, 100)}`);
-  }
+  console.log(`${status} | ${c.label} | ${heroSource} | HTTP ${httpStatus || "—"} | ${width || "—"}px${officialOnly ? " (officiel)" : ""}`);
+  console.log(`  ${url}\n`);
+  report.push({ label: c.label, heroSource, url, status });
 }
 
-console.log("");
+console.log("--- Résumé URLs (jugement visuel) ---");
+for (const row of report) {
+  console.log(`${row.label}: [${row.status}] ${row.heroSource}`);
+  console.log(row.url || "(vide)");
+  console.log("");
+}
+
 if (failed) {
   console.error(`verify-hero-quality-recipe: ${failed} échec(s)`);
   process.exit(1);
