@@ -2,11 +2,15 @@
 
 Référence complète : `docs/ARCHITECTURE.md`.
 
+## Phasage — ne pas confondre cible et implémentation
+
+- **Maintenant** : le **web = produit complet** (sauvegarde, planning, carte, compte). **Aucun gate** invitation app.
+- **Après publication stores** (décision explicite seulement) : gates invitation app possibles sur sauvegarde/planning.
+- **Interdit** : coder `AppInstallGate`, bloquer sauvegarde/planning, ou « mur app » sans instruction explicite post-go-live stores.
+
 ## Web / app — un seul codebase
 
 - **Une** codebase React ; divergence via `Capacitor.isNativePlatform()` et responsive (`lg` ≈ 1024px), **jamais** par duplication de composant.
-- **Web** : découverte généreuse (recherche, guide, génération essai).
-- **Engagement** (sauvegarde voyage, planning persisté, rappels) → **invitation app élégante**, pas de mur ni écran vide.
 - Composants **voyage** (TripMap, planning, sheets) = **mobile-first** ; pages **découverte** = web + app.
 
 ## Mobile-first — appliquer à chaque PR voyage
@@ -33,6 +37,6 @@ Référence complète : `docs/ARCHITECTURE.md`.
 2. `npm test` + `npm run build`
 3. Desktop `lg` : smoke non-régression
 
-## Hors scope (backlog)
+## Hors scope (backlog — pas maintenant)
 
-SEO pré-rendu pages destination, offline tuiles, deep links — voir `docs/ARCHITECTURE.md` §5.
+Gates invitation app (post-stores), SEO pré-rendu, offline tuiles, deep links — voir `docs/ARCHITECTURE.md` §5.

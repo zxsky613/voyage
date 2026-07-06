@@ -1,6 +1,11 @@
 # JustTrip — Architecture & doctrine
 
-Document de référence pour l’équipe et les agents. Décrit la répartition **web public** / **app produit**, les règles **mobile-first**, et le **backlog stratégique**.
+Document de référence pour l’équipe et les agents. Décrit la **cible produit**, les règles **mobile-first**, et le **backlog stratégique**.
+
+> **Phasage (état actuel vs cible)**  
+> **Maintenant** : le **web offre le produit complet** — sauvegarde, planning, calendrier, carte, compte : **aucune restriction**, **aucun gate** « installer l’app ».  
+> **Après publication app sur les stores** (décision explicite) : les **invitations app** pourront remplacer certaines actions web (gates élégants sur sauvegarde / planning / rappels).  
+> Ce document décrit la **cible** et le phasage futur — **ne pas implémenter de gates avant instruction explicite**.
 
 ---
 
@@ -8,12 +13,10 @@ Document de référence pour l’équipe et les agents. Décrit la répartition 
 
 | Surface | Rôle | Fonctions typiques |
 |--------|------|-------------------|
-| **justtrip.fr (web)** | Porte d’entrée fonctionnelle, découverte, SEO | Landing, recherche destination, guides, génération d’essai, contenus marketing |
-| **App (Capacitor iOS/Android + PWA installée)** | Produit complet | Compte, voyages sauvegardés, planning/calendrier, carte interactive, rappels locaux, offline (cible) |
+| **justtrip.fr (web)** | Produit complet **aujourd’hui** ; porte SEO + découverte en plus | Landing, recherche, guides, génération, **sauvegarde, planning, calendrier, carte** |
+| **App (Capacitor iOS/Android + PWA installée)** | Même produit + natif (rappels, offline cible) | Compte, voyages, planning, carte, notifications locales |
 
-Le web doit rester **généreux** sur la découverte. Les fonctions d’**engagement** (persistance, planning, notifications) orientent vers l’app via une **invitation élégante** — jamais un mur, une 404 ou un écran vide.
-
----
+**Aujourd’hui** : web = produit complet, sans gate. **Cible post-stores** : le web reste généreux en découverte ; certaines actions d’engagement pourront afficher une invitation app élégante (jamais un mur) — voir §5.
 
 ## 2. Doctrine web / app
 
@@ -25,17 +28,25 @@ Le web doit rester **généreux** sur la découverte. Les fonctions d’**engage
   - **Responsive** (`matchMedia`, breakpoint `lg` ≈ 1024px) pour layout
 - **Interdit** : dupliquer un composant entier « version web » / « version app ». Préférer props (`mode`, `suppressActivitySheet`, `embedded`) et branches conditionnelles courtes.
 
-### 2.2 Web = découverte ; app = engagement
+### 2.2 Web et app — aujourd’hui vs cible
 
-| Web (justtrip.fr) | App |
-|-------------------|-----|
-| Recherche, guide destination, lieux incontournables | Voyages sauvegardés en base |
-| Génération d’itinéraire d’essai (modale) | « Ajouter au calendrier » persisté |
-| Hero, météo, cartes situation légères | Planning jour par jour + carte sync |
-| SEO landing / pages ville (backlog) | Rappels activité (Capacitor Local Notifications) |
-| Invitation à installer / ouvrir l’app | Mode offline (backlog) |
+**État actuel (à maintenir)**
 
-**Pattern invitation app** : sheet ou modal avec bénéfices clairs (sauvegarder, rappels, carte offline), CTA store / ouvrir l’app, possibilité de continuer la découverte sans bloquer.
+| Web + app (même codebase) |
+|---------------------------|
+| Sauvegarde voyage, planning, calendrier, carte, budget, compte — **tout accessible sur le web** |
+| Aucun `AppInstallGate`, aucun blocage sauvegarde/planning |
+| Rappels : natif si Capacitor ; sinon absent ou web selon implémentation existante |
+
+**Cible (après publication stores — ne pas coder sans décision)**
+
+| Web (justtrip.fr) | App native |
+|-------------------|------------|
+| Découverte généreuse inchangée | Produit complet + offline, rappels optimaux |
+| Gates **optionnels** sur sauvegarde / planning → invitation app | Expérience de référence |
+| SEO landing / pages ville (backlog) | Deep links voyage |
+
+**Pattern invitation app (cible future)** : sheet ou modal avec bénéfices (rappels, offline…), CTA store, possibilité de continuer sur le web — **jamais un paywall ni une 404**. Interdit de l’implémenter tant que l’app n’est pas publiée et que la décision produit n’est pas actée.
 
 ### 2.3 Priorité de conception par zone
 
@@ -81,32 +92,32 @@ Les composants **voyage** (`LazyTripMap`, `PlannerBottomSheet`, `TripMapActivity
 
 ## 4. Tableau des zones
 
-| Zone | Code / composants | Surface | Mobile-first | Web sans compte |
-|------|-------------------|---------|--------------|-----------------|
-| Landing / accueil | `App.jsx` home | Web + app | Non | Oui |
-| Recherche destination | `DestinationSearch*` | Web + app | Non | Oui |
-| Guide destination | `DestinationGuideView`, must-see | Web + app | Non | Oui (essai) |
-| Modale itinéraire généré | `ItineraryResultModal`, `LazyTripMap` | Web + app | Oui (carte) | Génération essai |
-| Ajouter au calendrier | `createTrip`, `insertActivities*` | App (+ invitation web) | — | Invitation app |
-| Planning / calendrier | `PlannerView`, `PlannerBottomSheet` | App | **Oui** | Invitation app |
-| Carte planning | `LazyTripMap`, `buildPlannerMapActivities` | App | **Oui** | — |
-| Sheet activité carte | `TripMapActivitySheet` | App | **Oui** | — |
-| Mes voyages | `TripCard`, listes | App | Moyen | Invitation app |
-| Rappels | `activityReminders.js`, Capacitor | App native | Oui | — |
-| Budget / logement | `Budget*`, `StaysView` | App | Non | Partiel |
+| Zone | Code / composants | Surface | Mobile-first | Web (aujourd’hui) |
+|------|-------------------|---------|--------------|-------------------|
+| Landing / accueil | `App.jsx` home | Web + app | Non | Complet |
+| Recherche destination | `DestinationSearch*` | Web + app | Non | Complet |
+| Guide destination | `DestinationGuideView`, must-see | Web + app | Non | Complet |
+| Modale itinéraire généré | `ItineraryResultModal`, `LazyTripMap` | Web + app | Oui (carte) | Complet |
+| Ajouter au calendrier | `createTrip`, `insertActivities*` | Web + app | — | **Complet (pas de gate)** |
+| Planning / calendrier | `PlannerView`, `PlannerBottomSheet` | Web + app | **Oui** | **Complet (pas de gate)** |
+| Carte planning | `LazyTripMap`, `buildPlannerMapActivities` | Web + app | **Oui** | Complet |
+| Sheet activité carte | `TripMapActivitySheet` | Web + app | **Oui** | Complet |
+| Mes voyages | `TripCard`, listes | Web + app | Moyen | Complet |
+| Rappels | `activityReminders.js`, Capacitor | App native (+ web si dispo) | Oui | Selon plateforme |
+| Budget / logement | `Budget*`, `StaysView` | Web + app | Non | Complet |
 
 ---
 
 ## 5. Backlog stratégique (hors scope courant)
 
-À traiter **pré-lancement marketing**, pas sur `main` en développement feature courant :
+À traiter **après décision produit** ou **pré-lancement marketing** — pas sur `main` sans instruction explicite :
 
-| Item | Objectif | Piste technique |
-|------|----------|-----------------|
-| **SEO pages destination** | Indexabilité Google des URLs ville (ex. `/destination/cassis`) | Pré-rendu statique, SSR partiel (Vercel/edge), ou snapshot HTML par ville |
-| **Offline app** | Consultation voyage + carte tuiles en cache sans réseau | Service Worker + cache tuiles MapLibre + sync Supabase différée |
-| **Deep links web → app** | Ouvrir un voyage partagé dans l’app native | Universal Links / App Links + route `/trip/:id` |
-| **Invitation app unifiée** | Composant réutilisable CTA store | `AppInstallSheet` branché sur sauvegarde / planning / rappels |
+| Item | Quand | Objectif | Piste technique |
+|------|-------|----------|-----------------|
+| **Gates invitation app** | **Après publication stores uniquement** | Inviter (sans bloquer brutalement) vers l’app sur sauvegarde / planning | `AppInstallSheet` + flag produit ; **interdit avant go stores** |
+| **SEO pages destination** | Pré-lancement marketing | Indexabilité Google des URLs ville | Pré-rendu statique, SSR partiel (Vercel/edge) |
+| **Offline app** | Post-MVP app | Voyage + tuiles carte sans réseau | Service Worker + cache MapLibre + sync différée |
+| **Deep links web → app** | Avec app en store | Ouvrir un voyage partagé dans l’app native | Universal Links / App Links |
 
 ---
 
@@ -132,4 +143,4 @@ Pour toute PR touchant **planning, carte, sheets, rappels** :
 
 ---
 
-*Dernière mise à jour : doctrine formalisée avec `feature/planning-map`.*
+*Dernière mise à jour : phasage gates (web complet jusqu’à publication stores).*
