@@ -9,6 +9,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .DS_Store
+.vercel/
 scripts/_local/
 scripts/_reports/
 scripts/tmp-*
