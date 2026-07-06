@@ -51,7 +51,7 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
           {/* Avion grand format */}
           <span
             className="tp-plane-fly absolute left-0 select-none"
-            style={{ top: "20px", fontSize: "3.2rem", lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(249,115,22,0.35))" }}
+            style={{ top: "20px", fontSize: "3.2rem", lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(241,106,46,0.35))" }}
           >
             ✈️
           </span>
@@ -77,7 +77,7 @@ export function WelcomeBackToast({ open, firstName, onClose }) {
             className="tp-card-pulse rounded-[28px] px-8 py-5 flex items-center gap-4"
             style={{
               background: BRAND_ORANGE_GRADIENT_135,
-              boxShadow: `0 24px 64px rgba(249,115,22,0.38), 0 6px 20px rgba(251,101,20,0.28), inset 0 1px 0 rgba(255,255,255,0.25)`,
+              boxShadow: `0 24px 64px rgba(241,106,46,0.38), 0 6px 20px rgba(217,90,34,0.28), inset 0 1px 0 rgba(255,255,255,0.25)`,
             }}
           >
             <span style={{ fontSize: "2.2rem", lineHeight: 1, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}>🌍</span>
