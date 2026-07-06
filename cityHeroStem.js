@@ -41,10 +41,14 @@ export function resolveCanonicalCity(value) {
   return exact ? exact.canonical : normalizeCityInput(value);
 }
 
-/** Retire les préfixes administratifs FR/EN/ES/IT/PT (« Ville de Capri » → « Capri »). */
+/** Retire les préfixes administratifs FR/EN/ES/IT/PT (« Ville de Capri », « Région Crète » → « Crète »). */
 export function stripAdministrativeCityPrefix(label) {
   return String(label || "")
     .trim()
+    .replace(
+      /^(?:r[eé]gion|region|regi[oó]n|land|county|province|pr[eé]fecture|estado|bundesland)\s+(?:de|d[''']|du|del|dela|di|von|of)?\s*/iu,
+      ""
+    )
     .replace(
       /^(?:ville|commune|town|city|cidade|ciudad|citt[aà]|municipio|localit[aà])\s+(?:de|d[''']|du|del|dela|di|von|of)\s+/iu,
       ""

@@ -176,7 +176,7 @@ const creteKeys = ["Crete", "Crète", "克里特岛"].map((l) => normalizeLabel(
 assert(new Set(creteKeys).size === 1, `Crete cache keys differ: ${creteKeys.join(" | ")}`);
 
 assert(
-  normalizeLabel("Ténérife, Canaries, Espagne", "") === "tenerife|canaries, espagne",
+  normalizeLabel("Ténérife, Canaries, Espagne", "") === "tenerife|canaries, spain",
   "Ténérife seed cache key"
 );
 

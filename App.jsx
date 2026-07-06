@@ -2400,17 +2400,6 @@ async function pickCityHeroImageMeta(cityInput, prefetched = {}, uiLang = "fr") 
   const ctx = String(cityInput || "").trim();
   if (!ctx) return { url: "", heroSource: "fallback" };
 
-  const commonsCandidates = getCityHeroImageCandidates(ctx);
-  const bundleHit = commonsCandidates.find((u) => {
-    const s = String(u || "").trim();
-    if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
-    if (isBlockedHeroImageUrl(s)) return false;
-    return true;
-  });
-  if (bundleHit) {
-    return { url: upgradeLandscapeImageUrl(String(bundleHit)), heroSource: "bundle" };
-  }
-
   if (isResolveHeroEnabled()) {
     const resolved = await getResolvedImage({
       kind: "hero",
@@ -2431,6 +2420,21 @@ async function pickCityHeroImageMeta(cityInput, prefetched = {}, uiLang = "fr") 
         heroSource: String(resolved?.heroSource || resolved?.source || "fallback"),
       };
     }
+  }
+
+  const commonsCandidates = getCityHeroImageCandidates(ctx);
+  const bundleHit = commonsCandidates.find((u) => {
+    const s = String(u || "").trim();
+    if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
+    if (isBlockedHeroImageUrl(s)) return false;
+    return true;
+  });
+  if (bundleHit) {
+    return { url: upgradeLandscapeImageUrl(String(bundleHit)), heroSource: "bundle" };
+  }
+
+  if (isResolveHeroEnabled()) {
+    return { url: "", heroSource: "fallback" };
   }
 
   const bundled = getBundledCityHeroPath(ctx);
