@@ -11098,7 +11098,7 @@ function ItineraryResultModal({
                   aria-hidden
                 />
                 <span className="text-center text-xs font-medium text-slate-600">
-                  {t("destination.itineraryGenerating")}
+                  {t("destination.itineraryBuildingProgram")}
                 </span>
               </div>
             </div>
@@ -11825,7 +11825,6 @@ function DestinationGuideView({
   const [itineraryCalendarConflictErr, setItineraryCalendarConflictErr] = useState("");
   const [itineraryCalendarConflictSaving, setItineraryCalendarConflictSaving] = useState(false);
   const [itineraryLoading, setItineraryLoading] = useState(false);
-  const [itineraryProgressStep, setItineraryProgressStep] = useState(0);
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
@@ -12564,17 +12563,9 @@ function DestinationGuideView({
 
   async function runItineraryGenerationWithDates(dest, startDate, endDate, prefs, kind) {
     const regen = kind === "regenerate";
-    const progressTimers = [];
     if (regen) setItineraryRegenerating(true);
     else setItineraryLoading(true);
     setItineraryError("");
-    if (isVerifiedPlannerEnabled() && !regen) {
-      setItineraryProgressStep(0);
-      progressTimers.push(setTimeout(() => setItineraryProgressStep(1), 3500));
-      progressTimers.push(setTimeout(() => setItineraryProgressStep(2), 9000));
-    } else {
-      setItineraryProgressStep(0);
-    }
     try {
       const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
       const ideas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
@@ -12604,8 +12595,6 @@ function DestinationGuideView({
         setItineraryModalOpen(false);
       }
     } finally {
-      for (const id of progressTimers) clearTimeout(id);
-      setItineraryProgressStep(0);
       if (regen) setItineraryRegenerating(false);
       else setItineraryLoading(false);
     }
@@ -13489,15 +13478,7 @@ function DestinationGuideView({
           <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
             <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-brand-blue border-t-transparent" aria-hidden />
             <p className="text-sm font-normal tracking-[0.03em] text-slate-700">
-              {isVerifiedPlannerEnabled()
-                ? t(
-                    [
-                      "destination.itineraryProgressSearch",
-                      "destination.itineraryProgressVerify",
-                      "destination.itineraryProgressBuild",
-                    ][itineraryProgressStep] || "destination.itineraryGenerating"
-                  )
-                : t("destination.itineraryGenerating")}
+              {t("destination.itineraryBuildingProgram")}
             </p>
           </div>
         </div>
