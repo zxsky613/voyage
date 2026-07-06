@@ -155,7 +155,7 @@ function isBlockedHeroCacheEntry(url, kind) {
 }
 
 /**
- * Migration douce : réécrit les entrées cache héros (original Commons → thumb 1600px).
+ * Migration douce : réécrit les entrées cache héros (original ou 1600px → thumb 1280px standard).
  * @param {import('../../lib/images/types.js').ResolvedImage} entry
  * @param {{ labelNormalized: string, kind: import('../../lib/images/types.js').ImageKind, entityId?: string }} ctx
  */

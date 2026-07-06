@@ -21,7 +21,10 @@ import { buildCityHeroUnsplashQuery } from "../cityDroneImagePrompt.js";
 import { buildCityImageCacheKey } from "../cityHeroStem.js";
 import {
   fixDoubleEncodedUrl,
+  HERO_COMMONS_THUMB_WIDTH,
+  isAllowedThumbWidth,
   isCommonsThumbPath,
+  snapToAllowedThumbWidth,
   toCommonsThumbUrl,
 } from "../lib/images/commonsThumbUrl.js";
 
@@ -47,12 +50,21 @@ const originalCommons =
   "https://upload.wikimedia.org/wikipedia/commons/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg";
 const thumbFromOriginal = toCommonsThumbUrl(originalCommons);
 assert(isCommonsThumbPath(thumbFromOriginal), "original Commons URL → thumb path");
-assert(/\/1600px-/.test(thumbFromOriginal), "thumb width 1600px");
+assert(/\/1280px-/.test(thumbFromOriginal), "thumb width 1280px (standard Wikimedia)");
+assert(isAllowedThumbWidth(HERO_COMMONS_THUMB_WIDTH), "hero width is allowed standard");
 
 const smallThumb =
   "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Nice_vue_du_Ch%C3%A2teau.jpg/320px-Nice_vue_du_Ch%C3%A2teau.jpg";
 const upgradedThumb = toCommonsThumbUrl(smallThumb);
-assert(/\/1600px-/.test(upgradedThumb), "resize existing thumb to 1600px");
+assert(/\/1280px-/.test(upgradedThumb), "resize existing thumb to 1280px");
+
+const legacy1600 =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Island_of_Crete%2C_Greece.JPG/1600px-Island_of_Crete%2C_Greece.JPG";
+const migrated1280 = toCommonsThumbUrl(legacy1600);
+assert(/\/1280px-/.test(migrated1280), "migrate legacy 1600px thumb to 1280px");
+assert(!/\/1600px-/.test(migrated1280), "no non-standard 1600px segment");
+assert(snapToAllowedThumbWidth(1600) === 1920, "1600 snaps up to 1920 for API round-up");
+assert(snapToAllowedThumbWidth(1280) === 1280, "1280 stays 1280");
 
 const doubleFixed = fixDoubleEncodedUrl(
   "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/X%252C_Y.jpg/800px-X%252C_Y.jpg"

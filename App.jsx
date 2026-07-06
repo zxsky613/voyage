@@ -11925,9 +11925,38 @@ function DestinationGuideView({
     };
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
 
+  const destinationHeroSrc = useMemo(() => {
+    if (!displayGuide) return "";
+    const heroCtx = [displayGuide.city, displayGuide.adminRegion, displayGuide.country]
+      .filter(Boolean)
+      .join(", ")
+      .trim();
+    let primary = String(displayGuide.landscapeImageUrl || displayGuide.imageUrl || "").trim();
+    if (isBlockedHeroImageUrl(primary)) primary = "";
+    const guideCleanup = isResolveGuideCleanupEnabled();
+    const resolveHeroOn = isResolveHeroEnabled();
+    const syncFallback =
+      guideCleanup || resolveHeroOn
+        ? ""
+        : String(
+            firstAllowedHeroUrl(getCityHeroImageCandidates(heroCtx || displayGuide.city || "")) ||
+              getBundledCityHeroPath(heroCtx || displayGuide.city || "") ||
+              getStorageMirrorHeroUrl(heroCtx || displayGuide.city || "") ||
+              buildCityImageUrl(heroCtx || displayGuide.city || "") ||
+              ""
+          ).trim();
+    return upgradeLandscapeImageUrl((primary || syncFallback).trim());
+  }, [
+    displayGuide?.landscapeImageUrl,
+    displayGuide?.imageUrl,
+    displayGuide?.city,
+    displayGuide?.adminRegion,
+    displayGuide?.country,
+  ]);
+
   useEffect(() => {
     setHeroImageFailed(false);
-  }, [displayGuide?.landscapeImageUrl, displayGuide?.imageUrl, confirmedDestination]);
+  }, [destinationHeroSrc]);
 
   const verifiedHighlightChips = useMemo(
     () => (destinationHighlights || []).map(highlightToActivityChip),
@@ -12911,23 +12940,7 @@ function DestinationGuideView({
                       displayGuide.city ||
                       ""
                   ).trim();
-                  let primary = String(
-                    displayGuide.landscapeImageUrl || displayGuide.imageUrl || ""
-                  ).trim();
-                  if (isBlockedHeroImageUrl(primary)) primary = "";
-                  const guideCleanup = isResolveGuideCleanupEnabled();
-                  const resolveHeroOn = isResolveHeroEnabled();
-                  const syncFallback =
-                    guideCleanup || resolveHeroOn
-                      ? ""
-                      : String(
-                          firstAllowedHeroUrl(getCityHeroImageCandidates(heroCtx || displayGuide.city || "")) ||
-                            getBundledCityHeroPath(heroCtx || displayGuide.city || "") ||
-                            getStorageMirrorHeroUrl(heroCtx || displayGuide.city || "") ||
-                            buildCityImageUrl(heroCtx || displayGuide.city || "") ||
-                            ""
-                        ).trim();
-                  let heroSrc = (primary || syncFallback).trim();
+                  const heroSrc = destinationHeroSrc;
                   if (!heroSrc && !heroFetchSettled) {
                     return (
                       <div className="flex h-full w-full items-center justify-center">
@@ -12964,9 +12977,11 @@ function DestinationGuideView({
                       fetchPriority="high"
                       onError={(e) => {
                         const el = e.currentTarget;
+                        const guideCleanup = isResolveGuideCleanupEnabled();
                         if (!guideCleanup) {
                           const next = pickNextDestinationGuideImgSrc(el, displayGuide);
                           if (next) {
+                            setHeroImageFailed(false);
                             el.src = next;
                             return;
                           }

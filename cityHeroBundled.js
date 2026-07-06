@@ -31,7 +31,7 @@ export const BUNDLED_CITY_HERO_PATHS = Object.freeze({
 
 /** Couche 2 (b) — une URL figée par clé. */
 export const CITY_HERO_IMAGE_URLS = Object.freeze({
-  nice: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Nice_vue_du_Ch%C3%A2teau.jpg/1600px-Nice_vue_du_Ch%C3%A2teau.jpg",
+  nice: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Nice_vue_du_Ch%C3%A2teau.jpg/1280px-Nice_vue_du_Ch%C3%A2teau.jpg",
 });
 
 /** Couche 2 (c) — listes par clé. */
