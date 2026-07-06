@@ -109,6 +109,7 @@ import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js"
 import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
 import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
+import { useAppHeaderHeight } from "./lib/ui/useAppHeaderHeight.js";
 import {
   scheduleActivityReminders,
   scheduleActivityRemindersBatch,
@@ -7557,8 +7558,12 @@ function JusttripBrand({ size = "md", className = "" }) {
 }
 
 function TopNav({ onMenu, onAdd, title }) {
+  const headerRef = useAppHeaderHeight();
   return (
-    <header className="app-top-nav fixed inset-x-0 top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
+    <header
+      ref={headerRef}
+      className="app-top-nav fixed inset-x-0 top-0 z-30 min-w-0 px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px)+0.35rem)] pb-1 sm:px-5 sm:pb-0 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]"
+    >
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center justify-between gap-2 rounded-[2.25rem] bg-white/90 px-3 py-3 shadow-[0_16px_44px_rgba(2,6,23,0.08)] backdrop-blur-xl sm:px-6 sm:py-4">
         <button
           type="button"
@@ -12544,7 +12549,7 @@ function DestinationGuideView({
 
   return (
     <section className="space-y-6 pb-4">
-      <div className="flex items-center justify-between pt-1 sm:pt-0">
+      <div className="flex items-center justify-between">
         <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-brand-blue-deep/45">
           {t("destination.guideHeading")}
         </h2>
@@ -17551,7 +17556,7 @@ export default function App() {
         : null}
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
-      <main className="mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 pt-[calc(var(--app-header-clearance)+0.85rem)] sm:px-5 sm:pt-[calc(var(--app-header-clearance)+0.5rem)]">
+      <main className="app-main mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 sm:px-5">
         {notice ? (
           <div className="mb-4 break-words rounded-[1.25rem] bg-white/90 px-4 py-3 text-sm shadow-[0_10px_28px_rgba(2,6,23,0.08)] ring-1 ring-slate-200/70">
             {String(notice)}

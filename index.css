@@ -4,7 +4,10 @@
 
 /* ── Palette marque Justtrip (source unique) ── */
 :root {
-  --app-header-clearance: calc(env(safe-area-inset-top, 0px) + 4.75rem);
+  /* Fallback avant mesure JS ; écrasé par ResizeObserver sur .app-top-nav */
+  --app-header-height: calc(env(safe-area-inset-top, 0px) + 4.75rem);
+  --app-header-breath: 0.5rem;
+  --app-header-clearance: calc(var(--app-header-height) + var(--app-header-breath));
   --app-bottom-nav-clearance: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
   --brand-blue: #1d4ed8;
   --brand-blue-deep: #1e3a8a;
@@ -26,7 +29,8 @@
 
 @media (max-width: 639px) {
   :root {
-    --app-header-clearance: calc(env(safe-area-inset-top, 0px) + 5.35rem);
+    --app-header-height: calc(env(safe-area-inset-top, 0px) + 5.35rem);
+    --app-header-breath: 0.85rem;
     --app-bottom-nav-clearance: calc(env(safe-area-inset-bottom, 0px) + 7rem);
   }
 }
@@ -45,6 +49,10 @@
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+  }
+  /* Espace réservé sous le header flottant — source unique (voir useAppHeaderHeight). */
+  .app-main {
+    padding-top: var(--app-header-clearance);
   }
 }
 
