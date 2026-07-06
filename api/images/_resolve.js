@@ -81,10 +81,15 @@ export async function handler(req, res) {
       res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
     }
 
+    console.info(
+      `[images/resolve] ok kind=${kind} label="${label.slice(0, 80)}" heroSource=${result.heroSource || "fallback"} source=${result.source || ""} cache=${cache}`
+    );
+
     return sendJson(res, 200, {
       ok: true,
       url: result.url,
       source: result.source,
+      heroSource: result.heroSource || "fallback",
       attribution: result.attribution,
       entityId: result.entityId,
       cached: Boolean(result.cached),

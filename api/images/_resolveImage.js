@@ -17,6 +17,33 @@ import { candidateToResolved, headCheckUrl } from "./_headCheck.js";
 import { fetchWikipediaCandidates } from "./_wikipediaClient.js";
 import { fetchWikivoyageCandidates } from "./_wikivoyageClient.js";
 
+/** @param {string} label */
+function destinationTokensForHero(label) {
+  return String(label || "")
+    .split(/[,|]/)
+    .flatMap((part) =>
+      part
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length >= 4)
+    );
+}
+
+/**
+ * @param {import('../../lib/images/types.js').ImageCandidate|null|undefined} c
+ * @returns {import('../../lib/images/types.js').HeroSource}
+ */
+function inferHeroSource(c) {
+  if (!c) return "fallback";
+  if (c.heroSource) return c.heroSource;
+  if (c.source === "wikidata-commons") return "p18";
+  if (c.source === "wikipedia") return "pageimage";
+  if (c.source === "wikivoyage") return "wikivoyage";
+  if (c.source === "commons-category") return "commons";
+  return "fallback";
+}
+
 /**
  * @param {import('../../lib/images/types.js').ImageCandidate} c
  * @param {import('../../lib/images/types.js').ImageKind} kind
@@ -46,22 +73,24 @@ async function firstValidSequential(candidates, kind) {
 }
 
 /**
- * Résolution entité héro — P18 → catégorie Commons → Wikipedia → Wikivoyage (banner puis pageimages).
+ * Résolution entité héro — P18 → pageimages Wikipedia → Wikivoyage → Commons catégorie (dernier recours).
  * @param {NonNullable<Awaited<ReturnType<typeof resolveEntity>>>} entity
  * @param {string} uiLang
+ * @param {string} searchLabel
  */
-async function resolveHeroFromEntity(entity, uiLang) {
-  const heroOpts = { kind: /** @type {'hero'} */ ("hero") };
+async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
+  const heroOpts = {
+    kind: /** @type {'hero'} */ ("hero"),
+    uiLang,
+    destinationTokens: destinationTokensForHero(searchLabel),
+  };
 
   if (entity.p18Filenames?.length) {
-    const p18 = await fetchP18Candidates(entity.p18Filenames, heroOpts);
+    const p18 = (await fetchP18Candidates(entity.p18Filenames, heroOpts)).map((c) => ({
+      ...c,
+      heroSource: /** @type {const} */ ("p18"),
+    }));
     const hit = await firstValidSequential(p18, "hero");
-    if (hit) return hit;
-  }
-
-  if (entity.commonsCategory) {
-    const category = await fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts);
-    const hit = await firstValidSequential(category, "hero");
     if (hit) return hit;
   }
 
@@ -71,9 +100,21 @@ async function resolveHeroFromEntity(entity, uiLang) {
     if (hit) return hit;
   }
 
-  const wikivoyage = await fetchWikivoyageCandidates(entity, heroOpts, uiLang);
+  const wikivoyage = (await fetchWikivoyageCandidates(entity, heroOpts, uiLang)).map((c) => ({
+    ...c,
+    heroSource: /** @type {const} */ ("wikivoyage"),
+  }));
   const wvHit = await firstValidSequential(wikivoyage, "hero");
   if (wvHit) return wvHit;
+
+  if (entity.commonsCategory) {
+    const category = (await fetchCommonsCategoryScenicCandidates(entity.commonsCategory, heroOpts)).map((c) => ({
+      ...c,
+      heroSource: /** @type {const} */ ("commons"),
+    }));
+    const hit = await firstValidSequential(category, "hero");
+    if (hit) return hit;
+  }
 
   return null;
 }
@@ -98,11 +139,21 @@ async function resolvePlaceFromEntity(entity, kind) {
   return null;
 }
 
+function isBlockedHeroCacheEntry(url, kind) {
+  if (kind !== "hero") return false;
+  const decodedTitle = decodeURIComponent(String(url || ""));
+  return (
+    isLikelyOrbitalOrMapImagery(url, decodedTitle, "") ||
+    isLikelyWikiBrandOrLogoImage(url, decodedTitle) ||
+    isLikelyNonScenicHeroImagery(url, decodedTitle, "")
+  );
+}
+
 /**
  * @typedef {import('../../lib/images/types.js').ResolvedImage} ResolvedImage
  * @typedef {'wikidata_throttled' | 'not_found' | 'timeout' | 'cache_disabled' | 'filtered'} ResolveImageReason
  * @typedef {'hit' | 'miss' | 'disabled'} ImageCacheField
- * @typedef {{ image: ResolvedImage|null, reason?: ResolveImageReason, cache: ImageCacheField }} ResolveImageOutcome
+ * @typedef {{ image: ResolvedImage|null, heroSource?: import('../../lib/images/types.js').HeroSource, reason?: ResolveImageReason, cache: ImageCacheField }} ResolveImageOutcome
  */
 
 /**
@@ -121,7 +172,7 @@ export async function resolveImage(params) {
   const cacheReady = isCacheConfigured() && cacheField !== "disabled";
 
   if (!labelNormalized && !searchLabel) {
-    return { image: null, reason: "not_found", cache: cacheField };
+    return { image: null, heroSource: "fallback", reason: "not_found", cache: cacheField };
   }
 
   if (cacheReady) {
@@ -129,13 +180,13 @@ export async function resolveImage(params) {
     if (labelCached.cache === "disabled") cacheField = "disabled";
     else if (labelCached.cache === "hit" && labelCached.entry?.url) {
       const cached = labelCached.entry;
-      const decodedTitle = decodeURIComponent(cached.url);
-      const blocked =
-        kind === "hero" &&
-        (isLikelyOrbitalOrMapImagery(cached.url, decodedTitle, "") ||
-          isLikelyWikiBrandOrLogoImage(cached.url, decodedTitle) ||
-          isLikelyNonScenicHeroImagery(cached.url, decodedTitle, ""));
-      if (!blocked) return { image: cached, cache: "hit" };
+      if (!isBlockedHeroCacheEntry(cached.url, kind)) {
+        return {
+          image: { ...cached, heroSource: cached.heroSource || inferHeroSource({ source: cached.source }) },
+          heroSource: cached.heroSource || inferHeroSource({ source: cached.source }),
+          cache: "hit",
+        };
+      }
     } else if (labelCached.cache === "miss") {
       cacheField = "miss";
     }
@@ -156,10 +207,11 @@ export async function resolveImage(params) {
 
   if (!entity) {
     if (wikiThrottled && cacheField === "disabled") {
-      return { image: null, reason: "cache_disabled", cache: "disabled" };
+      return { image: null, heroSource: "fallback", reason: "cache_disabled", cache: "disabled" };
     }
     return {
       image: null,
+      heroSource: "fallback",
       reason: wikiThrottled ? "wikidata_throttled" : "not_found",
       cache: cacheField,
     };
@@ -170,26 +222,28 @@ export async function resolveImage(params) {
     if (byEntity.cache === "disabled") cacheField = "disabled";
     else if (byEntity.cache === "hit" && byEntity.entry?.url) {
       const byEntityImage = byEntity.entry;
-      const decodedTitle = decodeURIComponent(byEntityImage.url);
-      const blocked =
-        kind === "hero" &&
-        (isLikelyOrbitalOrMapImagery(byEntityImage.url, decodedTitle, "") ||
-          isLikelyWikiBrandOrLogoImage(byEntityImage.url, decodedTitle) ||
-          isLikelyNonScenicHeroImagery(byEntityImage.url, decodedTitle, ""));
-      if (!blocked) return { image: { ...byEntityImage, cached: true }, cache: "hit" };
+      if (!isBlockedHeroCacheEntry(byEntityImage.url, kind)) {
+        const heroSource = byEntityImage.heroSource || inferHeroSource({ source: byEntityImage.source });
+        return {
+          image: { ...byEntityImage, cached: true, heroSource },
+          heroSource,
+          cache: "hit",
+        };
+      }
     }
   }
 
   const valid =
     kind === "hero"
-      ? await resolveHeroFromEntity(entity, uiLang)
+      ? await resolveHeroFromEntity(entity, uiLang, searchLabel || params.label)
       : await resolvePlaceFromEntity(entity, kind);
 
   if (!valid?.url) {
-    return { image: null, reason: "not_found", cache: cacheField };
+    return { image: null, heroSource: "fallback", reason: "not_found", cache: cacheField };
   }
 
   const resolved = candidateToResolved(valid, entity.qid);
+  resolved.heroSource = inferHeroSource(valid);
   resolved.cached = false;
 
   if (cacheReady && cacheField !== "disabled") {
@@ -201,5 +255,9 @@ export async function resolveImage(params) {
     });
   }
 
-  return { image: resolved, cache: cacheField === "disabled" ? "disabled" : "miss" };
+  return {
+    image: resolved,
+    heroSource: resolved.heroSource,
+    cache: cacheField === "disabled" ? "disabled" : "miss",
+  };
 }

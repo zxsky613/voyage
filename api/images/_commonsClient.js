@@ -1,5 +1,7 @@
 import {
+  HERO_MIN_LANDSCAPE_WIDTH,
   HERO_MIN_WIDTH,
+  isHeroLandscapeDimensions,
   isLikelyNonScenicHeroImagery,
   isLikelyOrbitalOrMapImagery,
   isLikelyWikiBrandOrLogoImage,
@@ -45,10 +47,11 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   if (hero && isLikelyNonScenicHeroImagery(url, title, categoriesRaw)) return null;
   const w = Number(info?.width || 0);
   const h = Number(info?.height || 0);
+  if (hero && (!isHeroLandscapeDimensions(w, h) || w < HERO_MIN_LANDSCAPE_WIDTH)) return null;
   if (source === "commons-category" && w < HERO_MIN_WIDTH) return null;
 
   return {
-    url: commonsThumbUrl(url, Math.max(HERO_MIN_WIDTH, 1920)),
+    url: commonsThumbUrl(url, Math.max(HERO_MIN_LANDSCAPE_WIDTH, 1920)),
     source: /** @type {import('../../lib/images/types.js').ImageSource} */ (source),
     author:
       parseExtMetaValue(meta.Artist) ||
@@ -60,7 +63,7 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
     sourceUrl: String(info?.descriptionurl || "").trim() || undefined,
     width: w,
     height: h,
-    score: scoreScenicCommonsFile(title, url, w, h, { hero }),
+    score: scoreScenicCommonsFile(title, url, w, h, { hero, categories: categoriesRaw, destinationTokens: options.destinationTokens }),
   };
 }
 
@@ -82,7 +85,7 @@ export async function fetchP18Candidates(filenames, options = {}) {
 /**
  * Liste fichiers d'une catégorie Commons P373, score scénique, retourne candidats triés.
  * @param {string} categoryName — sans préfixe « Category: »
- * @param {{ kind?: import('../../lib/images/types.js').ImageKind }} [options]
+ * @param {{ kind?: import('../../lib/images/types.js').ImageKind, destinationTokens?: string[] }} [options]
  */
 export async function fetchCommonsCategoryScenicCandidates(categoryName, options = {}) {
   const cat = String(categoryName || "").trim();
@@ -115,7 +118,7 @@ export async function fetchCommonsCategoryScenicCandidates(categoryName, options
     );
     for (const c of chunkResults) {
       if (!c) continue;
-      const minScore = options.kind === "hero" ? 40 : 0;
+      const minScore = options.kind === "hero" ? 60 : 0;
       if ((c.score || 0) >= minScore) all.push(c);
     }
   }

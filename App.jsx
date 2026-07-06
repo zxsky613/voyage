@@ -86,7 +86,7 @@ import { catalogCityHitsForLocalizedQuery, displayCityForLocale, resolveHeroLook
 import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
 import { getResolvedImage, getResolvedImageUrl } from "./lib/getResolvedImage.js";
 import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
-import { resolveImagePlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
+import { resolveImagePlaceholder, resolveDestinationHeroPlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
 import {
   stripItineraryBulletTimePrefix,
   buildActivityResolveParams,
@@ -582,7 +582,9 @@ function isRejectedCachedHeroUrl(url) {
   if (!s) return false;
   const decoded = decodeURIComponent(s);
   return (
-    isLikelyOrbitalOrMapImagery(s, decoded) || isLikelyWikiBrandOrLogoImage(s, decoded)
+    isLikelyOrbitalOrMapImagery(s, decoded) ||
+    isLikelyWikiBrandOrLogoImage(s, decoded) ||
+    isLikelyNonScenicHeroImagery(s, decoded)
   );
 }
 
@@ -2395,41 +2397,52 @@ function isPersistableHeroUrl(url) {
 }
 
 /**
- * Bandeau ville — chaîne unique : catalogue → entité (API) → Wikipedia search → Unsplash ville → "".
+ * Bandeau ville — bundle curé → API (P18/pageimage/…) → storage/cache/Unsplash/geo → fallback dégradé.
  * Unsplash reste côté client uniquement (jamais dans api/images/resolve).
+ * @returns {Promise<{ url: string, heroSource: string }>}
  */
-async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
+async function pickCityHeroImageMeta(cityInput, prefetched = {}, uiLang = "fr") {
   const ctx = String(cityInput || "").trim();
-  if (!ctx) return "";
+  if (!ctx) return { url: "", heroSource: "fallback" };
+
+  const commonsCandidates = getCityHeroImageCandidates(ctx);
+  const bundleHit = commonsCandidates.find((u) => {
+    const s = String(u || "").trim();
+    if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
+    if (isBlockedHeroImageUrl(s)) return false;
+    return true;
+  });
+  if (bundleHit) {
+    return { url: upgradeLandscapeImageUrl(String(bundleHit)), heroSource: "bundle" };
+  }
 
   if (isResolveHeroEnabled()) {
-    const fromResolve = await getResolvedImageUrl({
+    const resolved = await getResolvedImage({
       kind: "hero",
       label: ctx,
       context: "",
       uiLang,
     });
+    const fromResolve = String(resolved?.url || "").trim();
     if (fromResolve && !isBlockedHeroImageUrl(fromResolve)) {
-      return upgradeLandscapeImageUrl(fromResolve);
+      if (import.meta.env.DEV) {
+        console.info("[hero] resolve", {
+          label: ctx.slice(0, 80),
+          heroSource: resolved?.heroSource || resolved?.source || "fallback",
+        });
+      }
+      return {
+        url: upgradeLandscapeImageUrl(fromResolve),
+        heroSource: String(resolved?.heroSource || resolved?.source || "fallback"),
+      };
     }
   }
 
-  const commonsCandidates = getCityHeroImageCandidates(ctx);
-  const commonsFirst =
-    commonsCandidates.find((u) => {
-      const s = String(u || "").trim();
-      if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
-      if (isLikelyOrbitalOrMapImagery(s, s)) return false;
-      if (isLikelyNonScenicHeroImagery(s, decodeURIComponent(s))) return false;
-      return true;
-    }) || "";
-  if (commonsFirst) return upgradeLandscapeImageUrl(String(commonsFirst));
-
   const bundled = getBundledCityHeroPath(ctx);
-  if (bundled) return upgradeLandscapeImageUrl(bundled);
+  if (bundled) return { url: upgradeLandscapeImageUrl(bundled), heroSource: "bundle" };
 
   const storage = getStorageMirrorHeroUrl(ctx);
-  if (storage) return storage;
+  if (storage) return { url: storage, heroSource: "bundle" };
 
   const cachedRaw =
     prefetched.cachedCityImage != null
@@ -2440,7 +2453,7 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
     !isBlockedHeroImageUrl(cachedRaw) &&
     (isTrustworthyHeroImageUrl(cachedRaw) || isPersistableHeroUrl(cachedRaw))
   ) {
-    return upgradeLandscapeImageUrl(cachedRaw);
+    return { url: upgradeLandscapeImageUrl(cachedRaw), heroSource: "bundle" };
   }
 
   const unsplashPref = String(prefetched.unsplashUrl ?? "").trim();
@@ -2449,13 +2462,18 @@ async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
     !isBlockedHeroImageUrl(unsplashPref) &&
     isCityAnchoredUnsplashAllowed(buildNominatimCityQuery(ctx) || ctx)
   ) {
-    return upgradeLandscapeImageUrl(unsplashPref);
+    return { url: upgradeLandscapeImageUrl(unsplashPref), heroSource: "geosearch" };
   }
 
   const geoFallback = await resolveGeoHeroFallback(ctx, uiLang);
-  if (geoFallback) return geoFallback;
+  if (geoFallback) return { url: geoFallback, heroSource: "geosearch" };
 
-  return "";
+  return { url: "", heroSource: "fallback" };
+}
+
+async function pickCityHeroImageUrl(cityInput, prefetched = {}, uiLang = "fr") {
+  const meta = await pickCityHeroImageMeta(cityInput, prefetched, uiLang);
+  return meta.url;
 }
 
 /**
@@ -5104,7 +5122,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   const commonsCandidates = getCityHeroImageCandidates(imageCtx);
   const wikiThumbRaw = String(summaryPack.thumb || "").trim();
 
-  const imageUrl = await pickCityHeroImageUrl(
+  const imageMeta = await pickCityHeroImageMeta(
     imageCtx,
     {
       wikiHeroUrls,
@@ -5113,6 +5131,14 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     },
     uiLanguage
   );
+  const imageUrl = imageMeta.url;
+  if (import.meta.env.DEV) {
+    console.info("[hero] destination guide", {
+      city: safeCity,
+      heroSource: imageMeta.heroSource,
+      url: imageUrl ? imageUrl.slice(0, 96) : "",
+    });
+  }
   const landscapeImageUrl = imageUrl;
 
   if (imageUrl && isPersistableHeroUrl(imageUrl)) {
@@ -12922,12 +12948,15 @@ function DestinationGuideView({
                   }
                   if (!heroSrc) {
                     return (
-                      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand-blue-tint/80 via-slate-100 to-emerald-50/60 px-6 text-center">
-                        <span className="text-lg font-serif text-slate-700/90">
+                      <div
+                        className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center"
+                        style={{ background: resolveDestinationHeroPlaceholder(displayGuide.city) }}
+                      >
+                        <span className="text-lg font-serif text-white/95 drop-shadow-sm">
                           {displayCityForLocale(String(displayGuide.city), language)}
                         </span>
                         {(displayGuide.country || displayGuide.adminRegion) ? (
-                          <span className="text-xs font-medium text-slate-500/80">
+                          <span className="text-xs font-medium text-white/75">
                             {[displayGuide.adminRegion, displayGuide.country].filter(Boolean).join(", ")}
                           </span>
                         ) : null}

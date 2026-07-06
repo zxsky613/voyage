@@ -87,6 +87,14 @@ assert(
   !isLikelyNonScenicHeroImagery("https://x/h.jpg", "Harbour_of_Heraklion_panorama.jpg"),
   "harbour panorama should stay scenic"
 );
+assert(
+  isLikelyNonScenicHeroImagery("https://x/wc.jpg", "Public_toilet_in_Heraklion.jpg"),
+  "toilet/wc must be blocked"
+);
+assert(
+  isLikelyNonScenicHeroImagery("https://x/x.jpg", "Besser_is_das_restroom_sign.jpg"),
+  "restroom sign must be blocked"
+);
 
 const mustReject = [
   ["", "File:Apulia in Italy.svg"],
@@ -218,6 +226,18 @@ assert(creteHero.image?.url, "Crete hero should resolve an URL");
 assert(
   !isLikelyOrbitalOrMapImagery(creteHero.image.url, creteHero.image.url),
   `Crete hero must not be orbital: ${creteHero.image.url.slice(0, 80)}`
+);
+assert(
+  !isLikelyNonScenicHeroImagery(creteHero.image.url, decodeURIComponent(creteHero.image.url)),
+  `Crete hero must not be non-scenic: ${creteHero.image.url.slice(0, 80)}`
+);
+assert(
+  !/besser|toilet|wc|restroom/i.test(decodeURIComponent(creteHero.image.url)),
+  `Crete hero must not be WC: ${creteHero.image.url.slice(0, 80)}`
+);
+assert(
+  ["p18", "pageimage", "wikivoyage", "commons"].includes(String(creteHero.heroSource || "")),
+  `Crete heroSource unexpected: ${creteHero.heroSource}`
 );
 
 console.log("verify-resolve-image: live OK");

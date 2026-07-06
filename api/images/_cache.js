@@ -176,3 +176,37 @@ export async function writeCache({ labelNormalized, kind, entityId, candidate })
 export function isCacheConfigured() {
   return Boolean(getSupabaseUrl() && getSupabaseServiceRoleKey());
 }
+
+/**
+ * @param {string[]} labelNormalizedList
+ * @param {import('../../lib/images/types.js').ImageKind} [kind]
+ */
+export async function purgeImageResolveCacheByLabels(labelNormalizedList, kind = "hero") {
+  const db = getAdmin();
+  if (!db) return { deleted: 0, error: "cache_disabled" };
+  const labels = (Array.isArray(labelNormalizedList) ? labelNormalizedList : []).filter(Boolean);
+  if (!labels.length) return { deleted: 0 };
+  const { error, count } = await db
+    .from("image_resolve_cache")
+    .delete({ count: "exact" })
+    .eq("kind", kind)
+    .in("label_normalized", labels);
+  if (error) return { deleted: 0, error: formatSupabaseCacheError(error) };
+  return { deleted: count || 0 };
+}
+
+/**
+ * @param {string} entityId
+ * @param {import('../../lib/images/types.js').ImageKind} [kind]
+ */
+export async function purgeImageResolveCacheByEntity(entityId, kind = "hero") {
+  const db = getAdmin();
+  if (!db || !entityId) return { deleted: 0, error: "cache_disabled" };
+  const { error, count } = await db
+    .from("image_resolve_cache")
+    .delete({ count: "exact" })
+    .eq("kind", kind)
+    .eq("entity_id", entityId);
+  if (error) return { deleted: 0, error: formatSupabaseCacheError(error) };
+  return { deleted: count || 0 };
+}

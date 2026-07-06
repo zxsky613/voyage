@@ -87,6 +87,7 @@ export function candidateToResolved(c, entityId) {
   return {
     url: c.url,
     source: c.source,
+    heroSource: c.heroSource,
     entityId: entityId || undefined,
     attribution: {
       author: c.author || undefined,
