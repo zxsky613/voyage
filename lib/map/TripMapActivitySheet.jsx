@@ -1,8 +1,9 @@
 import React from "react";
-import { MapPin, Sunrise, Sun, X } from "lucide-react";
 import { useI18n } from "../../i18n/I18nContext.jsx";
 import { openExternalMaps } from "../maps/itineraryActivityMap.js";
 import { BRAND_BLUE_BTN_CLASS } from "../brandColors.js";
+import ActivityMapThumbnail from "./ActivityMapThumbnail.jsx";
+import { MapPin, Sunrise, Sun, X } from "lucide-react";
 
 /**
  * Panneau bas type Wanderlog — activité sélectionnée sur la carte.
@@ -15,7 +16,6 @@ export default function TripMapActivitySheet({ activity, cityLabel = "", onClose
   const title = String(activity.title || "").trim();
   const lat = Number(activity.latitude);
   const lon = Number(activity.longitude);
-  const photoUrl = String(activity.photoUrl || "").trim();
   const period = String(activity.period || "").trim();
 
   const periodChip =
@@ -48,15 +48,7 @@ export default function TripMapActivitySheet({ activity, cityLabel = "", onClose
     >
       <div className="overflow-hidden rounded-2xl bg-white/95 shadow-[0_18px_48px_rgba(2,6,23,0.18)] ring-1 ring-slate-200/80 backdrop-blur-sm">
         <div className="flex gap-3 p-3">
-          <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/80">
-            {photoUrl ? (
-              <img src={photoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-slate-400">
-                <MapPin size={22} aria-hidden />
-              </div>
-            )}
-          </div>
+          <ActivityMapThumbnail activity={activity} className="h-16 w-20" />
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
