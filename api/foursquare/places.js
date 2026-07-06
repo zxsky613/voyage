@@ -31,9 +31,6 @@ export default async function handler(req, res) {
 
   const lat = Number(body.lat);
   const lon = Number(body.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
-  }
   const limit = Math.min(Number(body.limit) || 20, 50);
   const preset = String(body.preset || "poi").toLowerCase();
   const categoriesRaw = String(body.categories || "").trim();
@@ -41,6 +38,35 @@ export default async function handler(req, res) {
     categoriesRaw ||
     (preset === "restaurants" || preset === "dining" || preset === "food" ? FSQ_PRESET_RESTAURANTS : FSQ_PRESET_POI);
   const fields = "name,location,categories,price,latitude,longitude,fsq_place_id";
+
+  /** Recherche POI autour d'un libellé ville (near) — repli guide quand ll/radius vide. */
+  if (near.length >= 2 && !Number.isFinite(lat) && !Number.isFinite(lon)) {
+    try {
+      const params = new URLSearchParams({
+        near,
+        categories,
+        fields,
+        sort: "POPULARITY",
+        limit: String(limit),
+      });
+      const fsqResp = await fetch(`${FOURSQUARE_PLACES_BASE}/places/search?${params}`, {
+        headers: foursquarePlacesHeaders(localeRaw),
+      });
+      if (!fsqResp.ok) {
+        const errText = await fsqResp.text();
+        console.warn(`[foursquare/places] near HTTP ${fsqResp.status} near=${near.slice(0, 80)}`);
+        return sendJson(res, fsqResp.status, { error: `Foursquare ${fsqResp.status}: ${errText.slice(0, 300)}` });
+      }
+      const fsqJson = await fsqResp.json();
+      return sendJson(res, 200, { ok: true, results: fsqJson.results || [] });
+    } catch (e) {
+      return sendJson(res, 502, { error: String(e?.message || e) });
+    }
+  }
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
+  }
 
   try {
     const params = new URLSearchParams({

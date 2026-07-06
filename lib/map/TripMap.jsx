@@ -4,6 +4,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useI18n } from "../../i18n/I18nContext.jsx";
 import TripMapActivitySheet from "./TripMapActivitySheet.jsx";
 import {
+  DESTINATION_PIN_IMAGE_ID,
+  registerDestinationPinImage,
+} from "./destinationPinMarker.js";
+import {
   activitiesToPointGeoJSON,
   activitiesToRouteGeoJSON,
   computeDayCentroids,
@@ -25,6 +29,7 @@ const DAY_LAYER = "trip-day-markers";
 const DAY_LABEL_LAYER = "trip-day-labels";
 const ROUTE_LAYER = "trip-route-line";
 const SELECTED_LAYER = "trip-selected-ring";
+const SITUATION_PIN_LAYER = "trip-situation-pin";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
@@ -36,7 +41,7 @@ const EMPTY_FC = { type: "FeatureCollection", features: [] };
  *
  * @param {{
  *   activities: Array<object>,
- *   view?: 'trip'|'day',
+ *   view?: 'trip'|'day'|'situation',
  *   selectedDayIndex: number,
  *   selectedActivityId?: string,
  *   onSelectActivity: (id: string|null) => void,
@@ -77,14 +82,19 @@ export default function TripMap({
     [activities]
   );
 
+  const isSituationView = view === "situation";
+
   const dayActivities = useMemo(
     () => mappedActivities.filter((a) => Number(a?.dayIndex) === selectedDayIndex),
     [mappedActivities, selectedDayIndex]
   );
 
-  const requestedDayView = view !== "trip";
-  // Jour demandé sans aucune coordonnée → on reste au cadrage voyage (note affichée).
-  const effectiveView = requestedDayView && dayActivities.length > 0 ? "day" : "trip";
+  const requestedDayView = view !== "trip" && !isSituationView;
+  const effectiveView = isSituationView
+    ? "situation"
+    : requestedDayView && dayActivities.length > 0
+      ? "day"
+      : "trip";
 
   const missingCount = useMemo(() => {
     const scope = requestedDayView
@@ -97,11 +107,12 @@ export default function TripMap({
 
   const dayCentroids = useMemo(() => computeDayCentroids(mappedActivities), [mappedActivities]);
 
-  const activityPointsData = useMemo(
-    () =>
-      effectiveView === "day" ? activitiesToPointGeoJSON(dayActivities, selectedDayIndex) : EMPTY_FC,
-    [effectiveView, dayActivities, selectedDayIndex]
-  );
+  const activityPointsData = useMemo(() => {
+    if (effectiveView === "situation") {
+      return activitiesToPointGeoJSON(mappedActivities, selectedDayIndex);
+    }
+    return effectiveView === "day" ? activitiesToPointGeoJSON(dayActivities, selectedDayIndex) : EMPTY_FC;
+  }, [effectiveView, mappedActivities, dayActivities, selectedDayIndex]);
 
   const dayMarkersData = useMemo(
     () =>
@@ -147,12 +158,15 @@ export default function TripMap({
   // En vue voyage, fitTargets = toutes les activités mappées : identité stable,
   // donc pas de re-fit quand le jour actif change au scroll de la liste.
   const fitTargets = effectiveView === "day" ? dayActivities : mappedActivities;
+  const fitOpts = isSituationView
+    ? { padding: 28, maxZoom: 9, fixedZoom: 9 }
+    : { padding: mode === "modal" ? 88 : 64 };
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    fitMapToActivities(map, fitTargets, { padding: mode === "modal" ? 88 : 64 });
-  }, [mapReady, effectiveView, fitTargets, mode]);
+    fitMapToActivities(map, fitTargets, fitOpts);
+  }, [mapReady, effectiveView, fitTargets, mode, isSituationView]);
 
   useEffect(() => {
     if (effectiveView !== "day") setSheetActivity(null);
@@ -209,15 +223,22 @@ export default function TripMap({
 
     map.on("error", onError);
 
-    map.on("load", () => {
+    map.on("load", async () => {
       if (cancelled) return;
+
+      if (isSituationView) {
+        try {
+          await registerDestinationPinImage(map);
+        } catch {
+          /* pin fallback below */
+        }
+      }
 
       map.addSource(SOURCE_ID, {
         type: "geojson",
         data: activityPointsData,
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 50,
+        cluster: !isSituationView,
+        ...(isSituationView ? {} : { clusterMaxZoom: 14, clusterRadius: 50 }),
       });
 
       map.addSource(DAY_SOURCE_ID, {
@@ -230,177 +251,187 @@ export default function TripMap({
         data: routeData,
       });
 
-      map.addLayer({
-        id: ROUTE_LAYER,
-        type: "line",
-        source: ROUTE_SOURCE_ID,
-        paint: {
-          "line-color": ["coalesce", ["get", "color"], BRAND_BLUE],
-          "line-opacity": 0.55,
-          "line-width": 3,
-        },
-      });
-
-      map.addLayer({
-        id: CLUSTER_LAYER,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": BRAND_BLUE,
-          "circle-opacity": 0.82,
-          "circle-radius": ["step", ["get", "point_count"], 18, 5, 22, 10, 28],
-        },
-      });
-
-      map.addLayer({
-        id: CLUSTER_COUNT_LAYER,
-        type: "symbol",
-        source: SOURCE_ID,
-        filter: ["has", "point_count"],
-        layout: {
-          "text-field": ["get", "point_count_abbreviated"],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 12,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
-
-      map.addLayer({
-        id: POINT_LAYER,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-color": ["get", "color"],
-          "circle-radius": [
-            "case",
-            ["==", ["get", "id"], String(selectedActivityId || "")],
-            16,
-            13,
-          ],
-          // Coords estimées (LLM) : marqueur atténué — normal pour tripadvisor/geocoded.
-          "circle-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-opacity": ["case", ["==", ["get", "estimated"], true], 0.5, 1],
-        },
-      });
-
-      map.addLayer({
-        id: POINT_LABEL_LAYER,
-        type: "symbol",
-        source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        layout: {
-          "text-field": ["get", "label"],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 11,
-          "text-allow-overlap": true,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
-
-      map.addLayer({
-        id: SELECTED_LAYER,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: [
-          "all",
-          ["!", ["has", "point_count"]],
-          ["==", ["get", "id"], String(selectedActivityId || "__none__")],
-        ],
-        paint: {
-          "circle-color": "transparent",
-          "circle-radius": 20,
-          "circle-stroke-width": 3,
-          "circle-stroke-color": BRAND_BLUE,
-        },
-      });
-
-      map.addLayer({
-        id: DAY_LAYER,
-        type: "circle",
-        source: DAY_SOURCE_ID,
-        paint: {
-          "circle-color": ["get", "color"],
-          "circle-radius": 16,
-          "circle-stroke-width": 2.5,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-
-      map.addLayer({
-        id: DAY_LABEL_LAYER,
-        type: "symbol",
-        source: DAY_SOURCE_ID,
-        layout: {
-          "text-field": ["get", "label"],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 13,
-          "text-allow-overlap": true,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
-
-      map.on("click", CLUSTER_LAYER, (e) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_LAYER] });
-        const clusterId = features[0]?.properties?.cluster_id;
-        const src = map.getSource(SOURCE_ID);
-        if (clusterId == null || !src?.getClusterExpansionZoom) return;
-        src.getClusterExpansionZoom(clusterId, (err, zoom) => {
-          if (err) return;
-          map.easeTo({ center: features[0].geometry.coordinates, zoom });
+      if (isSituationView) {
+        map.addLayer({
+          id: SITUATION_PIN_LAYER,
+          type: "symbol",
+          source: SOURCE_ID,
+          layout: {
+            "icon-image": DESTINATION_PIN_IMAGE_ID,
+            "icon-size": 1,
+            "icon-anchor": "bottom",
+            "icon-allow-overlap": true,
+          },
         });
-      });
+      } else {
+        map.addLayer({
+          id: ROUTE_LAYER,
+          type: "line",
+          source: ROUTE_SOURCE_ID,
+          paint: {
+            "line-color": ["coalesce", ["get", "color"], BRAND_BLUE],
+            "line-opacity": 0.55,
+            "line-width": 3,
+          },
+        });
 
-      const onPointClick = (e) => {
-        const f = e.features?.[0];
-        const id = String(f?.properties?.id || "").trim();
-        if (!id) return;
-        onSelectRef.current?.(id);
-        setSheetActivity(activityByIdRef.current.get(id) || null);
-      };
+        map.addLayer({
+          id: CLUSTER_LAYER,
+          type: "circle",
+          source: SOURCE_ID,
+          filter: ["has", "point_count"],
+          paint: {
+            "circle-color": BRAND_BLUE,
+            "circle-opacity": 0.82,
+            "circle-radius": ["step", ["get", "point_count"], 18, 5, 22, 10, 28],
+          },
+        });
 
-      map.on("click", POINT_LAYER, onPointClick);
-      map.on("click", POINT_LABEL_LAYER, onPointClick);
+        map.addLayer({
+          id: CLUSTER_COUNT_LAYER,
+          type: "symbol",
+          source: SOURCE_ID,
+          filter: ["has", "point_count"],
+          layout: {
+            "text-field": ["get", "point_count_abbreviated"],
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+            "text-size": 12,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
 
-      const onDayClick = (e) => {
-        const f = e.features?.[0];
-        const dayIdx = Number(f?.properties?.dayIndex);
-        if (!Number.isFinite(dayIdx)) return;
-        onSelectDayRef.current?.(dayIdx);
-      };
+        map.addLayer({
+          id: POINT_LAYER,
+          type: "circle",
+          source: SOURCE_ID,
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-color": ["get", "color"],
+            "circle-radius": [
+              "case",
+              ["==", ["get", "id"], String(selectedActivityId || "")],
+              16,
+              13,
+            ],
+            "circle-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-opacity": ["case", ["==", ["get", "estimated"], true], 0.5, 1],
+          },
+        });
 
-      map.on("click", DAY_LAYER, onDayClick);
-      map.on("click", DAY_LABEL_LAYER, onDayClick);
+        map.addLayer({
+          id: POINT_LABEL_LAYER,
+          type: "symbol",
+          source: SOURCE_ID,
+          filter: ["!", ["has", "point_count"]],
+          layout: {
+            "text-field": ["get", "label"],
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+            "text-size": 11,
+            "text-allow-overlap": true,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
 
-      const setPointer = () => {
-        map.getCanvas().style.cursor = "pointer";
-      };
-      const clearPointer = () => {
-        map.getCanvas().style.cursor = "";
-      };
-      for (const layer of [CLUSTER_LAYER, POINT_LAYER, DAY_LAYER]) {
-        map.on("mouseenter", layer, setPointer);
-        map.on("mouseleave", layer, clearPointer);
+        map.addLayer({
+          id: SELECTED_LAYER,
+          type: "circle",
+          source: SOURCE_ID,
+          filter: [
+            "all",
+            ["!", ["has", "point_count"]],
+            ["==", ["get", "id"], String(selectedActivityId || "__none__")],
+          ],
+          paint: {
+            "circle-color": "transparent",
+            "circle-radius": 20,
+            "circle-stroke-width": 3,
+            "circle-stroke-color": BRAND_BLUE,
+          },
+        });
+
+        map.addLayer({
+          id: DAY_LAYER,
+          type: "circle",
+          source: DAY_SOURCE_ID,
+          paint: {
+            "circle-color": ["get", "color"],
+            "circle-radius": 16,
+            "circle-stroke-width": 2.5,
+            "circle-stroke-color": "#ffffff",
+          },
+        });
+
+        map.addLayer({
+          id: DAY_LABEL_LAYER,
+          type: "symbol",
+          source: DAY_SOURCE_ID,
+          layout: {
+            "text-field": ["get", "label"],
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+            "text-size": 13,
+            "text-allow-overlap": true,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
+
+        map.on("click", CLUSTER_LAYER, (e) => {
+          const features = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_LAYER] });
+          const clusterId = features[0]?.properties?.cluster_id;
+          const src = map.getSource(SOURCE_ID);
+          if (clusterId == null || !src?.getClusterExpansionZoom) return;
+          src.getClusterExpansionZoom(clusterId, (err, zoom) => {
+            if (err) return;
+            map.easeTo({ center: features[0].geometry.coordinates, zoom });
+          });
+        });
+
+        const onPointClick = (e) => {
+          const f = e.features?.[0];
+          const id = String(f?.properties?.id || "").trim();
+          if (!id) return;
+          onSelectRef.current?.(id);
+          setSheetActivity(activityByIdRef.current.get(id) || null);
+        };
+
+        map.on("click", POINT_LAYER, onPointClick);
+        map.on("click", POINT_LABEL_LAYER, onPointClick);
+
+        const onDayClick = (e) => {
+          const f = e.features?.[0];
+          const dayIdx = Number(f?.properties?.dayIndex);
+          if (!Number.isFinite(dayIdx)) return;
+          onSelectDayRef.current?.(dayIdx);
+        };
+
+        map.on("click", DAY_LAYER, onDayClick);
+        map.on("click", DAY_LABEL_LAYER, onDayClick);
+
+        const setPointer = () => {
+          map.getCanvas().style.cursor = "pointer";
+        };
+        const clearPointer = () => {
+          map.getCanvas().style.cursor = "";
+        };
+        for (const layer of [CLUSTER_LAYER, POINT_LAYER, DAY_LAYER]) {
+          map.on("mouseenter", layer, setPointer);
+          map.on("mouseleave", layer, clearPointer);
+        }
+
+        map.on("click", (e) => {
+          const hits = map.queryRenderedFeatures(e.point, {
+            layers: [POINT_LAYER, POINT_LABEL_LAYER, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
+          });
+          if (!hits.length) {
+            onSelectRef.current?.(null);
+            setSheetActivity(null);
+          }
+        });
       }
 
-      map.on("click", (e) => {
-        const hits = map.queryRenderedFeatures(e.point, {
-          layers: [POINT_LAYER, POINT_LABEL_LAYER, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
-        });
-        if (!hits.length) {
-          onSelectRef.current?.(null);
-          setSheetActivity(null);
-        }
-      });
-
       setMapReady(true);
-      fitMapToActivities(map, fitTargets, {
-        padding: mode === "modal" ? 88 : 64,
-        animate: false,
-      });
+      fitMapToActivities(map, fitTargets, { ...fitOpts, animate: false });
     });
 
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => map.resize()) : null;
@@ -462,7 +493,9 @@ export default function TripMap({
 
   return (
     <div
-      className={`relative min-h-[min(55vh,28rem)] w-full overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200/80 ${className}`.trim()}
+      className={`relative w-full overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200/80 ${
+        isSituationView ? "" : "min-h-[min(55vh,28rem)]"
+      } ${className}`.trim()}
     >
       {loadError ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-50/95 px-4 text-center text-sm text-slate-600">
@@ -475,6 +508,7 @@ export default function TripMap({
         </div>
       ) : null}
       <div ref={containerRef} className="h-full min-h-[inherit] w-full" aria-hidden={loadError} />
+      {!isSituationView ? (
       <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[min(100%-1rem,18rem)] flex-col items-start gap-1.5">
         {onViewTrip && requestedDayView ? (
           <button
@@ -491,7 +525,8 @@ export default function TripMap({
           </p>
         ) : null}
       </div>
-      {showUserLocation ? (
+      ) : null}
+      {showUserLocation && !isSituationView ? (
         <button
           type="button"
           onClick={handleLocate}
@@ -501,6 +536,7 @@ export default function TripMap({
           {t("map.myLocation")}
         </button>
       ) : null}
+      {!isSituationView ? (
       <TripMapActivitySheet
         activity={sheetActivity}
         cityLabel={cityLabel}
@@ -509,6 +545,7 @@ export default function TripMap({
           onSelectRef.current?.(null);
         }}
       />
+      ) : null}
     </div>
   );
 }

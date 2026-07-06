@@ -670,7 +670,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       return;
     }
 
-    // ── Route Foursquare ──────────────────────────────────────────────────────
+    // ── Route Foursquare (Places API 2025 — même handler que prod) ───────────
     if (isFoursquare) {
       const fsqKey = readFoursquareKey(envDir);
       if (!fsqKey) {
@@ -681,48 +681,16 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         });
         return;
       }
+      process.env.FOURSQUARE_API_KEY = fsqKey;
       let body;
       try {
         body = JSON.parse(await readBody(req));
       } catch {
         body = {};
       }
-      const lat = Number(body.lat);
-      const lon = Number(body.lon);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
-        return;
-      }
-      const limit = Math.min(Number(body.limit) || 20, 50);
-      const preset = String(body.preset || "poi").toLowerCase();
-      const categoriesRaw = String(body.categories || "").trim();
-      const categories =
-        categoriesRaw ||
-        (preset === "restaurants" || preset === "dining" || preset === "food"
-          ? FSQ_PRESET_RESTAURANTS
-          : FSQ_PRESET_POI);
-      const fields = "name,location,categories,price";
       try {
-        const fsqUrl =
-          `https://api.foursquare.com/v3/places/search` +
-          `?ll=${lat},${lon}` +
-          `&categories=${categories}` +
-          `&fields=${encodeURIComponent(fields)}` +
-          `&sort=POPULARITY` +
-          `&limit=${limit}` +
-          `&radius=10000`;
-        const fsqResp = await fetch(fsqUrl, {
-          headers: { Authorization: fsqKey, Accept: "application/json" },
-        });
-        if (!fsqResp.ok) {
-          const errText = await fsqResp.text();
-          sendJson(res, fsqResp.status, {
-            error: `Foursquare ${fsqResp.status}: ${errText.slice(0, 300)}`,
-          });
-          return;
-        }
-        const fsqJson = await fsqResp.json();
-        sendJson(res, 200, { ok: true, results: fsqJson.results || [] });
+        const mod = await import("./api/foursquare/places.js");
+        await routeVercelApiHandler(req, res, mod.default, body);
       } catch (e) {
         sendJson(res, 502, { error: String(e?.message || e) });
       }

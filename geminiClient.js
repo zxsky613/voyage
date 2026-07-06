@@ -6,6 +6,8 @@
 const ITIN_FETCH_TIMEOUT_MS = 120000;
 const VERIFIED_ITIN_FETCH_TIMEOUT_MS = 180000;
 const SUGGEST_HIGHLIGHTS_TIMEOUT_MS = 90000;
+/** UI guide — jamais de skeleton infini (> 8 s → masquer la section). */
+export const GUIDE_SECTION_UI_TIMEOUT_MS = 8000;
 
 async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -176,6 +178,26 @@ export async function fetchSuggestHighlights({
     });
   }
   return j;
+}
+
+/** Géocode destination (cache place_enrichment_cache côté serveur). */
+export async function fetchDestinationGeocode({ destination, country = "" }) {
+  const r = await fetchPostJsonWithTimeout(
+    "/api/planner/geocode-destination",
+    {
+      destination: String(destination || "").trim(),
+      country: String(country || "").trim(),
+    },
+    GUIDE_SECTION_UI_TIMEOUT_MS
+  );
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.ok) {
+    if (import.meta.env.DEV) {
+      console.warn("[geocode-destination]", r.status, j?.error || "");
+    }
+    return null;
+  }
+  return j.data || null;
 }
 
 function countInclusiveTripDaysClient(startYmd, endYmd) {

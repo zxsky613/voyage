@@ -54,6 +54,8 @@ import {
   fetchItineraryGroqFirst,
   fetchVerifiedItinerary,
   fetchSuggestHighlights,
+  fetchDestinationGeocode,
+  GUIDE_SECTION_UI_TIMEOUT_MS,
   fetchGroqTips,
   fetchGroqTripSuggestions,
   fetchGroqSuggestedActivities,
@@ -146,6 +148,7 @@ import {
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
 import LazyTripMap from "./lib/map/LazyTripMap.jsx";
+import DestinationSituationMap from "./lib/map/DestinationSituationMap.jsx";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
 import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
 import { formatNoticeForEndUser } from "./devUiNotices.js";
@@ -4846,9 +4849,19 @@ async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lat, lon, limit: 20, locale }),
     });
-    if (!resp.ok) return { places: [], activities: [] };
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.warn(
+        `[guide/fsq-places] HTTP ${resp.status} lat=${lat} lon=${lon}`,
+        String(errText).slice(0, 240)
+      );
+      return { places: [], activities: [] };
+    }
     const json = await resp.json();
-    if (!json.ok || !Array.isArray(json.results)) return { places: [], activities: [] };
+    if (!json.ok || !Array.isArray(json.results)) {
+      console.warn("[guide/fsq-places] empty or invalid payload", { lat, lon, ok: json?.ok });
+      return { places: [], activities: [] };
+    }
 
     // Dédupe par nom
     const seen = new Set();
@@ -4887,7 +4900,47 @@ async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
     });
 
     return { places, activities };
-  } catch (_e) {
+  } catch (e) {
+    console.warn("[guide/fsq-places] network error", String(e?.message || e));
+    return { places: [], activities: [] };
+  }
+}
+
+/** Repli FSQ : recherche texte near ville quand ll/radius ne renvoie rien. */
+async function fetchFoursquarePlacesNearCity(cityLabel, geoHint = {}, uiLang = "fr") {
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const near = [cityLabel, geoHint.region, geoHint.country].filter(Boolean).join(", ");
+  if (near.length < 3) return { places: [], activities: [] };
+  try {
+    const resp = await fetch("/api/foursquare/places", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ near, limit: 20, locale }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.warn(`[guide/fsq-near] HTTP ${resp.status} near=${near}`, String(errText).slice(0, 240));
+      return { places: [], activities: [] };
+    }
+    const json = await resp.json();
+    if (!json.ok || !Array.isArray(json.results) || json.results.length === 0) {
+      return { places: [], activities: [] };
+    }
+    const seen = new Set();
+    const valid = json.results.filter((r) => {
+      const name = String(r?.name || "").trim();
+      if (name.length < 3) return false;
+      const k = name.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return {
+      places: valid.slice(0, 7).map((r) => String(r.name)),
+      activities: [],
+    };
+  } catch (e) {
+    console.warn("[guide/fsq-near] network error", String(e?.message || e));
     return { places: [], activities: [] };
   }
 }
@@ -5001,7 +5054,10 @@ async function fetchNominatimCityGeo(safeCity, acceptLanguage = "fr", rawQuery =
           lang
         )}&q=${encodeURIComponent(q)}`
       );
-      if (!geoResp.ok) return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
+      if (!geoResp.ok) {
+        console.warn(`[guide/nominatim] HTTP ${geoResp.status} q=${JSON.stringify(q.slice(0, 80))}`);
+        return { lat: NaN, lon: NaN, country: "", countryCode: "", region: "" };
+      }
       const geoJsonRaw = await geoResp.json();
       const first = Array.isArray(geoJsonRaw) && geoJsonRaw.length > 0 ? geoJsonRaw[0] : null;
       const addr = first?.address && typeof first.address === "object" ? first.address : {};
@@ -5101,6 +5157,15 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
     wikiGeoP,
   ]);
 
+  let fsqData = otmData;
+  if ((!fsqData.places || fsqData.places.length === 0) && safeCity) {
+    fsqData = await fetchFoursquarePlacesNearCity(
+      safeCity,
+      { region: geoPack.region, country: geoPack.country },
+      uiLanguage
+    );
+  }
+
   const commonsCandidates = getCityHeroImageCandidates(imageCtx);
   const wikiThumbRaw = String(summaryPack.thumb || "").trim();
 
@@ -5139,7 +5204,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
         .filter((u) => !isBlockedHeroImageUrl(u))
         .map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
-  let mergedFromApis = mergePlaceCandidates(osmLandmarkNames, wikiGeoTitles, otmData.places, 22);
+  let mergedFromApis = mergePlaceCandidates(osmLandmarkNames, wikiGeoTitles, fsqData.places, 22);
   if (
     mergedFromApis.length === 0 &&
     Number.isFinite(latitude) &&
@@ -5158,9 +5223,11 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
 
   /** Pas de liste dédiée « restaurants » — POI / OTM / repli catalogue. */
   const suggestedActivitySourceRaw =
-    otmData.activities.length > 0
-      ? otmData.activities
-      : osmLandmarkNames.length >= 4
+    fsqData.activities.length > 0
+      ? fsqData.activities
+      : otmData.activities.length > 0
+        ? otmData.activities
+        : osmLandmarkNames.length >= 4
         ? osmLandmarkNames.slice(0, 8).map((title) => ({
             title,
             estimatedCostEur: 0,
@@ -11760,6 +11827,11 @@ function DestinationGuideView({
   const [destinationHighlights, setDestinationHighlights] = useState([]);
   const [destinationHighlightsLoading, setDestinationHighlightsLoading] = useState(false);
   const destinationHighlightsKeyRef = useRef("");
+  /** Lieux incontournables — false tant que fetchDestinationGuide n'a pas fini (max 8 s). */
+  const [guidePlacesSettled, setGuidePlacesSettled] = useState(false);
+  /** Coords carte situation (guide.coordinates ou geocode-destination cache). */
+  const [situationCoords, setSituationCoords] = useState(null);
+  const [situationCoordsSettled, setSituationCoordsSettled] = useState(false);
   const pendingItineraryPopupRef = useRef(false);
   const [itineraryModalOpen, setItineraryModalOpen] = useState(false);
   const [itineraryPremiumGateOpen, setItineraryPremiumGateOpen] = useState(false);
@@ -11924,6 +11996,14 @@ function DestinationGuideView({
     }
     let cancelled = false;
     setDestinationHighlightsLoading(true);
+    const uiTimeout = setTimeout(() => {
+      if (!cancelled) {
+        destinationHighlightsKeyRef.current = fetchKey;
+        setDestinationHighlights([]);
+        setDestinationHighlightsLoading(false);
+      }
+    }, GUIDE_SECTION_UI_TIMEOUT_MS);
+
     fetchSuggestHighlights({
       destination: destLabel,
       country: String(guide?.country || "").trim(),
@@ -11932,23 +12012,83 @@ function DestinationGuideView({
     })
       .then((res) => {
         if (cancelled) return;
+        clearTimeout(uiTimeout);
         const list = Array.isArray(res?.data?.highlights) ? res.data.highlights : [];
         destinationHighlightsKeyRef.current = fetchKey;
         setDestinationHighlights(list);
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancelled) {
+          clearTimeout(uiTimeout);
+          if (import.meta.env.DEV) {
+            console.warn("[guide/suggest-highlights]", String(err?.message || err));
+          }
           destinationHighlightsKeyRef.current = fetchKey;
           setDestinationHighlights([]);
         }
       })
       .finally(() => {
-        if (!cancelled) setDestinationHighlightsLoading(false);
+        if (!cancelled) {
+          clearTimeout(uiTimeout);
+          setDestinationHighlightsLoading(false);
+        }
       });
     return () => {
       cancelled = true;
+      clearTimeout(uiTimeout);
     };
   }, [confirmedDestination, guide?.city, guide?.country, guide?.countryCode, guide?.adminRegion, language]);
+
+  useEffect(() => {
+    const city = String(displayGuide?.city || "").trim();
+    if (!city || !confirmedDestination) {
+      setSituationCoords(null);
+      setSituationCoordsSettled(true);
+      return undefined;
+    }
+    const lat0 = Number(displayGuide?.coordinates?.lat);
+    const lon0 = Number(displayGuide?.coordinates?.lon);
+    if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
+      setSituationCoords({ lat: lat0, lon: lon0 });
+      setSituationCoordsSettled(true);
+      return undefined;
+    }
+    let cancelled = false;
+    setSituationCoords(null);
+    setSituationCoordsSettled(false);
+    const timer = setTimeout(() => {
+      if (!cancelled) setSituationCoordsSettled(true);
+    }, GUIDE_SECTION_UI_TIMEOUT_MS);
+    const destLabel = buildHeroResolveLabel(confirmedDestination, displayGuide) || city;
+    fetchDestinationGeocode({
+      destination: destLabel,
+      country: String(displayGuide?.country || "").trim(),
+    })
+      .then((data) => {
+        if (cancelled || !data) return;
+        const lat = Number(data.lat);
+        const lon = Number(data.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          setSituationCoords({ lat, lon });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          clearTimeout(timer);
+          setSituationCoordsSettled(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    confirmedDestination,
+    displayGuide?.city,
+    displayGuide?.coordinates?.lat,
+    displayGuide?.coordinates?.lon,
+    displayGuide?.country,
+  ]);
 
   // Sauvegarder le guide en localStorage dès que les données sont disponibles
   // → permet de restaurer instantanément après veille téléphone / changement d'app
@@ -11987,6 +12127,9 @@ function DestinationGuideView({
     setDestinationHighlights([]);
     setDestinationHighlightsLoading(false);
     destinationHighlightsKeyRef.current = "";
+    setGuidePlacesSettled(false);
+    setSituationCoords(null);
+    setSituationCoordsSettled(false);
     const y = new Date().toISOString().slice(0, 10);
     setProgramStartDate(y);
     setProgramEndDate(y);
@@ -12067,6 +12210,7 @@ function DestinationGuideView({
     }
 
     setHeroFetchSettled(false);
+    setGuidePlacesSettled(false);
 
     const instant = buildInstantDestinationGuide(confirmedDestination, language);
     if (!instant) {
@@ -12148,6 +12292,9 @@ function DestinationGuideView({
     setGuideError("");
 
     let cancelled = false;
+    const placesSettleTimer = setTimeout(() => {
+      if (!cancelled) setGuidePlacesSettled(true);
+    }, GUIDE_SECTION_UI_TIMEOUT_MS);
 
     /** Groq + Wikivoyage + Wikipédia en parallèle (sans Foursquare / carte) → description utile tout de suite. */
     (async () => {
@@ -12272,12 +12419,17 @@ function DestinationGuideView({
           setGuideError(t("destination.guideLoadError"));
         }
       } finally {
-        if (!cancelled && !isResolveHeroEnabled()) setHeroFetchSettled(true);
+        if (!cancelled) {
+          clearTimeout(placesSettleTimer);
+          setGuidePlacesSettled(true);
+          if (!isResolveHeroEnabled()) setHeroFetchSettled(true);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
+      clearTimeout(placesSettleTimer);
     };
   }, [confirmedDestination, language, t]);
 
@@ -13064,6 +13216,22 @@ function DestinationGuideView({
                 geocodeQuery={String(confirmedDestination || displayGuide.city || "").trim()}
               />
 
+              {situationCoordsSettled && situationCoords ? (
+                <DestinationSituationMap
+                  latitude={situationCoords.lat}
+                  longitude={situationCoords.lon}
+                  cityLabel={displayCityForLocale(String(displayGuide.city || ""), language)}
+                />
+              ) : null}
+
+              {(() => {
+                const rawList = (displayGuide.places || []).map(String).filter(Boolean);
+                const visible = rawList.filter(
+                  (p) => !isGenericExplorationPlaceName(p) && !isUninformativeMustSeePlaceLabel(p)
+                );
+                if (guidePlacesSettled && visible.length === 0) return null;
+                const showSkel = !guidePlacesSettled && visible.length === 0;
+                return (
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white/95 p-5 shadow-[0_8px_32px_rgba(30,58,95,0.05)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
                   <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-blue-tint text-brand-blue-deep ring-1 ring-brand-blue/20">
@@ -13077,14 +13245,6 @@ function DestinationGuideView({
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  {(() => {
-                    const rawList = (displayGuide.places || []).map(String).filter(Boolean);
-                    const visible = rawList.filter(
-                      (p) => !isGenericExplorationPlaceName(p) && !isUninformativeMustSeePlaceLabel(p)
-                    );
-                    const showSkel = visible.length === 0;
-                    return (
-                      <>
                         {showSkel ? (
                           <>
                             <span className="inline-block h-8 w-[11.5rem] animate-pulse rounded-full bg-slate-200/90" />
@@ -13106,11 +13266,10 @@ function DestinationGuideView({
                             </button>
                           );
                         })}
-                      </>
-                    );
-                  })()}
                 </div>
               </section>
+                );
+              })()}
 
               {(() => {
                 /** Conseils du guide déjà générés dans la langue UI (`buildTravelTips` + `resolveTravelTips`). */
@@ -13158,7 +13317,7 @@ function DestinationGuideView({
                       <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" strokeWidth={2} aria-hidden />
                       <span className="sr-only">{t("destination.tipsSr")}</span>
                     </div>
-                    {threeTips.length === 0 ? (
+                    {threeTips.length === 0 && !guidePlacesSettled ? (
                       <div className="mt-6 space-y-5" aria-busy="true">
                         <div className="flex gap-4">
                           <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-slate-600" aria-hidden />
@@ -13173,7 +13332,7 @@ function DestinationGuideView({
                           <div className="h-3.5 flex-1 max-w-md animate-pulse rounded-full bg-slate-700/45" />
                         </div>
                       </div>
-                    ) : (
+                    ) : threeTips.length === 0 ? null : (
                       <ul className="mt-6 space-y-6 text-sm leading-relaxed text-slate-100">
                         {threeTips.map((tip, i) => (
                           <li key={`expert-${i}-${String(tip).slice(0, 24)}`} className="flex gap-4">
