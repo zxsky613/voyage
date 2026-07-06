@@ -172,3 +172,57 @@ html.modal-open .app-top-nav {
 .itinerary-day-rail::-webkit-scrollbar-thumb:hover {
   background: rgb(148 163 184);
 }
+
+/* Toasts éphémères — fondu / glissement (respect prefers-reduced-motion). */
+@keyframes tp-toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes tp-toast-slide-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+@keyframes tp-toast-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes tp-toast-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tp-toast-slide-in {
+    animation: tp-toast-slide-in 0.28s ease-out both;
+  }
+  .tp-toast-slide-out {
+    animation: tp-toast-slide-out 0.22s ease-in forwards;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-toast-fade-in {
+    animation: tp-toast-fade-in 0.15s ease-out both;
+  }
+  .tp-toast-fade-out {
+    animation: tp-toast-fade-out 0.12s ease-in forwards;
+  }
+}

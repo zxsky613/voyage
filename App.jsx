@@ -113,6 +113,7 @@ import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js"
 import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
 import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
+import { useToast } from "./lib/ui/toast/ToastContext.jsx";
 import { useAppHeaderHeight } from "./lib/ui/useAppHeaderHeight.js";
 import {
   scheduleActivityReminders,
@@ -15848,7 +15849,8 @@ function monthCursorFromPlannerDate(ymd) {
 
 // Main App
 export default function App() {
-  const { t, language } = useI18n();
+  const { t, tCount, language } = useI18n();
+  const { toastSuccess } = useToast();
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() => readStoredActiveTab());
@@ -15880,25 +15882,12 @@ export default function App() {
     },
     [session, t]
   );
-  const inviteSentToastTimerRef = useRef(0);
-  const [inviteSentToast, setInviteSentToast] = useState(null);
   const showInviteSentToast = useCallback(
     (count) => {
       const n = Math.max(1, Math.floor(Number(count) || 1));
-      const message = n <= 1 ? t("toasts.inviteSent") : t("toasts.inviteSentMany");
-      window.clearTimeout(inviteSentToastTimerRef.current);
-      setInviteSentToast({ id: Date.now(), message });
-      inviteSentToastTimerRef.current = window.setTimeout(() => {
-        setInviteSentToast(null);
-      }, 4000);
+      toastSuccess(n <= 1 ? t("toasts.inviteSent") : t("toasts.inviteSentMany"));
     },
-    [t]
-  );
-  useEffect(
-    () => () => {
-      window.clearTimeout(inviteSentToastTimerRef.current);
-    },
-    []
+    [t, toastSuccess]
   );
   const [destinationConfirmed, setDestinationConfirmed] = useState(() => readStoredDestinationQuery());
   const [destinationInput, setDestinationInput] = useState(() => readStoredDestinationQuery());
@@ -17470,7 +17459,7 @@ export default function App() {
     for (const a of list) {
       await syncActivityBudgetExpense(a);
     }
-    setNotice(t("budget.syncPlannerDone", { count: list.length }));
+    toastSuccess(tCount("toasts.syncPlannerDone", list.length));
   };
 
   const addLodgingExpense = async ({ tripId, title, amount, checkIn, paidBy }) => {
@@ -17483,7 +17472,7 @@ export default function App() {
     });
     if (!payload) return false;
     const ok = await addGroupExpense(payload);
-    if (ok) setNotice(t("stays.addToBudgetDone"));
+    if (ok) toastSuccess(t("toasts.addToBudgetDone"));
     return ok;
   };
 
@@ -17855,23 +17844,6 @@ export default function App() {
           "radial-gradient(circle at 18% -8%, #f4f8fc 0%, #eef4fa 40%, #e3edf6 100%)",
       }}
     >
-      {typeof document !== "undefined" && inviteSentToast
-        ? createPortal(
-            <div
-              className="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom,0px)+0.5rem)] left-1/2 z-[200] w-[min(100%-1.5rem,22rem)] -translate-x-1/2 px-2"
-              role="status"
-              aria-live="polite"
-            >
-              <div
-                className="pointer-events-auto rounded-2xl border border-slate-200/90 bg-white/95 px-4 py-3 text-center text-sm font-semibold text-slate-900 shadow-[0_18px_48px_rgba(2,6,23,0.2)] ring-1 ring-slate-200/60 backdrop-blur-sm"
-                key={inviteSentToast.id}
-              >
-                {inviteSentToast.message}
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
       <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
 
       <main className="app-main mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 sm:px-5">

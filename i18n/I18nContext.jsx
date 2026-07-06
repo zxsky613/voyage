@@ -11,6 +11,7 @@ import React, {
 import { createPortal } from "react-dom";
 import { translations, DEFAULT_LOCALE } from "./translations.js";
 import { setAppDateLocale } from "./dateLocale.js";
+import { pluralKey } from "./pluralKey.js";
 
 const STORAGE_KEY = "tp_locale_v1";
 
@@ -118,14 +119,24 @@ export function I18nProvider({ children }) {
     [language]
   );
 
+  /** Clé i18n avec suffixe _one / _other selon count (pluralisation sans « (s) »). */
+  const tCount = useCallback(
+    (baseKey, count, vars) => {
+      const n = Math.floor(Number(count) || 0);
+      return t(pluralKey(baseKey, n), { count: n, ...(vars || {}) });
+    },
+    [t]
+  );
+
   const value = useMemo(
     () => ({
       language,
       setLanguage,
       t,
+      tCount,
       locales: LOCALE_OPTIONS,
     }),
-    [language, setLanguage, t]
+    [language, setLanguage, t, tCount]
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

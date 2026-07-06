@@ -22,6 +22,9 @@ export const translations = {
     toasts: {
       inviteSent: "Invitation envoyée.",
       inviteSentMany: "Invitations envoyées.",
+      syncPlannerDone_one: "1 activité reliée au budget.",
+      syncPlannerDone_other: "{{count}} activités reliées au budget.",
+      addToBudgetDone: "Logement ajouté au budget du voyage.",
     },
     menu: {
       title: "Menu",
@@ -567,7 +570,6 @@ export const translations = {
       categoryManual: "Autres",
       syncPlanner: "Synchroniser le planning ({{count}})",
       syncingPlanner: "Synchronisation…",
-      syncPlannerDone: "{{count}} activité(s) reliée(s) au budget.",
       unsyncedPlannerHint:
         "{{amount}} du planning ne sont pas encore dans le budget — utilise « Synchroniser le planning ».",
     },
@@ -658,6 +660,9 @@ export const translations = {
     toasts: {
       inviteSent: "Invitation sent.",
       inviteSentMany: "Invitations sent.",
+      syncPlannerDone_one: "1 activity linked to the budget.",
+      syncPlannerDone_other: "{{count}} activities linked to the budget.",
+      addToBudgetDone: "Stay added to the trip budget.",
     },
     menu: {
       title: "Menu",
@@ -1191,7 +1196,6 @@ export const translations = {
       categoryManual: "Other",
       syncPlanner: "Sync planner ({{count}})",
       syncingPlanner: "Syncing…",
-      syncPlannerDone: "{{count}} activity/activities linked to the budget.",
       unsyncedPlannerHint:
         "{{amount}} from the planner are not in the budget yet — use “Sync planner”.",
     },
@@ -1282,6 +1286,9 @@ export const translations = {
     toasts: {
       inviteSent: "Einladung gesendet.",
       inviteSentMany: "Einladungen gesendet.",
+      syncPlannerDone_one: "1 Aktivität mit dem Budget verknüpft.",
+      syncPlannerDone_other: "{{count}} Aktivitäten mit dem Budget verknüpft.",
+      addToBudgetDone: "Unterkunft zum Reisebudget hinzugefügt.",
     },
     menu: {
       title: "Menü",
@@ -1903,6 +1910,9 @@ export const translations = {
     toasts: {
       inviteSent: "Invitación enviada.",
       inviteSentMany: "Invitaciones enviadas.",
+      syncPlannerDone_one: "1 actividad vinculada al presupuesto.",
+      syncPlannerDone_other: "{{count}} actividades vinculadas al presupuesto.",
+      addToBudgetDone: "Alojamiento añadido al presupuesto del viaje.",
     },
     menu: {
       title: "Menú",
@@ -2523,6 +2533,9 @@ export const translations = {
     toasts: {
       inviteSent: "Invito inviato.",
       inviteSentMany: "Inviti inviati.",
+      syncPlannerDone_one: "1 attività collegata al budget.",
+      syncPlannerDone_other: "{{count}} attività collegate al budget.",
+      addToBudgetDone: "Alloggio aggiunto al budget del viaggio.",
     },
     menu: {
       title: "Menu",
@@ -3143,6 +3156,9 @@ export const translations = {
     toasts: {
       inviteSent: "邀请已发送。",
       inviteSentMany: "邀请已发送。",
+      syncPlannerDone_one: "1 项活动已关联到预算。",
+      syncPlannerDone_other: "{{count}} 项活动已关联到预算。",
+      addToBudgetDone: "住宿已加入行程预算。",
     },
     menu: {
       title: "菜单",
