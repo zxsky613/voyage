@@ -110,7 +110,11 @@ import {
   shouldShowTripAdvisorAttribution,
 } from "./lib/planner/activityImageSource.js";
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
-import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
+import {
+  highlightToActivityChip,
+  highlightShowsRatingBadge,
+  highlightShowsVerifiedBadge,
+} from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
 import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
 import { useAppHeaderHeight } from "./lib/ui/useAppHeaderHeight.js";
@@ -6346,17 +6350,20 @@ function ItineraryBulletRow({
   const rating = Number(activityMeta?.rating);
   const numReviews = Number(activityMeta?.numReviews);
   const taUrl = String(activityMeta?.tripadvisorUrl || "").trim();
-  const usingTaPhoto = shouldShowTripAdvisorAttribution(activityMeta, src);
-  const showRatingLine =
-    (Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0) ||
-    (usingTaPhoto && taUrl);
+  const showTaRating = highlightShowsRatingBadge(activityMeta);
+  const showVerified = highlightShowsVerifiedBadge(activityMeta);
   const priceEur = activityMeta ? readActivityEstimatedPriceEur(activityMeta) : null;
 
-  const ratingBadge = showRatingLine || priceEur != null ? (
+  const ratingBadge = showTaRating || showVerified || priceEur != null || taUrl ? (
     <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-      {Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0 ? (
+      {showTaRating ? (
         <span className="rounded-full px-2 py-0.5 ring-1 ring-slate-200">
-          ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })}
+          ★ {rating.toFixed(1)} · {t("destination.itineraryTaReviews", { n: numReviews.toLocaleString() })} ·{" "}
+          {t("destination.itineraryTaAttribution")}
+        </span>
+      ) : showVerified ? (
+        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-800 ring-1 ring-emerald-200">
+          {t("destination.activityVerifiedBadge")}
         </span>
       ) : null}
       {priceEur != null ? (
@@ -13213,7 +13220,8 @@ function DestinationGuideView({
                         ? t("destination.activityPriceEstimate", { n: priceEur })
                         : t("destination.activityPriceFree");
                     const isFreeBadge = priceEur === 0;
-                    const showRating = highlightShowsRatingBadge(highlight);
+                    const showTaRating = highlightShowsRatingBadge(highlight);
+                    const showVerified = highlightShowsVerifiedBadge(highlight);
                     return (
                       <span
                         key={`act-${i}-${cell.title.slice(0, 20)}`}
@@ -13222,9 +13230,17 @@ function DestinationGuideView({
                         <span>
                           <UiTranslatedActivityTitle raw={cell.title} />
                         </span>
-                        {showRating ? (
+                        {showTaRating ? (
                           <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                            ★{Number(highlight.rating).toFixed(1)}
+                            ★ {Number(highlight.rating).toFixed(1)} ·{" "}
+                            {t("destination.itineraryTaReviews", {
+                              n: Number(highlight.numReviews).toLocaleString(),
+                            })}{" "}
+                            · {t("destination.itineraryTaAttribution")}
+                          </span>
+                        ) : showVerified ? (
+                          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                            {t("destination.activityVerifiedBadge")}
                           </span>
                         ) : null}
                         <span
@@ -13775,7 +13791,8 @@ function DestinationGuideView({
                         ? t("destination.activityPriceEstimate", { n: priceEur })
                         : t("destination.activityPriceFree");
                     const isFreeBadge = priceEur === 0;
-                    const showRating = highlightShowsRatingBadge(highlight);
+                    const showTaRating = highlightShowsRatingBadge(highlight);
+                    const showVerified = highlightShowsVerifiedBadge(highlight);
                     return (
                       <label
                         key={`pick-act-${i}-${rawLabel.slice(0, 32)}`}
@@ -13806,9 +13823,17 @@ function DestinationGuideView({
                         <span className="min-w-0 flex-1 text-sm font-normal leading-snug tracking-[0.02em] text-slate-900">
                           <UiTranslatedActivityTitle raw={rawLabel} />
                         </span>
-                        {showRating ? (
+                        {showTaRating ? (
                           <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                            ★{Number(highlight.rating).toFixed(1)}
+                            ★ {Number(highlight.rating).toFixed(1)} ·{" "}
+                            {t("destination.itineraryTaReviews", {
+                              n: Number(highlight.numReviews).toLocaleString(),
+                            })}{" "}
+                            · {t("destination.itineraryTaAttribution")}
+                          </span>
+                        ) : showVerified ? (
+                          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                            {t("destination.activityVerifiedBadge")}
                           </span>
                         ) : null}
                         <span

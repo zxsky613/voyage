@@ -1,4 +1,5 @@
 import { fetchWithRetry } from "../images/_fetchRetry.js";
+import { getTaEnrichmentMode } from "../../lib/planner/taEnrichment.js";
 
 const TERRA_BASE = "https://terra.tripadvisor.com/api";
 
@@ -13,10 +14,9 @@ function getKey() {
   return String(process.env.TRIPADVISOR_API_KEY || "").trim();
 }
 
-/** Mode dégradé / run sans catalogue TA (DISABLE_TRIPADVISOR=1|true|yes). */
+/** TA coupé (TA_ENRICHMENT=off ou legacy DISABLE_TRIPADVISOR). Le verify n'appelle jamais TA. */
 export function isTripAdvisorDisabled() {
-  const v = String(process.env.DISABLE_TRIPADVISOR || "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  return getTaEnrichmentMode() === "off";
 }
 
 /** Terra exige des locales factuelles (fr-FR, en-US…). */

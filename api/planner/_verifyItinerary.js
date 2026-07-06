@@ -1,15 +1,12 @@
 import { parseBody, sendJson, handleCors, resolveUiLanguage } from "../_helpers.js";
 import {
   createTripAdvisorCallCounter,
-  getLocationDetails,
-  getLocationPhotos,
-  isTripAdvisorConfigured,
-  isTripAdvisorDisabled,
-  searchLocationDetailed,
 } from "./_tripadvisorClient.js";
+import { shouldUseEnrichmentCacheInVerify } from "../../lib/planner/taEnrichment.js";
 import { readPlaceEnrichmentCache, writePlaceEnrichmentCache, normalizePlaceCacheKey } from "./_enrichCache.js";
 import { searchFoursquarePlace } from "../foursquare/_textSearch.js";
-import { applyGeoMismatchGuard } from "../../lib/planner/geoGuard.js";
+import { resolveDestinationCenter } from "./_geocode.js";
+import { applyGeoMismatchGuard, stripCoordsIfDestinationOutlier } from "../../lib/planner/geoGuard.js";
 
 // 3000 ms provoquait des « partial/timeout » sans coords en masse au premier passage
 // (le fetch TripAdvisor a lui-même un timeout de 12 s) — cause majeure du déficit de coords.
@@ -61,75 +58,26 @@ async function withLookupTimeout(promise, ms) {
  * @param {string} near
  * @param {string} locale
  * @param {{ inc: () => void, get: () => number }} taCounter
- * @param {{ searchName?: string, category?: string, collectDebug?: boolean, fsqCounter?: { inc: () => void } }} [opts]
+ * @param {{ searchName?: string, category?: string, collectDebug?: boolean, fsqCounter?: { inc: () => void }, destinationCenter?: { latitude: number, longitude: number }|null, geoOutlierRejected?: { inc: () => void } }} [opts]
  */
 async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts = {}) {
   const placeName = String(name || "").trim();
   const cityNorm = String(city || "").trim();
   const searchName = String(opts.searchName || "").trim();
-  const category = String(opts.category || "").trim();
-  let taThrottled = false;
   /** @type {object|null} */
   let debugEntry = opts.collectDebug
     ? { name: placeName, searchName: searchName || placeName, city: cityNorm }
     : null;
 
-  if (isTripAdvisorConfigured()) {
-    const taQuery = searchName || placeName;
-    const searchQ = cityNorm ? `${taQuery}, ${cityNorm}` : taQuery;
-    const { hit, trace } = await searchLocationDetailed(searchQ, {
-      language: locale,
-      category,
-      searchName: taQuery,
-      geoName: cityNorm,
-    });
-    taCounter.add(Array.isArray(trace?.attempts) ? trace.attempts.length : 1);
-
-    if (debugEntry) {
-      debugEntry.taQuery = searchQ;
-      debugEntry.taAttempts = trace?.attempts || [];
-      debugEntry.taReason = trace?.reason || "";
-    }
-
-    if (hit?.locationId) {
-      taCounter.inc();
-      const details = await getLocationDetails(hit.locationId, locale);
-      if (details) {
-        taCounter.inc();
-        const photos = await getLocationPhotos(hit.locationId, locale, 5);
-        const enrichment = {
-          ...details,
-          name: details.name || hit.name || placeName,
-          status: "verified",
-          source: "tripadvisor",
-          photos,
-        };
-        await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-        if (debugEntry) {
-          debugEntry.reason = "verified";
-          debugEntry.locationId = hit.locationId;
-          debugEntry.firstResult = hit.name;
-          debugEntry.results = trace?.attempts?.slice(-1)[0]?.results;
-        }
-        return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
-      }
-      if (debugEntry) debugEntry.reason = "details_failed";
-    } else {
-      taThrottled = trace?.reason === "throttled";
-      if (debugEntry) {
-        debugEntry.reason = trace?.reason || "ta_miss";
-        debugEntry.results = trace?.attempts?.slice(-1)[0]?.results ?? 0;
-        debugEntry.firstResult = trace?.attempts?.slice(-1)[0]?.firstResult || "";
-      }
-    }
-  } else if (debugEntry) {
-    debugEntry.reason = isTripAdvisorDisabled() ? "ta_disabled" : "ta_not_configured";
+  if (debugEntry) {
+    debugEntry.reason = "ta_skipped_verify";
+    debugEntry.taReason = "ta_enrichment_off";
   }
 
   opts.fsqCounter?.inc();
   const fsq = await searchFoursquarePlace(searchName || placeName, near || cityNorm, locale);
   if (fsq && (Number.isFinite(fsq.latitude) || Number.isFinite(fsq.longitude))) {
-    const enrichment = {
+    let enrichment = {
       name: fsq.name || placeName,
       status: "partial",
       source: "foursquare",
@@ -140,17 +88,31 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
       fsqId: fsq.fsqId,
       fsqCategories: fsq.fsqCategories,
     };
-    await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-    if (debugEntry) debugEntry.reason = "partial_foursquare";
-    return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
+    enrichment = stripCoordsIfDestinationOutlier(enrichment, opts.destinationCenter, () =>
+      opts.geoOutlierRejected?.inc?.()
+    );
+    const hasCoords =
+      Number.isFinite(Number(enrichment.latitude)) && Number.isFinite(Number(enrichment.longitude));
+    if (hasCoords) {
+      await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
+      if (debugEntry) debugEntry.reason = "partial_foursquare";
+      return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
+    }
+    if (debugEntry) debugEntry.reason = "geo_outlier_foursquare";
+    const partialNoCoords = {
+      name: fsq.name || placeName,
+      status: "partial",
+      source: "foursquare",
+      priceLevel: fsq.priceLevel,
+      foursquareUrl: fsq.foursquareUrl,
+      fsqId: fsq.fsqId,
+      fsqCategories: fsq.fsqCategories,
+    };
+    return opts.collectDebug ? { ...partialNoCoords, _debug: debugEntry } : partialNoCoords;
   }
 
   const unverified = { name: placeName, status: "unverified", source: "none" };
-  // Ne JAMAIS cacher un échec dû au throttling TA : sinon le lieu reste
-  // « unverified » 24 h en cache et n'est plus jamais re-tenté (cache empoisonné).
-  if (!taThrottled) {
-    await writePlaceEnrichmentCache(placeName, cityNorm, unverified);
-  }
+  await writePlaceEnrichmentCache(placeName, cityNorm, unverified);
   if (debugEntry && !debugEntry.reason) debugEntry.reason = "unverified";
   return opts.collectDebug ? { ...unverified, _debug: debugEntry } : unverified;
 }
@@ -174,17 +136,19 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
   }
 
   const cached = await readPlaceEnrichmentCache(placeName, cityNorm);
-  if (cached) {
-    const src = String(cached.source || "").trim().toLowerCase();
-    if (!(isTripAdvisorDisabled() && src === "tripadvisor")) {
-      const out = { ...cached, name: cached.name || placeName };
-      if (debugEntry) {
-        debugEntry.reason = "cache_hit";
-        debugEntry.status = cached.status;
-        debugEntry.source = cached.source;
-      }
-      return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
+  if (cached && shouldUseEnrichmentCacheInVerify(cached.source)) {
+    const stripped = stripCoordsIfDestinationOutlier(
+      { ...cached, name: cached.name || placeName },
+      opts.destinationCenter,
+      () => opts.geoOutlierRejected?.inc?.()
+    );
+    if (debugEntry) {
+      debugEntry.reason = "cache_hit";
+      debugEntry.status = stripped.status;
+      debugEntry.source = stripped.source;
+      if (stripped.geoOutlierRejectedKm != null) debugEntry.geoOutlierRejectedKm = stripped.geoOutlierRejectedKm;
     }
+    return opts.collectDebug ? { ...stripped, _debug: debugEntry } : stripped;
   }
 
   const raced = await withLookupTimeout(
@@ -234,6 +198,8 @@ export async function verifyCandidatePlaces(candidates, options) {
         category: c.category,
         collectDebug: Boolean(options.debug),
         fsqCounter,
+        destinationCenter: options.destinationCenter,
+        geoOutlierRejected: options.geoOutlierRejected,
       });
       if (options.debug && meta._debug) {
         meta._debug.status = meta.status;
@@ -266,6 +232,7 @@ export async function verifyCandidatePlaces(candidates, options) {
     places: guarded,
     tripAdvisorCalls: taCounter.get(),
     foursquareCalls: fsqCounter.n,
+    geoOutlierRejected: options.geoOutlierRejected?.get?.() ?? 0,
     debug: options.debug ? debugRows : undefined,
   };
 }
@@ -296,13 +263,17 @@ export async function handler(req, res) {
   if (!candidates.length) return sendJson(res, 400, { error: "places[] requis" });
 
   try {
+    const destinationCenter = await resolveDestinationCenter(destination, country);
+    const geoOutlierRejected = { n: 0, inc() { this.n += 1; }, get() { return this.n; } };
     const { places, tripAdvisorCalls, debug } = await verifyCandidatePlaces(candidates, {
       city: destination,
       near,
       locale,
       debug: debugMode,
+      destinationCenter,
+      geoOutlierRejected,
     });
-    const payload = { ok: true, data: { places, tripAdvisorCalls } };
+    const payload = { ok: true, data: { places, tripAdvisorCalls, geoOutlierRejected: geoOutlierRejected.get() } };
     if (debugMode && debug) payload.debug = debug;
     sendJson(res, 200, payload);
   } catch (e) {

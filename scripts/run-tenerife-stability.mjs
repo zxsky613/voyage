@@ -27,7 +27,8 @@ function loadEnvLocal() {
 }
 
 loadEnvLocal();
-process.env.DISABLE_TRIPADVISOR = "1";
+process.env.TA_ENRICHMENT = "off";
+delete process.env.DISABLE_TRIPADVISOR;
 delete process.env.FORCE_LLM_PROVIDER;
 
 const payloadPath = path.join(root, "scripts", "tmp-diag-payload.json");

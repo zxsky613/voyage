@@ -31,7 +31,8 @@ function loadEnvLocal() {
 }
 
 loadEnvLocal();
-process.env.DISABLE_TRIPADVISOR = "1";
+process.env.TA_ENRICHMENT = "off";
+delete process.env.DISABLE_TRIPADVISOR;
 
 const args = process.argv.slice(2);
 let provider = "default";
@@ -67,7 +68,7 @@ const req = {
   query: { debug: "1" },
 };
 
-console.log(`Run Ténérife 8j×4 DISABLE_TRIPADVISOR=1 provider=${provider} …`);
+console.log(`Run Ténérife 8j×4 TA_ENRICHMENT=off provider=${provider} …`);
 const t0 = Date.now();
 
 const { handler } = await import("../api/planner/_generateItinerary.js");

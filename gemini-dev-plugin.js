@@ -490,6 +490,10 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       if (deepseekModel) process.env.DEEPSEEK_MODEL = deepseekModel;
       const forceLlm = readServerKey(envDir, "FORCE_LLM_PROVIDER");
       if (forceLlm) process.env.FORCE_LLM_PROVIDER = forceLlm;
+      const taEnrichment = readServerKey(envDir, "TA_ENRICHMENT");
+      if (taEnrichment) process.env.TA_ENRICHMENT = taEnrichment;
+      const taMonthlyCap = readServerKey(envDir, "TA_MONTHLY_CAP");
+      if (taMonthlyCap) process.env.TA_MONTHLY_CAP = taMonthlyCap;
       const disableTa = readServerKey(envDir, "DISABLE_TRIPADVISOR");
       if (disableTa) process.env.DISABLE_TRIPADVISOR = disableTa;
       const geminiKey = readGeminiKeyFromEnvFiles(envDir);

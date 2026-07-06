@@ -49,7 +49,7 @@ if (!groqPath || !deepPath) {
 const groq = metrics(load(groqPath), "Groq ref");
 const deep = metrics(load(deepPath), "DeepSeek");
 
-console.log("\n=== Comparaison Ténérife 8j×4 (DISABLE_TRIPADVISOR=1) ===\n");
+console.log("\n=== Comparaison Ténérife 8j×4 (TA_ENRICHMENT=off) ===\n");
 console.log("| Métrique | Groq ref | DeepSeek |");
 console.log("|----------|----------|----------|");
 console.log(`| llmProviders | ${groq.llmProviders.join("+") || "?"} | ${deep.llmProviders.join("+") || "?"} |`);

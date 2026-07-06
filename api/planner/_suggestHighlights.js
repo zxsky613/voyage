@@ -9,6 +9,7 @@ import {
 } from "../_helpers.js";
 import { runPlannerLlmJson } from "./_llm.js";
 import { verifyCandidatePlaces } from "./_verifyItinerary.js";
+import { resolveDestinationCenter } from "./_geocode.js";
 import { buildDestinationHighlightsFromVerified } from "../../lib/planner/highlightShape.js";
 import {
   readDestinationHighlightsCache,
@@ -110,12 +111,16 @@ export async function handler(req, res) {
       });
     }
 
+    const destinationCenter = await resolveDestinationCenter(destination, country);
+    const geoOutlierRejected = { n: 0, inc() { this.n += 1; }, get() { return this.n; } };
     const { places, tripAdvisorCalls } = await verifyCandidatePlaces(candidates, {
       city: destination,
       near,
       locale,
       concurrency: 6,
       debug: debugMode,
+      destinationCenter,
+      geoOutlierRejected,
     });
 
     const cityLabel = destination.split(",")[0].trim();

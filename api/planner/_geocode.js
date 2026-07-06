@@ -1,5 +1,11 @@
 import { writePlaceEnrichmentCache } from "./_enrichCache.js";
 import { placeHasCoords } from "../../lib/planner/coordsSource.js";
+import {
+  checkDestinationGeoOutlier,
+} from "../../lib/planner/geoGuard.js";
+
+/** @type {Map<string, { latitude: number, longitude: number }|null>} */
+const destinationCenterCache = new Map();
 
 const NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search";
 
@@ -139,6 +145,28 @@ export async function geocodePlaceNominatim(name, city, country = "") {
 }
 
 /**
+ * Centre géographique de la destination (1 appel Nominatim, mis en cache process).
+ * @param {string} city
+ * @param {string} [country]
+ * @returns {Promise<{ latitude: number, longitude: number }|null>}
+ */
+export async function resolveDestinationCenter(city, country = "") {
+  const c = String(city || "").trim();
+  if (!c) return null;
+  const key = `${c.toLowerCase()}|${String(country || "").trim().toLowerCase()}`;
+  if (destinationCenterCache.has(key)) return destinationCenterCache.get(key) ?? null;
+
+  const q = [c, String(country || "").trim()].filter(Boolean).join(", ");
+  const { hit } = await nominatimSearchOnce(q);
+  const center =
+    hit && Number.isFinite(hit.latitude) && Number.isFinite(hit.longitude)
+      ? { latitude: hit.latitude, longitude: hit.longitude }
+      : null;
+  destinationCenterCache.set(key, center);
+  return center;
+}
+
+/**
  * Étape 2 de la cascade : géocoder les lieux sans coords, dans l'ordre fourni
  * (mettre les mieux scorés en premier), avec un budget de requêtes HTTP borné.
  * Chaque lieu tente jusqu'à 2 variantes (searchName officiel d'abord, puis nom
@@ -146,19 +174,22 @@ export async function geocodePlaceNominatim(name, city, country = "") {
  * Écrit chaque succès dans place_enrichment_cache (pas de re-géocodage ensuite).
  *
  * @param {object[]} places
- * @param {{ city: string, country?: string, maxRequests?: number }} options
- * @returns {Promise<{ places: object[], attempted: number, succeeded: number, failed: number, requests: number, reasons: Record<string, number> }>}
+ * @param {{ city: string, country?: string, maxRequests?: number, destinationCenter?: { latitude: number, longitude: number }|null, geoOutlierRejected?: { inc: () => void } }} options
+ * @returns {Promise<{ places: object[], attempted: number, succeeded: number, failed: number, requests: number, reasons: Record<string, number>, geoOutlierRejected: number }>}
  */
 export async function geocodeCoordlessPlaces(places, options) {
   const city = String(options?.city || "").trim();
   const country = String(options?.country || "").trim();
   const maxRequests = Math.max(0, Number(options?.maxRequests) || 20);
+  const destinationCenter = options?.destinationCenter ?? null;
+  const outlierCounter = options?.geoOutlierRejected;
   const out = [...(places || [])];
   let attempted = 0;
   let succeeded = 0;
   let requests = 0;
+  let geoOutlierRejected = 0;
   /** @type {Record<string, number>} */
-  const reasons = { no_result: 0, throttled: 0, http_error: 0, timeout: 0 };
+  const reasons = { no_result: 0, throttled: 0, http_error: 0, timeout: 0, geo_outlier: 0 };
   /** @type {{ id: string, name: string, reason: string }[]} */
   const failures = [];
   /** @type {Set<string>} */
@@ -186,8 +217,15 @@ export async function geocodeCoordlessPlaces(places, options) {
         res = await nominatimSearchOnce(q);
       }
       if (res.hit) {
-        hit = res.hit;
-        break;
+        const { within } = checkDestinationGeoOutlier(destinationCenter, res.hit);
+        if (within) {
+          hit = res.hit;
+          break;
+        }
+        geoOutlierRejected += 1;
+        outlierCounter?.inc?.();
+        lastReason = "geo_outlier";
+        continue;
       }
       lastReason = res.reason;
     }
@@ -213,5 +251,15 @@ export async function geocodeCoordlessPlaces(places, options) {
     await writePlaceEnrichmentCache(p.name, city, upgraded);
   }
 
-  return { places: out, attempted, succeeded, failed: attempted - succeeded, requests, reasons, failures, attemptedIds };
+  return {
+    places: out,
+    attempted,
+    succeeded,
+    failed: attempted - succeeded,
+    requests,
+    reasons,
+    failures,
+    attemptedIds,
+    geoOutlierRejected,
+  };
 }

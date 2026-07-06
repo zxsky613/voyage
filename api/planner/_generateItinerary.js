@@ -27,10 +27,10 @@ import {
   pass1UniqueTarget,
 } from "../../lib/planner/paceContract.js";
 import { coordsSourceForPlace, placeHasCoords } from "../../lib/planner/coordsSource.js";
-import { geocodeCoordlessPlaces } from "./_geocode.js";
+import { geocodeCoordlessPlaces, resolveDestinationCenter } from "./_geocode.js";
 import { resolveActivityPhotosForPlaces } from "./_resolveActivityPhotos.js";
 import { haversineKm } from "../../lib/planner/geoCluster.js";
-import { isTripAdvisorDisabled } from "./_tripadvisorClient.js";
+import { getTaEnrichmentMode } from "../../lib/planner/taEnrichment.js";
 import { normalizePlaceCacheKey } from "./_enrichCache.js";
 import { buildEditorialPromptBlock, filterEditorialPlaces } from "../../lib/planner/editorialPolicy.js";
 import {
@@ -165,6 +165,8 @@ async function runCoordsCascadeForPlaces(places, ctx) {
     city: ctx.destination,
     country: ctx.country,
     maxRequests: Math.min(24, Math.max(8, places.length * 2)),
+    destinationCenter: ctx.destinationCenter,
+    geoOutlierRejected: ctx.geoOutlierRejected,
   });
 
   let cascadePlaces = geocodeStats.places;
@@ -359,6 +361,7 @@ function mergeDayIdeasWithRegistry(dayIdeas, registry) {
         priceLevel: meta.priceLevel,
         estimatedPriceEur: meta.estimatedPriceEur ?? 0,
         priceSource: meta.priceSource || a.priceSource || "estimate",
+        source: meta.source || a.source || null,
       };
     });
     return {
@@ -477,10 +480,12 @@ export async function handler(req, res) {
       uniqueRatio,
       clusterCompletionRounds,
       pass1Ms: timings.pass1Ms,
-      tripAdvisorDisabled: isTripAdvisorDisabled(),
+      taEnrichment: getTaEnrichmentMode(),
     });
 
     const tVerify = Date.now();
+    const destinationCenter = await resolveDestinationCenter(destination, country);
+    const geoOutlierRejected = { n: 0, inc() { this.n += 1; }, get() { return this.n; } };
     const { places: verifiedPlacesRaw, tripAdvisorCalls, foursquareCalls: fsqInitial, debug: verifyDebug } =
       await verifyCandidatePlaces(rawCandidates, {
       city: destination,
@@ -488,6 +493,8 @@ export async function handler(req, res) {
       locale: uiLang,
       concurrency: 3,
       debug: true,
+      destinationCenter,
+      geoOutlierRejected,
     });
     let foursquareCalls = fsqInitial;
     const editorialFilter = filterEditorialPlaces(verifiedPlacesRaw, rawCandidates, prefs);
@@ -527,9 +534,10 @@ export async function handler(req, res) {
         fsqCacheHits,
         lookupTimeouts: timeouts,
         taCounter: tripAdvisorCalls,
+        taCalls: tripAdvisorCalls,
         taHttpEstimated: taHttpTotal,
         foursquareCalls,
-        tripAdvisorDisabled: isTripAdvisorDisabled(),
+        taEnrichment: getTaEnrichmentMode(),
         verifyMs: timings.verifyMs,
       });
       for (const r of rows) {
@@ -579,6 +587,8 @@ export async function handler(req, res) {
       // couvrir le catalogue final (days × perDay) même si TA a peu vérifié
       // (throttle/quota) — c'est l'assurance anti-'estimated'.
       maxRequests: Math.min(56, Math.max(32, days * perDay + 16)),
+      destinationCenter,
+      geoOutlierRejected,
     });
     let cascadePlaces = geocodeStats.places;
     timings.geocodeMs = Date.now() - tGeocode;
@@ -609,11 +619,12 @@ export async function handler(req, res) {
       geocodeSucceeded: geocodeStats.succeeded,
       geocodeRequests: geocodeStats.requests,
       geocodeFailReasons: geocodeStats.reasons,
+      geoOutlierRejected: geoOutlierRejected.get(),
       llmEstimated: estimateStats.estimated,
       stillWithoutCoords: finalPool.filter((p) => !placeHasCoords(p)).length,
       foursquareCalls,
       tripAdvisorCalls,
-      tripAdvisorDisabled: isTripAdvisorDisabled(),
+      taEnrichment: getTaEnrichmentMode(),
       geocodeMs: timings.geocodeMs,
       estimateMs: timings.estimateMs,
     });
@@ -658,6 +669,8 @@ export async function handler(req, res) {
       country,
       prefs,
       mergedCandidates: mergedCandidatesState,
+      destinationCenter,
+      geoOutlierRejected,
     };
 
     async function ingestSupplementBatch(batch) {
@@ -674,6 +687,8 @@ export async function handler(req, res) {
         locale: uiLang,
         concurrency: 2,
         debug: false,
+        destinationCenter,
+        geoOutlierRejected,
       });
       foursquareCalls += fsqAdd;
 
@@ -889,7 +904,10 @@ export async function handler(req, res) {
       days,
       candidateCount,
       ...timings,
+      taCalls: tripAdvisorCalls,
       tripAdvisorCalls,
+      taEnrichment: getTaEnrichmentMode(),
+      geoOutlierRejected: geoOutlierRejected.get(),
     });
 
     const allActivities = list.flatMap((d) => (Array.isArray(d?.activities) ? d.activities : []));
@@ -926,7 +944,7 @@ export async function handler(req, res) {
         contractRelaxed,
         funnel,
         editorialExcluded: editorialExcludedTotal,
-        tripAdvisorDisabled: isTripAdvisorDisabled(),
+        taEnrichment: getTaEnrichmentMode(),
       });
 
       for (const a of allActivities) {
@@ -981,8 +999,10 @@ export async function handler(req, res) {
           coordsSourceCounts,
           photoSourceCounts,
           tripAdvisorCalls,
+          taCalls: tripAdvisorCalls,
           foursquareCalls,
-          tripAdvisorDisabled: isTripAdvisorDisabled(),
+          taEnrichment: getTaEnrichmentMode(),
+          geoOutlierRejected: geoOutlierRejected.get(),
           editorialExcluded: editorialExcludedTotal,
           llmProviders: [...new Set(llmProviders)],
         },
