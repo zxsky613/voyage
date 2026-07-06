@@ -112,6 +112,11 @@ import {
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
 import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
+import {
+  readCalendarReminderMinutes,
+  writeCalendarReminderMinutes,
+} from "./lib/calendar/calendarReminderPref.js";
+import { formatApproxTimeLabel } from "./lib/planner/activitySchedule.js";
 import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
 import { useAppHeaderHeight } from "./lib/ui/useAppHeaderHeight.js";
 import {
@@ -5850,6 +5855,7 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
   const { t, language } = useI18n();
   const rawTitle = String(activity?.title || activity?.name || "").trim();
   const timeStr = String(activity?.time || "--:--");
+  const approxLabel = formatApproxTimeLabel(activity?.time);
   const period = parseActivityTimePeriod(activity?.time);
   const mapsUrl = buildPlannerActivityGoogleMapsUrl(rawTitle, cityLabel);
   const cacheKey = buildPlannerActivityImageCacheKey(cityLabel, activity?.id, rawTitle);
@@ -5983,7 +5989,13 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {periodChip}
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{timeStr}</span>
+            {approxLabel ? (
+              <span className="rounded-full bg-brand-blue-tint px-2 py-0.5 text-[10px] font-semibold tracking-wide text-brand-blue-deep ring-1 ring-brand-blue/15">
+                {t("planner.suggestedTimeBadge", { time: approxLabel })}
+              </span>
+            ) : (
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{timeStr}</span>
+            )}
           </div>
           <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-snug text-slate-900 sm:text-[15px]">
             <UiTranslatedActivityTitle
@@ -6351,6 +6363,9 @@ function ItineraryBulletRow({
     (Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0) ||
     (usingTaPhoto && taUrl);
   const priceEur = activityMeta ? readActivityEstimatedPriceEur(activityMeta) : null;
+  const suggestedTimeLabel = formatApproxTimeLabel(
+    activityMeta?.time || activityMeta?.suggestedTime || activityMeta?.suggested_time
+  );
 
   const ratingBadge = showRatingLine || priceEur != null ? (
     <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
@@ -6513,7 +6528,14 @@ function ItineraryBulletRow({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 space-y-2">
-              {periodChip}
+              <div className="flex flex-wrap items-center gap-2">
+                {periodChip}
+                {suggestedTimeLabel ? (
+                  <span className="rounded-full bg-brand-blue-tint px-2 py-0.5 text-[10px] font-semibold tracking-wide text-brand-blue-deep ring-1 ring-brand-blue/15">
+                    {t("planner.suggestedTimeBadge", { time: suggestedTimeLabel })}
+                  </span>
+                ) : null}
+              </div>
               <p className="text-[13px] leading-relaxed text-slate-700 sm:text-[14px]">{displayText}</p>
               {ratingBadge}
             </div>
@@ -7013,11 +7035,17 @@ function normalizeActivity(activity) {
   const normalizedDate = toYMDLoose(rawDate);
   const cachedDescription = getCachedActivityDescription(activity?.id);
   const estimatedPrice = readActivityEstimatedPriceEur(activity);
+  const durationMinutesRaw = Number(activity?.duration_minutes ?? activity?.durationMinutes);
+  const duration_minutes =
+    Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0
+      ? Math.floor(durationMinutesRaw)
+      : undefined;
   return {
     ...activity,
     date: normalizedDate,
     date_key: normalizedDate,
     time,
+    ...(duration_minutes != null ? { duration_minutes, durationMinutes: duration_minutes } : {}),
     title: String(activity?.title || activity?.name || "Activite"),
     name: String(activity?.name || activity?.title || "Activite"),
     description: String(activity?.description || activity?.details || activity?.notes || cachedDescription || ""),
@@ -10782,6 +10810,7 @@ function ItineraryResultModal({
 }) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
+  const [calendarReminder, setCalendarReminder] = useState(() => readCalendarReminderMinutes());
   const [activeDayIndex, setActiveDayIndex] = useState(0);
   const [detailViewMode, setDetailViewMode] = useState(() => readItineraryDetailViewMode());
   const [selectedMapActivityId, setSelectedMapActivityId] = useState("");
@@ -11268,6 +11297,25 @@ function ItineraryResultModal({
 
         {/* ── Footer ── */}
         <div className="z-10 shrink-0 flex flex-col gap-2 border-t border-slate-100 bg-white px-5 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-3 sm:pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50/90 px-3 py-2 ring-1 ring-slate-100">
+            <label htmlFor="itinerary-calendar-reminder" className="text-[12px] font-medium text-slate-600">
+              {t("planner.calendarReminderLabel")}
+            </label>
+            <select
+              id="itinerary-calendar-reminder"
+              value={String(calendarReminder)}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setCalendarReminder(v);
+                writeCalendarReminderMinutes(v);
+              }}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] text-slate-800"
+            >
+              <option value="60">{t("planner.calendarReminder1h")}</option>
+              <option value="120">{t("planner.calendarReminder2h")}</option>
+              <option value="0">{t("planner.calendarReminderNone")}</option>
+            </select>
+          </div>
           <div className="flex items-center gap-2.5">
             <button
               type="button"
@@ -11280,7 +11328,7 @@ function ItineraryResultModal({
             {typeof onExportPhoneCalendar === "function" ? (
               <button
                 type="button"
-                onClick={onExportPhoneCalendar}
+                onClick={() => onExportPhoneCalendar?.(calendarReminder)}
                 disabled={saving || regenerating}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-brand-blue/25 bg-white px-4 py-2.5 text-[13px] font-medium text-brand-blue-deep transition hover:bg-brand-blue-tint/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label={t("planner.exportPhoneCalendarAria")}
@@ -11794,6 +11842,8 @@ function DestinationGuideView({
   }, []);
   const [programStartDate, setProgramStartDate] = useState(() => getTodayStr());
   const [programEndDate, setProgramEndDate] = useState(() => getTodayStr());
+  const [programArrivalTime, setProgramArrivalTime] = useState("");
+  const [programDepartureTime, setProgramDepartureTime] = useState("");
   /** Conflit calendrier au moment d'« Ajouter au calendrier » — overlay au-dessus du modal programme (z-90). */
   const [itineraryCalendarConflict, setItineraryCalendarConflict] = useState(null);
   const [itineraryCalendarConflictErr, setItineraryCalendarConflictErr] = useState("");
@@ -12589,7 +12639,12 @@ function DestinationGuideView({
     if (!pendingTripRequest) return;
     const { dest, startDate, endDate } = pendingTripRequest;
     setTripPrefsOpen(false);
-    setLastItineraryPrefs(prefs);
+    const mergedPrefs = {
+      ...prefs,
+      arrivalTime: String(programArrivalTime || "").trim(),
+      departureTime: String(programDepartureTime || "").trim(),
+    };
+    setLastItineraryPrefs(mergedPrefs);
     const calConflicts = findTripsOverlappingDateRange(trips, startDate, endDate, null);
     if (calConflicts.length > 0) {
       setItineraryCalendarConflict({
@@ -12599,12 +12654,12 @@ function DestinationGuideView({
         phase: "beforeGenerate",
         afterResolve: "runGeneration",
         generationKind: "initial",
-        prefsForGeneration: prefs,
+        prefsForGeneration: mergedPrefs,
       });
       setItineraryCalendarConflictErr("");
       return;
     }
-    await runItineraryGenerationWithDates(dest, startDate, endDate, prefs, "initial");
+    await runItineraryGenerationWithDates(dest, startDate, endDate, mergedPrefs, "initial");
   }
 
   async function handleRegenerateItinerary() {
@@ -12725,16 +12780,24 @@ function DestinationGuideView({
                   const actPrice = readActivityEstimatedPriceEur(meta);
                   const lat = Number(meta?.latitude);
                   const lon = Number(meta?.longitude);
+                  const suggestedTime = normalizeActivityTimeHHMM(
+                    meta?.time || meta?.suggestedTime || meta?.suggested_time
+                  );
+                  const durationMin = Number(meta?.durationMinutes ?? meta?.duration_minutes);
                   return {
                     title: stripPrefix(bulletText) || String(meta?.name || "").trim(),
                     date: actDate,
                     time:
+                      suggestedTime ||
                       timeMap(bulletText) ||
                       (meta?.period === "morning"
                         ? "09:00"
-                        : meta?.period === "afternoon"
+                        : meta?.period === "afternoon" || meta?.period === "evening"
                           ? "14:00"
                           : SLOT_DEFAULTS[j % SLOT_DEFAULTS.length]),
+                    ...(Number.isFinite(durationMin) && durationMin > 0
+                      ? { duration_minutes: Math.floor(durationMin), durationMinutes: Math.floor(durationMin) }
+                      : {}),
                     location: city,
                     cost: actPrice,
                     estimated_price_eur: actPrice,
@@ -12766,10 +12829,17 @@ function DestinationGuideView({
           const actPrice = readActivityEstimatedPriceEur(meta);
           const lat = Number(meta?.latitude);
           const lon = Number(meta?.longitude);
+          const suggestedTime = normalizeActivityTimeHHMM(
+            meta?.time || meta?.suggestedTime || meta?.suggested_time
+          );
+          const durationMin = Number(meta?.durationMinutes ?? meta?.duration_minutes);
           schedule.push({
             title: stripPrefix(b),
             date: actDate,
-            time: timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
+            time: suggestedTime || timeMap(b) || SLOT_DEFAULTS[j % SLOT_DEFAULTS.length],
+            ...(Number.isFinite(durationMin) && durationMin > 0
+              ? { duration_minutes: Math.floor(durationMin), durationMinutes: Math.floor(durationMin) }
+              : {}),
             location: city,
             cost: actPrice,
             estimated_price_eur: actPrice,
@@ -12818,7 +12888,8 @@ function DestinationGuideView({
     [trips, buildItineraryActivitySchedule, displayGuide, confirmedDestination, onCreateTrip]
   );
 
-  const exportItineraryToPhoneCalendar = useCallback(async () => {
+  const exportItineraryToPhoneCalendar = useCallback(
+    async (reminderMinutes) => {
     const rangeStart = String(
       lastItineraryRequest?.startDate || pendingTripRequest?.startDate || programStartDate || getTodayStr()
     );
@@ -12828,8 +12899,12 @@ function DestinationGuideView({
       return;
     }
     const dest = String(displayGuide?.city || confirmedDestination || "");
+    const reminder =
+      reminderMinutes != null && Number.isFinite(Number(reminderMinutes))
+        ? Number(reminderMinutes)
+        : readCalendarReminderMinutes();
     try {
-      await exportTripActivitiesToIcs({ destination: dest, activities: schedule });
+      await exportTripActivitiesToIcs({ destination: dest, activities: schedule, reminderMinutes: reminder });
     } catch (e) {
       setNotice(String(e?.message || t("planner.exportNoActivities")));
     }
@@ -13552,6 +13627,32 @@ function DestinationGuideView({
                   setProgramEndDate(e);
                 }}
               />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label className="mb-1.5 block text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                  {t("destination.arrivalTimeLabel")}
+                </label>
+                <input
+                  type="time"
+                  value={programArrivalTime}
+                  onChange={(e) => setProgramArrivalTime(e.target.value)}
+                  className="box-border min-h-[2.75rem] w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-base [color-scheme:light] sm:text-sm"
+                />
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{t("destination.arrivalTimeHint")}</p>
+              </div>
+              <div className="min-w-0">
+                <label className="mb-1.5 block text-[11px] font-normal uppercase tracking-[0.16em] text-slate-500">
+                  {t("destination.departureTimeLabel")}
+                </label>
+                <input
+                  type="time"
+                  value={programDepartureTime}
+                  onChange={(e) => setProgramDepartureTime(e.target.value)}
+                  className="box-border min-h-[2.75rem] w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-base [color-scheme:light] sm:text-sm"
+                />
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{t("destination.departureTimeHint")}</p>
+              </div>
             </div>
             {itineraryError ? <ItineraryErrorNotice raw={itineraryError} /> : null}
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
@@ -16127,6 +16228,7 @@ export default function App() {
       await exportTripActivitiesToIcs({
         destination: String(selectedTrip.destination || selectedTrip.title || ""),
         activities: tripActs,
+        reminderMinutes: readCalendarReminderMinutes(),
       });
     } catch (e) {
       setNotice(String(e?.message || t("planner.exportNoActivities")));
@@ -16814,6 +16916,7 @@ export default function App() {
       const assignedTime = normalizeActivityTimeHHMM(item.time) || String(slots[i % slots.length]).slice(0, 5);
       const photo = String(item.photo_url || item.image_url || "").trim();
       const estimatedPrice = readActivityEstimatedPriceEur(item);
+      const durationMin = Number(item?.duration_minutes ?? item?.durationMinutes);
       const row = {
         trip_id: normTripId(tripId), date: safeDate, date_key: safeDate, activity_date: safeDate,
         time: assignedTime, title: item.title, name: item.title, description: String(item.description || ""),
@@ -16823,6 +16926,9 @@ export default function App() {
         photo_url: photo,
         image_url: photo || String(item.image_url || "").trim(),
       };
+      if (Number.isFinite(durationMin) && durationMin > 0) {
+        row.duration_minutes = Math.floor(durationMin);
+      }
       if (Number.isFinite(item.latitude)) row.latitude = item.latitude;
       if (Number.isFinite(item.longitude)) row.longitude = item.longitude;
       // Colonne ajoutée par supabase/sql/activities_coords_source.sql ; si elle
