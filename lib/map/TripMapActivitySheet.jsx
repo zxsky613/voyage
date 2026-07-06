@@ -7,9 +7,9 @@ import { MapPin, Sunrise, Sun, X } from "lucide-react";
 
 /**
  * Panneau bas type Wanderlog — activité sélectionnée sur la carte.
- * @param {{ activity: object|null, cityLabel?: string, onClose: () => void }} props
+ * @param {{ activity: object|null, cityLabel?: string, onClose: () => void, embedded?: boolean }} props
  */
-export default function TripMapActivitySheet({ activity, cityLabel = "", onClose }) {
+export default function TripMapActivitySheet({ activity, cityLabel = "", onClose, embedded = false }) {
   const { t } = useI18n();
   if (!activity) return null;
 
@@ -40,41 +40,47 @@ export default function TripMapActivitySheet({ activity, cityLabel = "", onClose
     });
   };
 
+  const inner = (
+    <div className="overflow-hidden rounded-2xl bg-white/95 shadow-[0_18px_48px_rgba(2,6,23,0.18)] ring-1 ring-slate-200/80 backdrop-blur-sm">
+      <div className="flex gap-3 p-3">
+        <ActivityMapThumbnail activity={activity} className="h-16 w-20" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              {periodChip ? <div className="mb-1">{periodChip}</div> : null}
+              <p className="line-clamp-2 text-sm font-medium leading-snug text-slate-900">{title}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-full p-1.5 text-slate-500 hover:bg-slate-100"
+              aria-label={t("common.close")}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={handleGo}
+            className={`mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs ${BRAND_BLUE_BTN_CLASS}`}
+          >
+            <MapPin size={14} aria-hidden />
+            {t("map.goThere")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (embedded) return inner;
+
   return (
     <div
       className="pointer-events-auto absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]"
       role="dialog"
       aria-label={title}
     >
-      <div className="overflow-hidden rounded-2xl bg-white/95 shadow-[0_18px_48px_rgba(2,6,23,0.18)] ring-1 ring-slate-200/80 backdrop-blur-sm">
-        <div className="flex gap-3 p-3">
-          <ActivityMapThumbnail activity={activity} className="h-16 w-20" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                {periodChip ? <div className="mb-1">{periodChip}</div> : null}
-                <p className="line-clamp-2 text-sm font-medium leading-snug text-slate-900">{title}</p>
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="shrink-0 rounded-full p-1.5 text-slate-500 hover:bg-slate-100"
-                aria-label={t("common.close")}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={handleGo}
-              className={`mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs ${BRAND_BLUE_BTN_CLASS}`}
-            >
-              <MapPin size={14} aria-hidden />
-              {t("map.goThere")}
-            </button>
-          </div>
-        </div>
-      </div>
+      {inner}
     </div>
   );
 }

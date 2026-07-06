@@ -165,6 +165,14 @@ import {
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
 import LazyTripMap from "./lib/map/LazyTripMap.jsx";
+import TripMapActivitySheet from "./lib/map/TripMapActivitySheet.jsx";
+import PlannerBottomSheet from "./lib/ui/PlannerBottomSheet.jsx";
+import {
+  buildPlannerMapActivities,
+  plannerDayIndexForDate,
+  addDaysToYmd,
+} from "./lib/planner/buildPlannerMapActivities.js";
+import { usePlannerDestinationCenter } from "./lib/planner/usePlannerDestinationCenter.js";
 import { dayMarkerColor } from "./lib/map/tripMapHelpers.js";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
 import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
@@ -5878,7 +5886,16 @@ function buildPlannerActivityGoogleMapsUrl(activityTitle, cityLabel, dayTitle = 
  * Carte activité enrichie (vue calendrier) — image + chip moment + actions.
  * @param {{ activity: object, cityLabel: string, onView: () => void, onEdit: () => void, onDelete: () => void }} props
  */
-function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete, onPhotoResolved }) {
+function PlannerDayActivityCard({
+  activity,
+  cityLabel,
+  onView,
+  onEdit,
+  onDelete,
+  onPhotoResolved,
+  mapSelected = false,
+  onMapFocus,
+}) {
   const { t, language } = useI18n();
   const rawTitle = String(activity?.title || activity?.name || "").trim();
   const timeStr = String(activity?.time || "--:--");
@@ -6007,7 +6024,22 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
   );
 
   return (
-    <div className="group overflow-hidden rounded-2xl bg-white ring-1 ring-slate-100 transition hover:ring-slate-200">
+    <div
+      className={`group overflow-hidden rounded-2xl bg-white transition ${
+        mapSelected ? "ring-2 ring-[#F16A2E] shadow-md" : "ring-1 ring-slate-100 hover:ring-slate-200"
+      }`}
+      role="presentation"
+      onClick={(e) => {
+        if (!onMapFocus) return;
+        if (e.target instanceof Element && e.target.closest("button,a")) return;
+        onMapFocus();
+      }}
+      onKeyDown={(e) => {
+        if (!onMapFocus || (e.key !== "Enter" && e.key !== " ")) return;
+        e.preventDefault();
+        onMapFocus();
+      }}
+    >
       <div className="flex gap-3 p-3 sm:gap-4 sm:p-4">
         <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/80 sm:h-20 sm:w-28">
           {imageInner}
@@ -14485,100 +14517,198 @@ function PlannerView({
     });
   };
 
-  return (
-    <section className="space-y-6">
-      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
-        <div className="order-1 min-w-0 rounded-[2rem] bg-white/52 p-4 shadow-2xl backdrop-blur-md sm:rounded-[3rem] sm:p-5 md:rounded-[4.5rem] md:p-6 lg:order-1 lg:justify-self-start lg:w-full">
-          <div className="mb-4 flex min-w-0 items-center justify-between gap-1">
-            <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
-              {"<"}
-            </button>
-            <h2 className="min-w-0 truncate px-1 text-center text-[10px] font-normal uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.32em]">
-              {monthCursor.toLocaleDateString(getAppDateLocale(), { month: "long", year: "numeric" })}
-            </h2>
-            <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
-              {">"}
-            </button>
-          </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 sm:gap-2 sm:text-xs">
-            {plannerWeekdayLabels.map((x, i) => (
-              <div key={`wd-${i}-${x}`} className="flex min-h-[2.75rem] items-end justify-center py-2 sm:min-h-[2.5rem]">
-                <span className="leading-[1.2] capitalize sm:leading-snug">{x}</span>
-              </div>
-            ))}
-            {days.map((d, i) => {
-              if (!d) return <div key={`empty-${i}`} className="h-10 rounded-lg bg-slate-50 sm:h-12 sm:rounded-xl" />;
-              const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-                d.getDate()
-              ).padStart(2, "0")}`;
-              const selected = dateStr === selectedDate;
-              const anyTripDay = inAnyTrip(dateStr);
-              const selectedTripDay = inTrip(dateStr);
-              const activityCount = Number(activityCountByDay[dateStr] || 0);
-              const dayClass = selected
-                ? "border-transparent text-white shadow-[0_10px_24px_rgba(15,23,42,0.22)]"
-                : selectedTripDay
-                  ? "border-brand-blue/30 bg-brand-blue-tint text-slate-900"
-                  : anyTripDay
-                    ? "border-slate-300 bg-white text-slate-800"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
-              return (
-                <button
-                  key={dateStr}
-                  onClick={() => {
-                    if (onSelectDate) onSelectDate(dateStr);
-                    else setSelectedDate(dateStr);
-                  }}
-                  className={`relative h-10 rounded-lg border text-xs transition-all duration-150 sm:h-12 sm:rounded-xl sm:text-sm ${dayClass}`}
-                  style={selected ? { backgroundColor: ACCENT } : undefined}
-                >
-                  {d.getDate()}
-                  {activityCount > 0 ? (
-                    <span
-                      className={`absolute -right-1 -top-1 min-w-[16px] rounded-full px-1 text-[9px] font-semibold leading-4 ${
-                        selected ? "bg-white/90 text-slate-800" : "bg-slate-900 text-white"
-                      }`}
-                    >
-                      {activityCount}
-                    </span>
-                  ) : null}
-                  {anyTripDay ? (
-                    <span
-                      className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full"
-                      style={{ backgroundColor: ACCENT, opacity: selectedTripDay ? 1 : 0.65 }}
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-center text-[10px] leading-relaxed text-slate-500">{t("planner.calendarLegend")}</p>
-        </div>
+  const [mapView, setMapView] = useState("day");
+  const [selectedMapActivityId, setSelectedMapActivityId] = useState("");
+  const [sheetSnap, setSheetSnap] = useState("mid");
+  const [sheetMapActivity, setSheetMapActivity] = useState(null);
+  const [isDesktopPlanner, setIsDesktopPlanner] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+  );
 
-        <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
-          <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
-            {formatDate(selectedDate)}
-          </h3>
-          <button
-            onClick={() => {
-              setActivityFormError("");
-              const index = (activities || []).filter(
-                (a) => toYMDLoose(a?.date_key || a?.date) === selectedDateKey
-              ).length;
-              setActivityTime(slots[index % slots.length]);
-              setActivityModalOpen(true);
-            }}
-            className={`mb-4 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
-          >
-            {t("planner.addActivity")}
-          </button>
-          <div className="space-y-3">
-            {dayActivities && dayActivities.length > 0 ? dayActivities.map((a) => (
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e) => setIsDesktopPlanner(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  const plannerMapActivities = useMemo(
+    () =>
+      resolvedTrip
+        ? buildPlannerMapActivities({
+            activities,
+            tripId: selectedTripIdSafe,
+            tripStartYmd: resolvedTrip.start_date,
+          })
+        : [],
+    [activities, selectedTripIdSafe, resolvedTrip]
+  );
+
+  const selectedDayIndex = useMemo(
+    () => (resolvedTrip ? plannerDayIndexForDate(resolvedTrip.start_date, selectedDateKey) : 0),
+    [resolvedTrip, selectedDateKey]
+  );
+
+  const destinationCenter = usePlannerDestinationCenter(tripCityLabel, Boolean(resolvedTrip), language);
+
+  const sheetMapActivityResolved = useMemo(() => {
+    if (sheetMapActivity) return sheetMapActivity;
+    if (!selectedMapActivityId) return null;
+    return plannerMapActivities.find((a) => String(a.id) === String(selectedMapActivityId)) || null;
+  }, [sheetMapActivity, selectedMapActivityId, plannerMapActivities]);
+
+  const handleMapActivitySelect = useCallback(
+    (id) => {
+      const value = String(id || "").trim();
+      setSelectedMapActivityId(value);
+      if (value) {
+        const act = plannerMapActivities.find((a) => String(a.id) === value) || null;
+        setSheetMapActivity(act);
+        setMapView("day");
+        setSheetSnap((prev) => (prev === "collapsed" ? "mid" : prev));
+      } else {
+        setSheetMapActivity(null);
+      }
+    },
+    [plannerMapActivities]
+  );
+
+  const handleMapSelectDay = useCallback(
+    (dayIndex) => {
+      if (!resolvedTrip) return;
+      const ymd = addDaysToYmd(resolvedTrip.start_date, dayIndex);
+      if (onSelectDate) onSelectDate(ymd);
+      else setSelectedDate(ymd);
+      setMapView("day");
+      setSelectedMapActivityId("");
+      setSheetMapActivity(null);
+    },
+    [resolvedTrip, onSelectDate, setSelectedDate]
+  );
+
+  const handleViewWholeTrip = useCallback(() => {
+    setMapView("trip");
+    setSelectedMapActivityId("");
+    setSheetMapActivity(null);
+  }, []);
+
+  useEffect(() => {
+    setMapView("day");
+    setSelectedMapActivityId("");
+    setSheetMapActivity(null);
+  }, [selectedDateKey, selectedTripIdSafe]);
+
+  useEffect(() => {
+    if (!selectedMapActivityId || sheetSnap === "collapsed" || isDesktopPlanner) return undefined;
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById(`planner-act-${selectedMapActivityId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [selectedMapActivityId, sheetSnap, isDesktopPlanner]);
+
+  const openAddActivityModal = useCallback(() => {
+    setActivityFormError("");
+    const index = (activities || []).filter(
+      (a) => toYMDLoose(a?.date_key || a?.date) === selectedDateKey
+    ).length;
+    setActivityTime(slots[index % slots.length]);
+    setActivityModalOpen(true);
+  }, [activities, selectedDateKey]);
+
+  const renderPlannerCalendar = (compact = false) => (
+    <div
+      className={`min-w-0 rounded-[2rem] bg-white/52 shadow-2xl backdrop-blur-md ${
+        compact ? "p-3 sm:rounded-[2rem]" : "p-4 sm:rounded-[3rem] sm:p-5 md:rounded-[4.5rem] md:p-6"
+      }`}
+    >
+      <div className="mb-4 flex min-w-0 items-center justify-between gap-1">
+        <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
+          {"<"}
+        </button>
+        <h2 className="min-w-0 truncate px-1 text-center text-[10px] font-normal uppercase tracking-[0.28em] text-slate-500 sm:text-xs sm:tracking-[0.32em]">
+          {monthCursor.toLocaleDateString(getAppDateLocale(), { month: "long", year: "numeric" })}
+        </h2>
+        <button onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="rounded-full px-3 py-2 hover:bg-slate-100">
+          {">"}
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 sm:gap-2 sm:text-xs">
+        {plannerWeekdayLabels.map((x, i) => (
+          <div key={`wd-${i}-${x}`} className={`flex items-end justify-center py-2 ${compact ? "min-h-[2rem]" : "min-h-[2.75rem] sm:min-h-[2.5rem]"}`}>
+            <span className="leading-[1.2] capitalize sm:leading-snug">{compact ? x.slice(0, 2) : x}</span>
+          </div>
+        ))}
+        {days.map((d, i) => {
+          if (!d) return <div key={`empty-${i}`} className={`rounded-lg bg-slate-50 sm:rounded-xl ${compact ? "h-9" : "h-10 sm:h-12"}`} />;
+          const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+            d.getDate()
+          ).padStart(2, "0")}`;
+          const selected = dateStr === selectedDate;
+          const anyTripDay = inAnyTrip(dateStr);
+          const selectedTripDay = inTrip(dateStr);
+          const activityCount = Number(activityCountByDay[dateStr] || 0);
+          const dayClass = selected
+            ? "border-transparent text-white shadow-[0_10px_24px_rgba(15,23,42,0.22)]"
+            : selectedTripDay
+              ? "border-brand-blue/30 bg-brand-blue-tint text-slate-900"
+              : anyTripDay
+                ? "border-slate-300 bg-white text-slate-800"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+          return (
+            <button
+              key={dateStr}
+              onClick={() => {
+                if (onSelectDate) onSelectDate(dateStr);
+                else setSelectedDate(dateStr);
+              }}
+              className={`relative rounded-lg border text-xs transition-all duration-150 sm:rounded-xl sm:text-sm ${compact ? "h-9" : "h-10 sm:h-12"} ${dayClass}`}
+              style={selected ? { backgroundColor: ACCENT } : undefined}
+            >
+              {d.getDate()}
+              {activityCount > 0 ? (
+                <span
+                  className={`absolute -right-1 -top-1 min-w-[16px] rounded-full px-1 text-[9px] font-semibold leading-4 ${
+                    selected ? "bg-white/90 text-slate-800" : "bg-slate-900 text-white"
+                  }`}
+                >
+                  {activityCount}
+                </span>
+              ) : null}
+              {anyTripDay ? (
+                <span
+                  className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full"
+                  style={{ backgroundColor: ACCENT, opacity: selectedTripDay ? 1 : 0.65 }}
+                />
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {!compact ? (
+        <p className="mt-3 text-center text-[10px] leading-relaxed text-slate-500">{t("planner.calendarLegend")}</p>
+      ) : null}
+    </div>
+  );
+
+  const renderDayActivityList = (showHeading = true) => (
+    <>
+      {showHeading ? (
+        <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          {formatDate(selectedDate)}
+        </h3>
+      ) : null}
+      <div className="space-y-3">
+        {dayActivities && dayActivities.length > 0 ? (
+          dayActivities.map((a) => (
+            <div key={String(a.id)} id={`planner-act-${a.id}`}>
               <PlannerDayActivityCard
-                key={String(a.id)}
                 activity={a}
                 cityLabel={tripCityLabel}
                 onPhotoResolved={onPhotoResolved}
+                mapSelected={String(selectedMapActivityId) === String(a.id)}
+                onMapFocus={() => handleMapActivitySelect(String(a.id))}
                 onView={() => {
                   setViewingActivity(a);
                   setActivityDetailsOpen(true);
@@ -14586,11 +14716,7 @@ function PlannerView({
                 onEdit={() => {
                   setEditingActivity(a);
                   const rawAct = String(a?.title || a?.name || "").trim();
-                  setTitle(
-                    rawAct
-                      ? displayActivityTitleForLocale(rawAct, language)
-                      : ""
-                  );
+                  setTitle(rawAct ? displayActivityTitleForLocale(rawAct, language) : "");
                   setDescription(String(a?.description || ""));
                   setLocation(String(a?.location || ""));
                   setCost(String(a?.cost ?? ""));
@@ -14599,14 +14725,119 @@ function PlannerView({
                 }}
                 onDelete={() => setActivityToDelete(a)}
               />
-            )) : (
-              <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
-                <p className="font-medium text-slate-700">{t("planner.noActivitiesThisDate")}</p>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
+            <p className="font-medium text-slate-700">{t("planner.noActivitiesThisDate")}</p>
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  const plannerMapNode = resolvedTrip ? (
+    <LazyTripMap
+      activities={plannerMapActivities}
+      view={mapView}
+      selectedDayIndex={selectedDayIndex}
+      selectedActivityId={selectedMapActivityId}
+      onSelectActivity={handleMapActivitySelect}
+      onSelectDay={handleMapSelectDay}
+      onViewTrip={handleViewWholeTrip}
+      mode="planner"
+      cityLabel={tripCityLabel}
+      fallbackCenter={destinationCenter}
+      suppressActivitySheet={!isDesktopPlanner}
+      className="h-full min-h-0"
+    />
+  ) : null;
+
+  const classicPlannerGrid = (
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
+      <div className="order-1 min-w-0 lg:order-1 lg:justify-self-start lg:w-full">{renderPlannerCalendar(false)}</div>
+      <div className="order-2 min-w-0 px-0 py-1 sm:px-1 lg:order-2">
+        <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+          {formatDate(selectedDate)}
+        </h3>
+        <button
+          onClick={openAddActivityModal}
+          className={`mb-4 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
+        >
+          {t("planner.addActivity")}
+        </button>
+        {renderDayActivityList(false)}
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="space-y-6">
+      {!resolvedTrip ? (
+        classicPlannerGrid
+      ) : !isDesktopPlanner ? (
+        <div className="relative -mx-1 flex min-h-[calc(100dvh-var(--app-header-clearance,4rem)-14rem)] flex-col">
+          {sheetSnap !== "full" ? (
+            <div className="absolute inset-0 min-h-[240px]">{plannerMapNode}</div>
+          ) : null}
+          <PlannerBottomSheet
+            snap={sheetSnap}
+            onSnapChange={setSheetSnap}
+            collapsedSummary={t("planner.sheetDaySummary", {
+              date: formatDate(selectedDate),
+              n: dayActivities.length,
+            })}
+          >
+            {sheetMapActivityResolved ? (
+              <TripMapActivitySheet
+                embedded
+                activity={sheetMapActivityResolved}
+                cityLabel={tripCityLabel}
+                onClose={() => handleMapActivitySelect(null)}
+              />
+            ) : (
+              <div className="space-y-4">
+                {renderPlannerCalendar(sheetSnap === "mid")}
+                {sheetSnap === "mid" || sheetSnap === "full" ? renderDayActivityList(true) : null}
               </div>
             )}
+          </PlannerBottomSheet>
+          {sheetSnap === "collapsed" || sheetSnap === "mid" ? (
+            <button
+              type="button"
+              onClick={openAddActivityModal}
+              className={`pointer-events-auto absolute right-4 z-40 flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-white shadow-lg ${BRAND_BLUE_BTN_CLASS}`}
+              style={{
+                bottom:
+                  sheetSnap === "collapsed"
+                    ? "calc(72px + max(12px, env(safe-area-inset-bottom, 0px)))"
+                    : "calc(min(48vh, 420px) + max(12px, env(safe-area-inset-bottom, 0px)))",
+              }}
+              aria-label={t("planner.addActivity")}
+            >
+              <Plus size={18} strokeWidth={2.5} aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
+          <div className="min-w-0 space-y-4 lg:sticky lg:top-[var(--app-header-clearance,4rem)] lg:self-start">
+            {renderPlannerCalendar(false)}
+            <div className="h-[320px] min-h-[320px] overflow-hidden rounded-2xl ring-1 ring-slate-200/80">
+              {plannerMapNode}
+            </div>
+          </div>
+          <div className="min-w-0 px-0 py-1 sm:px-1">
+            <button
+              onClick={openAddActivityModal}
+              className={`mb-4 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
+            >
+              {t("planner.addActivity")}
+            </button>
+            {renderDayActivityList(true)}
           </div>
         </div>
-      </div>
+      )}
 
       {activityModalOpen ? (
         <div className="fixed -inset-1 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) { setActivityModalOpen(false); setActivityTime(""); setActivityFormError(""); } }}>

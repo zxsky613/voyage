@@ -616,6 +616,7 @@ export const translations = {
       reminderTwoHours: "Dans 2 h : {{title}}",
       reminderFallbackTitle: "Activité",
       currencyEur: "EUR",
+      sheetDaySummary: "{{date}} · {{n}} activité(s)",
     },
     trips: {
       memories: "Souvenirs",
@@ -1241,6 +1242,7 @@ export const translations = {
       reminderTwoHours: "In 2 h: {{title}}",
       reminderFallbackTitle: "Activity",
       currencyEur: "EUR",
+      sheetDaySummary: "{{date}} · {{n}} activity/activities",
     },
     trips: {
       memories: "Memories",
@@ -1863,6 +1865,7 @@ export const translations = {
       reminderTwoHours: "In 2 Std.: {{title}}",
       reminderFallbackTitle: "Aktivität",
       currencyEur: "EUR",
+      sheetDaySummary: "{{date}} · {{n}} Aktivität(en)",
     },
     trips: {
       memories: "Erinnerungen",
@@ -2484,6 +2487,7 @@ export const translations = {
       reminderTwoHours: "En 2 h: {{title}}",
       reminderFallbackTitle: "Actividad",
       currencyEur: "EUR",
+      sheetDaySummary: "{{date}} · {{n}} actividad(es)",
     },
     trips: {
       memories: "Recuerdos",
@@ -3105,6 +3109,7 @@ export const translations = {
       reminderTwoHours: "Tra 2 ore: {{title}}",
       reminderFallbackTitle: "Attività",
       currencyEur: "EUR",
+      sheetDaySummary: "{{date}} · {{n}} attività",
     },
     trips: {
       memories: "Ricordi",
@@ -3686,6 +3691,7 @@ export const translations = {
       reminderTwoHours: "2 小时后：{{title}}",
       reminderFallbackTitle: "活动",
       currencyEur: "欧元",
+      sheetDaySummary: "{{date}} · {{n}} 个活动",
     },
     trips: {
       memories: "回忆",
