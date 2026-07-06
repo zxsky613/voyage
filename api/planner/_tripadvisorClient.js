@@ -13,6 +13,12 @@ function getKey() {
   return String(process.env.TRIPADVISOR_API_KEY || "").trim();
 }
 
+/** Mode dégradé / run sans catalogue TA (DISABLE_TRIPADVISOR=1|true|yes). */
+export function isTripAdvisorDisabled() {
+  const v = String(process.env.DISABLE_TRIPADVISOR || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 /** Terra exige des locales factuelles (fr-FR, en-US…). */
 export function toTerraLocale(language = "fr") {
   const code = String(language || "fr").toLowerCase().split("-")[0];
@@ -54,6 +60,32 @@ export function stripDescriptivePlaceName(name) {
   return s.trim() || String(name || "").trim();
 }
 
+// Limiteur global Terra : sans espacement, une rafale (concurrence × 4 tentatives
+// par candidat) déclenche des 429 en série et les lieux tombent en 'estimated'.
+// N'espace que les DÉPARTS d'appels — ne pas tenir la file pendant le fetch,
+// sinon les retries 429 internes (jusqu'à 5,5 s) sérialisent tout le verify.
+const TERRA_MIN_INTERVAL_MS = 350;
+let terraGate = Promise.resolve();
+let lastTerraCallAt = 0;
+
+function scheduleTerraStart(task) {
+  const gate = terraGate.then(async () => {
+    const wait = lastTerraCallAt + TERRA_MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastTerraCallAt = Date.now();
+  });
+  terraGate = gate;
+  return gate.then(() => task());
+}
+
+// Disjoncteur quota : une série ininterrompue de 429 = quota du compte épuisé.
+// Inutile de brûler 84 candidats × 4 tentatives × retries — on coupe TA
+// pour la fin de la requête et la cascade Foursquare/Nominatim prend le relais.
+const TERRA_429_STREAK_LIMIT = 8;
+const TERRA_COOLDOWN_MS = 120000;
+let terra429Streak = 0;
+let terraCooldownUntil = 0;
+
 /**
  * @param {string} path
  * @param {URLSearchParams} params
@@ -61,12 +93,27 @@ export function stripDescriptivePlaceName(name) {
  */
 async function terraGet(path, params, key) {
   params.set("version", "1");
+  if (Date.now() < terraCooldownUntil) {
+    return { ok: false, status: 429, json: null, body: "cooldown" };
+  }
+  if (isTripAdvisorDisabled()) {
+    return { ok: false, status: 503, json: null, body: "disabled" };
+  }
   const url = `${TERRA_BASE}${path}?${params}`;
-  const { response, throttled, timedOut } = await fetchWithRetry(
-    url,
-    { headers: terraHeaders(key) },
-    { timeoutMs: 12000 }
+  const { response, throttled, timedOut } = await scheduleTerraStart(() =>
+    fetchWithRetry(url, { headers: terraHeaders(key) }, { timeoutMs: 12000 })
   );
+  if (throttled && !timedOut) {
+    terra429Streak += 1;
+    if (terra429Streak >= TERRA_429_STREAK_LIMIT && Date.now() >= terraCooldownUntil) {
+      terraCooldownUntil = Date.now() + TERRA_COOLDOWN_MS;
+      console.error(
+        `[ta-verify] CIRCUIT OPEN: ${terra429Streak} throttles consécutifs — TA coupé ${TERRA_COOLDOWN_MS / 1000}s (quota épuisé ?)`
+      );
+    }
+  } else if (response?.ok) {
+    terra429Streak = 0;
+  }
   if (throttled || timedOut || !response) {
     return {
       ok: false,
@@ -287,39 +334,54 @@ export async function searchLocationDetailed(searchQuery, options = {}) {
     return { hit: null, trace };
   }
 
-  const queryVariants = [...new Set([primary, stripDescriptivePlaceName(primary), query].filter((s) => s.length >= 2))];
-  const geoVariants = geoName ? [geoName, ""] : [""];
-  const categories = [...new Set([options.category || "", "attraction", ""].filter((v) => v !== undefined))];
+  // Budget d'appels borné : l'ancien triple-boucle (3 requêtes × 2 geo × 3 catégories)
+  // pouvait émettre jusqu'à ~18 requêtes HTTP par candidat manqué et épuiser le quota TA.
+  const stripped = stripDescriptivePlaceName(primary);
+  /** @type {Array<{ q: string, geo: string, category: string }>} */
+  const plan = [];
+  const push = (q, geo, category) => {
+    if (!q || q.length < 2) return;
+    if (plan.some((a) => a.q === q && a.geo === geo && a.category === category)) return;
+    plan.push({ q, geo, category });
+  };
+  push(primary, geoName, options.category || "");
+  push(primary, geoName, "");
+  push(stripped, geoName, "");
+  push(primary, "", "");
+  push(stripped, "", "");
 
-  for (const q of queryVariants) {
-    for (const geo of geoVariants) {
-      for (const category of categories) {
-        const raw = await catalogSearchRaw(q, { geoName: geo, locale, category }, key);
-        trace.attempts.push({
-          query: q,
-          geoName: geo,
-          category: category || "(any)",
-          status: raw.status,
-          results: raw.count,
-          firstResult: raw.firstResult,
-        });
+  const MAX_TA_SEARCH_ATTEMPTS = 4;
 
-        if (!raw.ok) {
-          logTaHttpError(q, raw.status, raw.body);
-          continue;
-        }
+  for (const { q, geo, category } of plan.slice(0, MAX_TA_SEARCH_ATTEMPTS)) {
+    const raw = await catalogSearchRaw(q, { geoName: geo, locale, category }, key);
+    trace.attempts.push({
+      query: q,
+      geoName: geo,
+      category: category || "(any)",
+      status: raw.status,
+      results: raw.count,
+      firstResult: raw.firstResult,
+    });
 
-        const hit = pickBestCatalogHit(raw.hits, q);
-        if (hit?.locationId) {
-          if (!reasonableNameMatch(q, hit.name) && raw.count > 0) {
-            trace.reason = "weak_match_accepted";
-          }
-          return { hit, trace };
-        }
-
-        logTaMiss(q, raw.status, raw.count, raw.firstResult, geo ? `geo=${geo}` : "");
+    if (!raw.ok) {
+      logTaHttpError(q, raw.status, raw.body);
+      if (raw.status === 429) {
+        // Quota / throttling TA : inutile de brûler d'autres variantes.
+        trace.reason = "throttled";
+        return { hit: null, trace };
       }
+      continue;
     }
+
+    const hit = pickBestCatalogHit(raw.hits, q);
+    if (hit?.locationId) {
+      if (!reasonableNameMatch(q, hit.name) && raw.count > 0) {
+        trace.reason = "weak_match_accepted";
+      }
+      return { hit, trace };
+    }
+
+    logTaMiss(q, raw.status, raw.count, raw.firstResult, geo ? `geo=${geo}` : "");
   }
 
   trace.reason = "no_results";
@@ -429,15 +491,19 @@ export async function getLocationPhotos(locationId, language = "fr", limit = 5) 
 }
 
 export function isTripAdvisorConfigured() {
+  if (isTripAdvisorDisabled()) return false;
   return Boolean(getKey());
 }
 
-/** Compteur d'appels TripAdvisor par requête generate-itinerary. */
+/** Compteur d'appels HTTP TripAdvisor par requête generate-itinerary. */
 export function createTripAdvisorCallCounter() {
   let count = 0;
   return {
     inc() {
       count += 1;
+    },
+    add(n) {
+      count += Math.max(0, Number(n) || 0);
     },
     get() {
       return count;

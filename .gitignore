@@ -11,4 +11,6 @@ pnpm-debug.log*
 .DS_Store
 scripts/_local/
 scripts/_reports/
+scripts/tmp-*
+.cursor/settings.json
 public/videos/plage-hero.original.mp4

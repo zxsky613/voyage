@@ -117,6 +117,7 @@ function readServerKey(envDir, keyName) {
 
 const readFoursquareKey = (envDir) => readServerKey(envDir, "FOURSQUARE_API_KEY");
 const readGroqKey      = (envDir) => readServerKey(envDir, "GROQ_API_KEY");
+const readDeepSeekKey  = (envDir) => readServerKey(envDir, "DEEPSEEK_API_KEY");
 
 /**
  * Appelle l'API Groq (OpenAI-compatible) et parse la réponse JSON.
@@ -360,9 +361,9 @@ function formatPrefsForPrompt(prefs) {
   if (prefs.pace) lines.push(`- Rythme : ${paceLabel[prefs.pace] || prefs.pace}`);
 
   if (Array.isArray(prefs.styles) && prefs.styles.length > 0) {
-    const styles = prefs.styles.filter((s) => s !== "gastronomy");
+    const styles = prefs.styles.filter((s) => s !== "gastronomy" && s !== "shopping");
     if (styles.length > 0) {
-      const styleLabel = { cultural: "Culturel & Histoire", nature: "Nature & Randonnée", relaxation: "Détente & Bien-être", adventure: "Aventure & Sports", nightlife: "Vie nocturne", shopping: "Shopping" };
+      const styleLabel = { cultural: "Culturel & Histoire", nature: "Nature & Randonnée", relaxation: "Détente & Bien-être", adventure: "Aventure & Sports", nightlife: "Vie nocturne" };
       lines.push(`- Style(s) souhaité(s) : ${styles.map((s) => styleLabel[s] || s).join(", ")}`);
     }
   }
@@ -483,6 +484,14 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
       }
       const groqKey = readGroqKey(envDir);
       if (groqKey) process.env.GROQ_API_KEY = groqKey;
+      const deepseekKey = readDeepSeekKey(envDir);
+      if (deepseekKey) process.env.DEEPSEEK_API_KEY = deepseekKey;
+      const deepseekModel = readServerKey(envDir, "DEEPSEEK_MODEL");
+      if (deepseekModel) process.env.DEEPSEEK_MODEL = deepseekModel;
+      const forceLlm = readServerKey(envDir, "FORCE_LLM_PROVIDER");
+      if (forceLlm) process.env.FORCE_LLM_PROVIDER = forceLlm;
+      const disableTa = readServerKey(envDir, "DISABLE_TRIPADVISOR");
+      if (disableTa) process.env.DISABLE_TRIPADVISOR = disableTa;
       const geminiKey = readGeminiKeyFromEnvFiles(envDir);
       if (geminiKey) process.env.GEMINI_API_KEY = geminiKey;
       const fsqKey = readFoursquareKey(envDir);

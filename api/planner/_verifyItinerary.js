@@ -4,13 +4,18 @@ import {
   getLocationDetails,
   getLocationPhotos,
   isTripAdvisorConfigured,
+  isTripAdvisorDisabled,
   searchLocationDetailed,
 } from "./_tripadvisorClient.js";
 import { readPlaceEnrichmentCache, writePlaceEnrichmentCache, normalizePlaceCacheKey } from "./_enrichCache.js";
 import { searchFoursquarePlace } from "../foursquare/_textSearch.js";
 import { applyGeoMismatchGuard } from "../../lib/planner/geoGuard.js";
 
-const PLACE_LOOKUP_TIMEOUT_MS = 3000;
+// 3000 ms provoquait des « partial/timeout » sans coords en masse au premier passage
+// (le fetch TripAdvisor a lui-même un timeout de 12 s) — cause majeure du déficit de coords.
+// 15 s : les appels Terra sont désormais espacés (limiteur global 350 ms), un lookup
+// complet (recherche + détails + photos) peut légitimement dépasser 8 s.
+const PLACE_LOOKUP_TIMEOUT_MS = 15000;
 
 /**
  * @template T
@@ -56,20 +61,20 @@ async function withLookupTimeout(promise, ms) {
  * @param {string} near
  * @param {string} locale
  * @param {{ inc: () => void, get: () => number }} taCounter
- * @param {{ searchName?: string, category?: string, collectDebug?: boolean }} [opts]
+ * @param {{ searchName?: string, category?: string, collectDebug?: boolean, fsqCounter?: { inc: () => void } }} [opts]
  */
 async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts = {}) {
   const placeName = String(name || "").trim();
   const cityNorm = String(city || "").trim();
   const searchName = String(opts.searchName || "").trim();
   const category = String(opts.category || "").trim();
+  let taThrottled = false;
   /** @type {object|null} */
   let debugEntry = opts.collectDebug
     ? { name: placeName, searchName: searchName || placeName, city: cityNorm }
     : null;
 
   if (isTripAdvisorConfigured()) {
-    taCounter.inc();
     const taQuery = searchName || placeName;
     const searchQ = cityNorm ? `${taQuery}, ${cityNorm}` : taQuery;
     const { hit, trace } = await searchLocationDetailed(searchQ, {
@@ -78,6 +83,7 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
       searchName: taQuery,
       geoName: cityNorm,
     });
+    taCounter.add(Array.isArray(trace?.attempts) ? trace.attempts.length : 1);
 
     if (debugEntry) {
       debugEntry.taQuery = searchQ;
@@ -108,15 +114,19 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
         return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
       }
       if (debugEntry) debugEntry.reason = "details_failed";
-    } else if (debugEntry) {
-      debugEntry.reason = trace?.reason || "ta_miss";
-      debugEntry.results = trace?.attempts?.slice(-1)[0]?.results ?? 0;
-      debugEntry.firstResult = trace?.attempts?.slice(-1)[0]?.firstResult || "";
+    } else {
+      taThrottled = trace?.reason === "throttled";
+      if (debugEntry) {
+        debugEntry.reason = trace?.reason || "ta_miss";
+        debugEntry.results = trace?.attempts?.slice(-1)[0]?.results ?? 0;
+        debugEntry.firstResult = trace?.attempts?.slice(-1)[0]?.firstResult || "";
+      }
     }
   } else if (debugEntry) {
-    debugEntry.reason = "ta_not_configured";
+    debugEntry.reason = isTripAdvisorDisabled() ? "ta_disabled" : "ta_not_configured";
   }
 
+  opts.fsqCounter?.inc();
   const fsq = await searchFoursquarePlace(searchName || placeName, near || cityNorm, locale);
   if (fsq && (Number.isFinite(fsq.latitude) || Number.isFinite(fsq.longitude))) {
     const enrichment = {
@@ -128,6 +138,7 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
       priceLevel: fsq.priceLevel,
       foursquareUrl: fsq.foursquareUrl,
       fsqId: fsq.fsqId,
+      fsqCategories: fsq.fsqCategories,
     };
     await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
     if (debugEntry) debugEntry.reason = "partial_foursquare";
@@ -135,7 +146,11 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
   }
 
   const unverified = { name: placeName, status: "unverified", source: "none" };
-  await writePlaceEnrichmentCache(placeName, cityNorm, unverified);
+  // Ne JAMAIS cacher un échec dû au throttling TA : sinon le lieu reste
+  // « unverified » 24 h en cache et n'est plus jamais re-tenté (cache empoisonné).
+  if (!taThrottled) {
+    await writePlaceEnrichmentCache(placeName, cityNorm, unverified);
+  }
   if (debugEntry && !debugEntry.reason) debugEntry.reason = "unverified";
   return opts.collectDebug ? { ...unverified, _debug: debugEntry } : unverified;
 }
@@ -160,12 +175,16 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
 
   const cached = await readPlaceEnrichmentCache(placeName, cityNorm);
   if (cached) {
-    const out = { ...cached, name: cached.name || placeName };
-    if (debugEntry) {
-      debugEntry.reason = "cache_hit";
-      debugEntry.status = cached.status;
+    const src = String(cached.source || "").trim().toLowerCase();
+    if (!(isTripAdvisorDisabled() && src === "tripadvisor")) {
+      const out = { ...cached, name: cached.name || placeName };
+      if (debugEntry) {
+        debugEntry.reason = "cache_hit";
+        debugEntry.status = cached.status;
+        debugEntry.source = cached.source;
+      }
+      return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
     }
-    return opts.collectDebug ? { ...out, _debug: debugEntry } : out;
   }
 
   const raced = await withLookupTimeout(
@@ -186,6 +205,7 @@ export async function enrichPlaceByName(name, city, near, locale, taCounter, opt
  */
 export async function verifyCandidatePlaces(candidates, options) {
   const taCounter = createTripAdvisorCallCounter();
+  const fsqCounter = { n: 0, inc() { this.n += 1; } };
   const seen = new Set();
   const unique = [];
   /** @type {object[]} */
@@ -213,14 +233,25 @@ export async function verifyCandidatePlaces(candidates, options) {
         searchName: c.searchName,
         category: c.category,
         collectDebug: Boolean(options.debug),
+        fsqCounter,
       });
       if (options.debug && meta._debug) {
+        meta._debug.status = meta.status;
+        meta._debug.source = meta.source;
+        meta._debug.hasCoords =
+          Number.isFinite(Number(meta.latitude)) && Number.isFinite(Number(meta.longitude));
+        meta._debug.taHttpCalls =
+          (Array.isArray(meta._debug.taAttempts) ? meta._debug.taAttempts.length : 0) +
+          (meta._debug.locationId ? 2 : 0);
         debugRows.push(meta._debug);
         delete meta._debug;
       }
       return {
         id: c.id,
         name: meta.name || c.name,
+        // Conservé pour l'étape 2 de la cascade coords : Nominatim matche le nom
+        // officiel anglais/local bien mieux que le nom d'affichage français.
+        searchName: c.searchName,
         category: c.category,
         durationHours: c.durationHours,
         ...meta,
@@ -234,6 +265,7 @@ export async function verifyCandidatePlaces(candidates, options) {
   return {
     places: guarded,
     tripAdvisorCalls: taCounter.get(),
+    foursquareCalls: fsqCounter.n,
     debug: options.debug ? debugRows : undefined,
   };
 }

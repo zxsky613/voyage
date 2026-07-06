@@ -1,5 +1,6 @@
 import { handleCors, sendJson, parseBody, getFoursquareKey } from "../_helpers.js";
 import { searchFoursquarePlace } from "./_textSearch.js";
+import { FOURSQUARE_PLACES_BASE, foursquarePlacesHeaders } from "./_client.js";
 
 /** Loisirs / culture / plein air — lieux « incontournables ». */
 const FSQ_PRESET_POI = "10000,16000,12000";
@@ -34,32 +35,24 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: "lat/lon invalides ou manquants." });
   }
   const limit = Math.min(Number(body.limit) || 20, 50);
-  /** Chaîne Accept-Language riche : la langue UI en premier, puis secours (meilleure localisation des noms). */
-  const acceptLanguage =
-    localeRaw === "zh"
-      ? "zh-CN,zh;q=0.95,en;q=0.85"
-      : `${localeRaw},en;q=0.85,de;q=0.4,it;q=0.35,es;q=0.35,fr;q=0.35`;
   const preset = String(body.preset || "poi").toLowerCase();
   const categoriesRaw = String(body.categories || "").trim();
   const categories =
     categoriesRaw ||
     (preset === "restaurants" || preset === "dining" || preset === "food" ? FSQ_PRESET_RESTAURANTS : FSQ_PRESET_POI);
-  /** Champs utiles : prix relatif 1–4 (indicatif). */
-  const fields = "name,location,categories,price";
+  const fields = "name,location,categories,price,latitude,longitude,fsq_place_id";
 
   try {
-    const fsqUrl =
-      `https://api.foursquare.com/v3/places/search` +
-      `?ll=${lat},${lon}` +
-      `&categories=${categories}` +
-      `&fields=${encodeURIComponent(fields)}` +
-      `&sort=POPULARITY&limit=${limit}&radius=10000`;
-    const fsqResp = await fetch(fsqUrl, {
-      headers: {
-        Authorization: fsqKey,
-        Accept: "application/json",
-        "Accept-Language": acceptLanguage,
-      },
+    const params = new URLSearchParams({
+      ll: `${lat},${lon}`,
+      categories,
+      fields,
+      sort: "POPULARITY",
+      limit: String(limit),
+      radius: "10000",
+    });
+    const fsqResp = await fetch(`${FOURSQUARE_PLACES_BASE}/places/search?${params}`, {
+      headers: foursquarePlacesHeaders(localeRaw),
     });
     if (!fsqResp.ok) {
       const errText = await fsqResp.text();

@@ -279,8 +279,11 @@ export default function TripMap({
             16,
             13,
           ],
+          // Coords estimées (LLM) : marqueur atténué — normal pour tripadvisor/geocoded.
+          "circle-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#ffffff",
+          "circle-stroke-opacity": ["case", ["==", ["get", "estimated"], true], 0.5, 1],
         },
       });
 

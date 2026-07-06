@@ -85,6 +85,7 @@ function mapRow(row) {
     tripadvisorUrl: row.tripadvisor_url || undefined,
     photos: Array.isArray(row.photo_urls) ? row.photo_urls : [],
     name: row.raw_name || undefined,
+    fsqId: row.fsq_place_id ? String(row.fsq_place_id) : undefined,
     cached: true,
   };
 }
@@ -142,14 +143,25 @@ export async function writePlaceEnrichmentCache(name, city, enrichment) {
     raw_name: enrichment.name || name,
     updated_at: new Date().toISOString(),
   };
-  const { error } = await db.from("place_enrichment_cache").upsert(row, {
-    onConflict: "place_name_normalized,city_normalized",
-  });
-  if (error) {
+  const fsqId = String(enrichment.fsqId || enrichment.fsq_place_id || "").trim();
+  if (fsqId) row.fsq_place_id = fsqId;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { error } = await db.from("place_enrichment_cache").upsert(row, {
+      onConflict: "place_name_normalized,city_normalized",
+    });
+    if (!error) return true;
+    const msg = String(error?.message || "");
+    if (/fsq_place_id|column .* does not exist/i.test(msg) && Object.prototype.hasOwnProperty.call(row, "fsq_place_id")) {
+      const { fsq_place_id: _drop, ...rest } = row;
+      Object.assign(row, rest);
+      delete row.fsq_place_id;
+      continue;
+    }
     logCacheDisabled(`upsert failed — ${formatSupabaseCacheError(error)}`);
     return false;
   }
-  return true;
+  return false;
 }
 
 export function isPlaceEnrichmentCacheConfigured() {

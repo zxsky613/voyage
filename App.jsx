@@ -105,6 +105,8 @@ import { categoryForActivityTitle } from "./lib/planner/activityCategoryThumb.js
 import {
   pickTripAdvisorActivityPhoto,
   pickActivityDisplayPhotoUrl,
+  pickResolvedActivityPhoto,
+  isActivityPhotoPlaceholder,
   shouldShowTripAdvisorAttribution,
 } from "./lib/planner/activityImageSource.js";
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
@@ -5538,7 +5540,7 @@ function getActivityPlaceholderStyle(activity) {
   return activityPlaceholderStyle(activity);
 }
 
-/** Résolution image activité / bullet — TripAdvisor photos[] puis getResolvedImage. */
+/** Résolution image activité / bullet — photo serveur → TripAdvisor → getResolvedImage. */
 async function resolveActivityPlaceImage({
   title,
   location,
@@ -5548,6 +5550,10 @@ async function resolveActivityPlaceImage({
   photos,
   activityMeta,
 }) {
+  if (isActivityPhotoPlaceholder(activityMeta)) return "";
+  const serverPhoto = pickResolvedActivityPhoto(activityMeta || { photos, photoUrl: activityMeta?.photoUrl });
+  if (serverPhoto) return serverPhoto;
+
   const taPhoto = pickTripAdvisorActivityPhoto(activityMeta || { photos });
   if (taPhoto) return taPhoto;
 
@@ -5847,10 +5853,16 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
   const mapsUrl = buildPlannerActivityGoogleMapsUrl(rawTitle, cityLabel);
   const cacheKey = buildPlannerActivityImageCacheKey(cityLabel, activity?.id, rawTitle);
   const storedPhoto = getActivityImageUrl(activity);
-  const taPhotoUrl = pickTripAdvisorActivityPhoto(activity) || (storedPhoto && shouldShowTripAdvisorAttribution(activity, storedPhoto) ? storedPhoto : "");
-  const initialPhoto = taPhotoUrl || storedPhoto || readItineraryBulletImageCache(cacheKey) || "";
+  const resolvedPhoto = pickResolvedActivityPhoto(activity);
+  const taPhotoUrl =
+    pickTripAdvisorActivityPhoto(activity) ||
+    (storedPhoto && shouldShowTripAdvisorAttribution(activity, storedPhoto) ? storedPhoto : "");
+  const initialPhoto =
+    resolvedPhoto || taPhotoUrl || storedPhoto || readItineraryBulletImageCache(cacheKey) || "";
   const [src, setSrc] = useState(() => initialPhoto);
-  const [loading, setLoading] = useState(() => !initialPhoto && !isItineraryMealOrRestBulletClient(rawTitle));
+  const [loading, setLoading] = useState(
+    () => !initialPhoto && !isActivityPhotoPlaceholder(activity) && !isItineraryMealOrRestBulletClient(rawTitle)
+  );
   const [imgBroken, setImgBroken] = useState(false);
   const taUrl = String(activity?.tripadvisorUrl || activity?.tripadvisor_url || "").trim();
   const usingTaPhoto = shouldShowTripAdvisorAttribution(activity, src);
@@ -5866,12 +5878,12 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
 
   useEffect(() => {
     let cancelled = false;
-    if (!rawTitle || isItineraryMealOrRestBulletClient(rawTitle)) {
+    if (!rawTitle || isItineraryMealOrRestBulletClient(rawTitle) || isActivityPhotoPlaceholder(activity)) {
       setSrc("");
       setLoading(false);
       return undefined;
     }
-    const prefetched = taPhotoUrl || storedPhoto;
+    const prefetched = resolvedPhoto || taPhotoUrl || storedPhoto;
     if (prefetched) {
       setSrc(prefetched);
       setLoading(false);
@@ -5892,6 +5904,8 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
           location: activity?.location,
           tripTitle: cityLabel,
           uiLang: language,
+          photos: activity?.photos,
+          activityMeta: activity,
         });
         if (cancelled) return;
         const finalUrl = String(url || "").trim();
@@ -6044,16 +6058,18 @@ function PlannerDayActivityCard({ activity, cityLabel, onView, onEdit, onDelete,
 }
 
 function normalizeItineraryDayBullets(day) {
+  // 6 = plafond d'affichage ; le nombre réel par jour vient du contrat rythme
+  // (2 relaxed / 3 moderate / 4 intensive) appliqué côté serveur.
   if (Array.isArray(day?.bullets) && day.bullets.length > 0) {
     return day.bullets
       .map((b) => String(b || "").trim())
       .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
-      .slice(0, 2);
+      .slice(0, 6);
   }
   return (Array.isArray(day?.activities) ? day.activities : [])
     .map((a) => (typeof a === "string" ? a : String(a?.description || a?.name || "")).trim())
     .filter((b) => b && !isItineraryMealOrRestBulletClient(b))
-    .slice(0, 2);
+    .slice(0, 6);
 }
 
 function getItineraryDayActivitiesMeta(day) {
@@ -6184,6 +6200,8 @@ function buildPlannerActivityImageCacheKey(cityLabel, activityId, title) {
 
 /** Photo persistable à l'insert calendrier : TA → URL résolue modale → vide. */
 function pickActivityPhotoForCalendarInsert(meta, modalCachedUrl = "") {
+  const resolved = pickResolvedActivityPhoto(meta);
+  if (resolved) return resolved;
   const ta = pickTripAdvisorActivityPhoto(meta);
   if (ta) return ta;
   const cached = String(modalCachedUrl || "").trim();
@@ -6231,9 +6249,18 @@ function ItineraryBulletRow({
   const { t, language } = useI18n();
   const text = String(bullet || "").trim();
   const cacheKey = buildItineraryModalImageCacheKey(cityLabel, dayNum, bulletIndex, text);
+  const serverPhoto = pickResolvedActivityPhoto(activityMeta);
   const taPhotoUrl = pickTripAdvisorActivityPhoto(activityMeta);
-  const [src, setSrc] = useState(() => taPhotoUrl || readItineraryBulletImageCache(cacheKey) || "");
-  const [loading, setLoading] = useState(() => !taPhotoUrl && !readItineraryBulletImageCache(cacheKey));
+  const [src, setSrc] = useState(
+    () => serverPhoto || taPhotoUrl || readItineraryBulletImageCache(cacheKey) || ""
+  );
+  const [loading, setLoading] = useState(
+    () =>
+      !serverPhoto &&
+      !taPhotoUrl &&
+      !readItineraryBulletImageCache(cacheKey) &&
+      !isActivityPhotoPlaceholder(activityMeta)
+  );
   const [imgBroken, setImgBroken] = useState(false);
   const [mapOpening, setMapOpening] = useState(false);
   const [swapLoading, setSwapLoading] = useState(false);
@@ -6271,6 +6298,16 @@ function ItineraryBulletRow({
 
   useEffect(() => {
     let cancelled = false;
+    if (isActivityPhotoPlaceholder(activityMeta)) {
+      setSrc("");
+      setLoading(false);
+      return undefined;
+    }
+    if (serverPhoto) {
+      setSrc(serverPhoto);
+      setLoading(false);
+      return undefined;
+    }
     if (taPhotoUrl) {
       setSrc(taPhotoUrl);
       setLoading(false);
@@ -6358,6 +6395,9 @@ function ItineraryBulletRow({
     ? "relative h-28 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/90 sm:h-32 sm:w-48"
     : "relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-lg bg-slate-200 ring-1 ring-slate-200/90 sm:h-14 sm:w-14 sm:rounded-xl";
 
+  const bulletCategoryThumb = categoryForActivityTitle(displayText);
+  const BulletCategoryIcon = ACTIVITY_CATEGORY_ICON_MAP[bulletCategoryThumb.iconKey] || CalendarCheck;
+
   const imageInner = loading ? (
     <div className="h-full w-full animate-pulse bg-slate-200" aria-hidden />
   ) : src && !imgBroken ? (
@@ -6397,9 +6437,11 @@ function ItineraryBulletRow({
       }}
     />
   ) : (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-slate-100 px-2 text-center" aria-hidden>
-      <ImageOff className="h-5 w-5 text-slate-300 sm:h-6 sm:w-6" strokeWidth={1.75} />
-      <span className="line-clamp-2 text-[9px] leading-tight text-slate-400 sm:text-[10px]">{placeLabel}</span>
+    <div
+      className={`flex h-full w-full items-center justify-center ${bulletCategoryThumb.bgClass}`}
+      aria-hidden
+    >
+      <BulletCategoryIcon className={`h-6 w-6 sm:h-7 sm:w-7 ${bulletCategoryThumb.fgClass}`} strokeWidth={1.75} />
     </div>
   );
 
@@ -10535,7 +10577,6 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
                 {checkCard("relaxation", t("destination.prefsStyleRelaxation"))}
                 {checkCard("adventure", t("destination.prefsStyleAdventure"))}
                 {checkCard("nightlife", t("destination.prefsStyleNightlife"))}
-                {checkCard("shopping", t("destination.prefsStyleShopping"))}
               </div>
             </section>
           ) : null}
@@ -10665,6 +10706,7 @@ function buildItineraryDayMapActivities(dayIndex, bullets, activityMetaList, cit
       title,
       latitude: lat,
       longitude: lon,
+      coordsSource: String(meta?.coordsSource || "") || undefined,
       period: meta?.period || parseItineraryBulletPeriod(bullet),
       time: String(meta?.time || "").slice(0, 5),
       photoUrl: photo,
@@ -12697,6 +12739,9 @@ function DestinationGuideView({
                     ...(Number.isFinite(lat) && Number.isFinite(lon)
                       ? { latitude: lat, longitude: lon }
                       : {}),
+                    ...(Number.isFinite(lat) && Number.isFinite(lon) && meta?.coordsSource
+                      ? { coords_source: String(meta.coordsSource) }
+                      : {}),
                   };
                 })
                 .filter(Boolean)
@@ -12728,6 +12773,9 @@ function DestinationGuideView({
             image_url: photo,
             ...(Number.isFinite(lat) && Number.isFinite(lon)
               ? { latitude: lat, longitude: lon }
+              : {}),
+            ...(Number.isFinite(lat) && Number.isFinite(lon) && meta?.coordsSource
+              ? { coords_source: String(meta.coordsSource) }
               : {}),
           });
         });
@@ -16747,6 +16795,7 @@ export default function App() {
           image_url: String(item?.image_url || item?.photo_url || "").trim(),
           latitude: Number.isFinite(Number(item?.latitude)) ? Number(item.latitude) : undefined,
           longitude: Number.isFinite(Number(item?.longitude)) ? Number(item.longitude) : undefined,
+          coords_source: String(item?.coords_source || "").trim() || undefined,
         };
       })
       .filter((x) => x.title);
@@ -16771,6 +16820,9 @@ export default function App() {
       };
       if (Number.isFinite(item.latitude)) row.latitude = item.latitude;
       if (Number.isFinite(item.longitude)) row.longitude = item.longitude;
+      // Colonne ajoutée par supabase/sql/activities_coords_source.sql ; si elle
+      // manque, la boucle d'insert retire automatiquement la colonne inconnue.
+      if (item.coords_source) row.coords_source = item.coords_source;
       if (String(userId || "").trim()) row.owner_id = String(userId).trim();
       return row;
     });
@@ -16914,6 +16966,7 @@ export default function App() {
                     image_url: String(row?.image_url || row?.photo_url || "").trim(),
                     latitude: Number.isFinite(Number(row?.latitude)) ? Number(row.latitude) : undefined,
                     longitude: Number.isFinite(Number(row?.longitude)) ? Number(row.longitude) : undefined,
+                    coords_source: String(row?.coords_source || "").trim() || undefined,
                   };
                 })
                 .filter((r) => r.title)

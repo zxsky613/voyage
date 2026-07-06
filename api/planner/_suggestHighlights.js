@@ -91,7 +91,7 @@ export async function handler(req, res) {
       language: locale,
     });
 
-    const pass1 = await runPlannerLlmJson({
+    const pass1Out = await runPlannerLlmJson({
       prompt: buildSuggestHighlightsPrompt({
         destination,
         enrichBlock,
@@ -102,7 +102,7 @@ export async function handler(req, res) {
       maxTokens: 2048,
     });
 
-    const candidates = normalizeCandidates(pass1?.candidates);
+    const candidates = normalizeCandidates(pass1Out.data?.candidates);
     if (!candidates.length) {
       return sendJson(res, 200, {
         ok: true,

@@ -72,14 +72,20 @@ export async function runGeminiJson({ key, modelId, prompt, generationConfigExtr
   return parseGeminiJsonLenient(text, "API");
 }
 
-export async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2, model = "llama-3.3-70b-versatile" }) {
+export async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2, model = "llama-3.3-70b-versatile", maxTokens }) {
   const messages = [];
   if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
   messages.push({ role: "user", content: prompt });
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature, response_format: { type: "json_object" } }),
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      response_format: { type: "json_object" },
+      ...(Number.isFinite(Number(maxTokens)) ? { max_completion_tokens: Number(maxTokens) } : {}),
+    }),
   });
   if (!resp.ok) {
     const errText = await resp.text();
@@ -88,6 +94,39 @@ export async function runGroqJson({ key, prompt, systemPrompt, temperature = 0.2
   const json = await resp.json();
   const text = String(json?.choices?.[0]?.message?.content || "").trim();
   return parseGeminiJsonLenient(text, "Groq");
+}
+
+/** DeepSeek V4 Flash — API OpenAI-compatible (PAS deepseek-chat legacy). */
+export async function runDeepSeekJson({
+  key,
+  prompt,
+  systemPrompt,
+  temperature = 0.2,
+  model = "deepseek-v4-flash",
+  maxTokens,
+}) {
+  const messages = [];
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+  messages.push({ role: "user", content: prompt });
+  const resp = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      response_format: { type: "json_object" },
+      thinking: { type: "disabled" },
+      ...(Number.isFinite(Number(maxTokens)) ? { max_tokens: Number(maxTokens) } : {}),
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`DeepSeek ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+  const json = await resp.json();
+  const text = String(json?.choices?.[0]?.message?.content || "").trim();
+  return parseGeminiJsonLenient(text, "DeepSeek");
 }
 
 export function countInclusiveTripDays(startYmd, endYmd) {
@@ -266,9 +305,9 @@ export function formatPrefsForPrompt(prefs) {
   const paceLabel = { relaxed: "Détendu (2-3 activités/jour)", moderate: "Modéré (3-4)", intensive: "Intensif (maximum)" };
   if (prefs.pace) lines.push(`- Rythme : ${paceLabel[prefs.pace] || prefs.pace}`);
   if (Array.isArray(prefs.styles) && prefs.styles.length > 0) {
-    const styles = prefs.styles.filter((s) => s !== "gastronomy");
+    const styles = prefs.styles.filter((s) => s !== "gastronomy" && s !== "shopping");
     if (styles.length > 0) {
-      const styleLabel = { cultural: "Culturel", nature: "Nature", relaxation: "Détente", adventure: "Aventure", nightlife: "Vie nocturne", shopping: "Shopping" };
+      const styleLabel = { cultural: "Culturel", nature: "Nature", relaxation: "Détente", adventure: "Aventure", nightlife: "Vie nocturne" };
       lines.push(`- Style(s) : ${styles.map((s) => styleLabel[s] || s).join(", ")}`);
     }
   }
@@ -469,13 +508,18 @@ export function buildItinerarySchedulingRulesParagraph(uiLang) {
   );
 }
 
-/** Pas de restauration ni « retour à l’hôtel / repos » dans les programmes — uniquement des visites. */
-export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
+/**
+ * Pas de restauration ni « retour à l’hôtel / repos » dans les programmes — uniquement des visites.
+ * @param {string} uiLang
+ * @param {number} [perDay] nombre d'activités par jour (contrat rythme du questionnaire)
+ */
+export function buildItineraryNoNamedRestaurantsParagraph(uiLang, perDay = 2) {
   const code = String(uiLang || "fr").toLowerCase().split("-")[0];
+  const n = Math.max(1, Number(perDay) || 2);
   if (code === "en") {
     return (
       "\nACTIVITIES ONLY — PRODUCT RULE (MANDATORY):\n" +
-      "- Exactly 2 bullets per day (morning + afternoon): concrete visits, walks, museums, nature, viewpoints.\n" +
+      `- Exactly ${n} bullets per day (morning + afternoon): concrete visits, walks, museums, nature, viewpoints.\n` +
       "- Do NOT plan meals, snacks, cafés, restaurants, bars, or food tours — not even generically.\n" +
       "- Do NOT add an evening bullet whose only purpose is rest, sleep, or « return to accommodation ».\n" +
       "- costEur covers tickets and local transport only — no restaurant-style spending.\n"
@@ -484,7 +528,7 @@ export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
   if (code === "de") {
     return (
       "\nNUR BESICHTIGUNGEN — PRODUKTKONDITION (VERPFLICHTEND):\n" +
-      "- Genau 2 Bullets pro Tag (Vormittag + Nachmittag): konkrete Besuche, keine Mahlzeiten.\n" +
+      `- Genau ${n} Bullets pro Tag (Vormittag + Nachmittag): konkrete Besuche, keine Mahlzeiten.\n` +
       "- Keine Restaurants, Cafés, Bars, Snacks oder « Rückkehr zur Unterkunft / Ruhe » als Programmpunkt.\n" +
       "- costEur nur Eintritte und Nahverkehr — kein Restaurant-Budget.\n"
     );
@@ -492,7 +536,7 @@ export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
   if (code === "es") {
     return (
       "\nSOLO VISITAS — REGLA DE PRODUCTO (OBLIGATORIO):\n" +
-      "- Exactamente 2 viñetas por día (mañana + tarde): visitas concretas, sin comidas.\n" +
+      `- Exactamente ${n} viñetas por día (mañana + tarde): visitas concretas, sin comidas.\n` +
       "- Prohibido restaurantes, bares, cafés, comida o « volver al alojamiento / descansar » como actividad.\n" +
       "- costEur solo entradas y transporte local.\n"
     );
@@ -500,7 +544,7 @@ export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
   if (code === "it") {
     return (
       "\nSOLO VISITE — REGOLA DI PRODOTTO (OBBLIGATORIO):\n" +
-      "- Esattamente 2 bullet al giorno (mattina + pomeriggio): visite concrete, niente pasti.\n" +
+      `- Esattamente ${n} bullet al giorno (mattina + pomeriggio): visite concrete, niente pasti.\n` +
       "- Vietati ristoranti, bar, caffè, cibo o « rientro in hotel / riposo » come attività.\n" +
       "- costEur solo biglietti e trasporti locali.\n"
     );
@@ -508,14 +552,14 @@ export function buildItineraryNoNamedRestaurantsParagraph(uiLang) {
   if (code === "zh") {
     return (
       "\n仅安排参观 — 产品约束（必须遵守）：\n" +
-      "- 每天恰好 2 条 bullet（上午 + 下午）：具体景点或体验，不写餐饮。\n" +
+      `- 每天恰好 ${n} 条 bullet（上午 + 下午）：具体景点或体验，不写餐饮。\n` +
       "- 禁止餐厅、咖啡馆、酒吧、用餐、小吃，也不要写「返回住宿休息」类 filler。\n" +
       "- costEur 仅含门票与本地交通，不含餐饮消费。\n"
     );
   }
   return (
     "\nVISITES UNIQUEMENT — CONTRAINTE PRODUIT (OBLIGATOIRE) :\n" +
-    "- Exactement 2 bullets par jour (matin + après-midi) : visites concrètes, musées, nature, belvédères.\n" +
+    `- Exactement ${n} bullets par jour (matin + après-midi) : visites concrètes, musées, nature, belvédères.\n` +
     "- Aucun repas, café, restaurant, bar, collation ou tournée gastronomique — même en générique.\n" +
     "- Pas de bullet « soir » ou « retour à l’hôtel / repos » sans visite réelle.\n" +
     "- costEur = entrées + transports locaux uniquement, sans poste restaurant.\n"
@@ -736,7 +780,7 @@ export function dedupeItineraryDayIdeas(dayIdeas, uiLang = "fr", options = {}) {
 }
 
 /** Bloc à injecter dans les prompts Groq/Gemini d'itinéraire. */
-export async function buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang }) {
+export async function buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang, perDay = 2 }) {
   const cal = buildItineraryCalendarPromptBlock(startDate, endDate, uiLang);
   const [holidays, rules, cohesion] = await Promise.all([
     formatNagerHolidaysForPrompt(countryCode, startDate, endDate, uiLang),
@@ -744,7 +788,7 @@ export async function buildItineraryEnrichmentBlock({ startDate, endDate, countr
     Promise.resolve(buildItineraryCohesionAndVarietyRulesParagraph(uiLang)),
   ]);
   const scriptRule = buildProperNamesScriptConsistencyRule(uiLang);
-  const noRestaurants = buildItineraryNoNamedRestaurantsParagraph(uiLang);
+  const noRestaurants = buildItineraryNoNamedRestaurantsParagraph(uiLang, perDay);
   const code = String(uiLang || "fr").toLowerCase().split("-")[0];
   const calTitle =
     code === "en"
@@ -765,6 +809,14 @@ export function getGeminiModel() {
 
 export function getGroqKey() {
   return String(process.env.GROQ_API_KEY || "").trim();
+}
+
+export function getDeepSeekKey() {
+  return String(process.env.DEEPSEEK_API_KEY || "").trim();
+}
+
+export function getDeepSeekModel() {
+  return String(process.env.DEEPSEEK_MODEL || "deepseek-v4-flash").trim();
 }
 
 export function getFoursquareKey() {
