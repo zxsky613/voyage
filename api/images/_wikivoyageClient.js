@@ -77,7 +77,7 @@ export async function fetchWikivoyagePageImageCandidate(lang, title, options = {
 
   const api =
     `https://${l}.wikivoyage.org/w/api.php?action=query&format=json&redirects=1&origin=*` +
-    `&titles=${encodeURIComponent(t)}&prop=pageimages&pithumbsize=1920`;
+    `&titles=${encodeURIComponent(t)}&prop=pageimages&piprop=thumbnail&pithumbsize=1600`;
 
   const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
     headers: { "User-Agent": wikiUserAgent() },
@@ -92,7 +92,7 @@ export async function fetchWikivoyagePageImageCandidate(lang, title, options = {
   const tw = Number(page.thumbnail?.width || 0);
   const th = Number(page.thumbnail?.height || 0);
   return {
-    url: commonsThumbUrl(src, 1920),
+    url: commonsThumbUrl(src),
     source: /** @type {'wikivoyage'} */ ("wikivoyage"),
     sourceUrl: `https://${l}.wikivoyage.org/wiki/${encodeURIComponent(t.replace(/ /g, "_"))}`,
     width: tw,

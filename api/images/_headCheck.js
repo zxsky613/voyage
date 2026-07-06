@@ -1,9 +1,16 @@
+import {
+  HERO_COMMONS_THUMB_WIDTH,
+  toCommonsThumbUrl,
+} from "../../lib/images/commonsThumbUrl.js";
+
 export const WIKIMEDIA_USER_AGENT =
   "JustTrip/1.0 (https://justtrip.fr; contact@justtrip.fr)";
 
 export function wikiUserAgent() {
   return WIKIMEDIA_USER_AGENT;
 }
+
+export { HERO_COMMONS_THUMB_WIDTH, toCommonsThumbUrl };
 
 /** @param {string} url */
 export function isWikimediaApiUrl(url) {
@@ -26,13 +33,9 @@ export function parseExtMetaValue(raw) {
   return String(raw).trim();
 }
 
-/** Upgrade thumb Commons vers largeur cible. */
-export function commonsThumbUrl(url, width = 1920) {
-  const u = String(url || "").trim();
-  if (!u.includes("/thumb/")) return u;
-  const q = u.indexOf("?");
-  const base = q > 0 ? u.slice(0, q) : u;
-  return base.replace(/\/\d+px-([^/?#]+)$/i, `/${width}px-$1`);
+/** Normalise vers miniature Commons (originale ou thumb existante). */
+export function commonsThumbUrl(url, width = HERO_COMMONS_THUMB_WIDTH) {
+  return toCommonsThumbUrl(url, width);
 }
 
 /** HEAD puis GET partiel si HEAD refusé. */
@@ -85,7 +88,7 @@ export async function firstValidCandidate(candidates) {
  */
 export function candidateToResolved(c, entityId) {
   return {
-    url: c.url,
+    url: commonsThumbUrl(c.url),
     source: c.source,
     heroSource: c.heroSource,
     entityId: entityId || undefined,

@@ -27,7 +27,7 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const api =
     "https://commons.wikimedia.org/w/api.php?action=query&format=json&redirects=1" +
     `&titles=${encodeURIComponent(filePage)}` +
-    "&prop=imageinfo&iiprop=url|extmetadata|size";
+    "&prop=imageinfo&iiprop=url|thumburl|extmetadata|size";
 
   const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
     headers: { "User-Agent": wikiUserAgent() },
@@ -36,7 +36,7 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const j = json;
   const page = Object.values(j?.query?.pages || {})[0];
   const info = page?.imageinfo?.[0];
-  const url = String(info?.url || info?.thumburl || "").trim();
+  const url = String(info?.thumburl || info?.url || "").trim();
   if (!url || isLikelyWikiBrandOrLogoImage(url, title)) return null;
   if (hero && isLikelyOrbitalOrMapImagery(url, title)) return null;
   if (hero && isLikelyNonScenicHeroImagery(url, title)) return null;
@@ -51,7 +51,7 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   if (source === "commons-category" && w < HERO_MIN_WIDTH) return null;
 
   return {
-    url: commonsThumbUrl(url, Math.max(HERO_MIN_LANDSCAPE_WIDTH, 1920)),
+    url: commonsThumbUrl(url),
     source: /** @type {import('../../lib/images/types.js').ImageSource} */ (source),
     author:
       parseExtMetaValue(meta.Artist) ||

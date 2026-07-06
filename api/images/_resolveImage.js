@@ -1,4 +1,9 @@
 import { normalizeLabel, splitResolveImageLabelContext, inferDefaultHeroResolveContext } from "../../lib/images/normalizeLabel.js";
+import {
+  ensureStoredHeroImageUrl,
+  isCommonsThumbPath,
+  isWikimediaUploadUrl,
+} from "../../lib/images/commonsThumbUrl.js";
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage, isLikelyNonScenicHeroImagery } from "../../lib/images/wikiImageFilters.js";
 import {
   isCacheConfigured,
@@ -150,6 +155,33 @@ function isBlockedHeroCacheEntry(url, kind) {
 }
 
 /**
+ * Migration douce : réécrit les entrées cache héros (original Commons → thumb 1600px).
+ * @param {import('../../lib/images/types.js').ResolvedImage} entry
+ * @param {{ labelNormalized: string, kind: import('../../lib/images/types.js').ImageKind, entityId?: string }} ctx
+ */
+async function maybeMigrateCachedHeroThumb(entry, ctx) {
+  if (ctx.kind !== "hero" || !entry?.url) return entry;
+  const nextUrl = ensureStoredHeroImageUrl(entry.url, "hero");
+  if (nextUrl === entry.url) return entry;
+  if (isWikimediaUploadUrl(entry.url) && !isCommonsThumbPath(nextUrl)) return entry;
+  await writeCache({
+    labelNormalized: ctx.labelNormalized,
+    kind: ctx.kind,
+    entityId: ctx.entityId || entry.entityId,
+    candidate: {
+      url: nextUrl,
+      source: entry.source,
+      heroSource: entry.heroSource,
+      author: entry.attribution?.author,
+      license: entry.attribution?.license,
+      licenseUrl: entry.attribution?.licenseUrl,
+      sourceUrl: entry.attribution?.sourceUrl,
+    },
+  });
+  return { ...entry, url: nextUrl };
+}
+
+/**
  * @typedef {import('../../lib/images/types.js').ResolvedImage} ResolvedImage
  * @typedef {'wikidata_throttled' | 'not_found' | 'timeout' | 'cache_disabled' | 'filtered'} ResolveImageReason
  * @typedef {'hit' | 'miss' | 'disabled'} ImageCacheField
@@ -179,7 +211,10 @@ export async function resolveImage(params) {
     const labelCached = await readCacheByLabel(labelNormalized, kind);
     if (labelCached.cache === "disabled") cacheField = "disabled";
     else if (labelCached.cache === "hit" && labelCached.entry?.url) {
-      const cached = labelCached.entry;
+      const cached = await maybeMigrateCachedHeroThumb(labelCached.entry, {
+        labelNormalized,
+        kind,
+      });
       if (!isBlockedHeroCacheEntry(cached.url, kind)) {
         return {
           image: { ...cached, heroSource: cached.heroSource || inferHeroSource({ source: cached.source }) },
@@ -221,7 +256,11 @@ export async function resolveImage(params) {
     const byEntity = await readCacheByEntity(entity.qid, kind);
     if (byEntity.cache === "disabled") cacheField = "disabled";
     else if (byEntity.cache === "hit" && byEntity.entry?.url) {
-      const byEntityImage = byEntity.entry;
+      const byEntityImage = await maybeMigrateCachedHeroThumb(byEntity.entry, {
+        labelNormalized,
+        kind,
+        entityId: entity.qid,
+      });
       if (!isBlockedHeroCacheEntry(byEntityImage.url, kind)) {
         const heroSource = byEntityImage.heroSource || inferHeroSource({ source: byEntityImage.source });
         return {

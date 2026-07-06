@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from "../_helpers.js";
+import { ensureStoredHeroImageUrl } from "../../lib/images/commonsThumbUrl.js";
 
 /** @typedef {'hit' | 'miss' | 'disabled'} ImageCacheField */
 
@@ -153,7 +154,7 @@ export async function writeCache({ labelNormalized, kind, entityId, candidate })
     label_normalized: labelNormalized,
     kind,
     entity_id: entityId || null,
-    image_url: candidate.url,
+    image_url: ensureStoredHeroImageUrl(candidate.url, kind),
     source: candidate.source,
     author: candidate.author || null,
     license: candidate.license || null,

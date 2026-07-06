@@ -19,7 +19,7 @@ export async function fetchWikipediaPageCandidate(lang, title, options = {}) {
   if (!t) return null;
   const api =
     `https://${l}.wikipedia.org/w/api.php?action=query&format=json&redirects=1&origin=*` +
-    `&titles=${encodeURIComponent(t)}&prop=pageimages&piprop=original|thumbnail&pithumbsize=1920`;
+    `&titles=${encodeURIComponent(t)}&prop=pageimages&piprop=thumbnail&pithumbsize=1600`;
   const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
     headers: { "User-Agent": wikiUserAgent() },
   });
@@ -27,20 +27,10 @@ export async function fetchWikipediaPageCandidate(lang, title, options = {}) {
   const page = Object.values(json?.query?.pages || {})[0];
   if (!page || page.missing) return null;
 
-  const original = page.original;
   const thumb = page.thumbnail;
-  let src = "";
-  let tw = 0;
-  let th = 0;
-  if (original?.source) {
-    src = String(original.source).trim();
-    tw = Number(original.width || 0);
-    th = Number(original.height || 0);
-  } else if (thumb?.source) {
-    src = String(thumb.source).trim();
-    tw = Number(thumb.width || 0);
-    th = Number(thumb.height || 0);
-  }
+  const src = String(thumb?.source || "").trim();
+  const tw = Number(thumb?.width || 0);
+  const th = Number(thumb?.height || 0);
   if (!src || isLikelyWikiBrandOrLogoImage(src, t)) return null;
   if (options.kind === "hero") {
     if (isLikelyOrbitalOrMapImagery(src, t)) return null;
@@ -49,7 +39,7 @@ export async function fetchWikipediaPageCandidate(lang, title, options = {}) {
   }
 
   return {
-    url: commonsThumbUrl(src, 1920),
+    url: commonsThumbUrl(src),
     source: "wikipedia",
     heroSource: "pageimage",
     sourceUrl: `https://${l}.wikipedia.org/wiki/${encodeURIComponent(t.replace(/ /g, "_"))}`,

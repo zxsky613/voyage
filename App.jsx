@@ -87,6 +87,7 @@ import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
 import { getResolvedImage, getResolvedImageUrl } from "./lib/getResolvedImage.js";
 import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
 import { resolveImagePlaceholder, resolveDestinationHeroPlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
+import { toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
 import {
   stripItineraryBulletTimePrefix,
   buildActivityResolveParams,
@@ -2181,13 +2182,7 @@ function getStorageMirrorHeroUrl(cityInput) {
  * Aucune clé API : même fichier sur upload.wikimedia.org.
  */
 function upgradeWikimediaCommonsThumbUrl(url) {
-  const u = String(url || "").trim();
-  if (!u.includes("upload.wikimedia.org") || !u.includes("/thumb/")) return u;
-  const q = u.indexOf("?");
-  const base = q > 0 ? u.slice(0, q) : u;
-  const qs = q > 0 ? u.slice(q) : "";
-  const out = base.replace(/\/\d+px-([^/?#]+)$/i, "/1920px-$1");
-  return out + qs;
+  return toCommonsThumbUrl(String(url || "").trim());
 }
 
 /** Unsplash : élargit w= dans l’URL (regular ~1080px → ~2400px si la photo le permet). */
@@ -11837,6 +11832,7 @@ function DestinationGuideView({
   const [heroVideoFailed, setHeroVideoFailed] = useState(false);
   const [heroVideoPlaying, setHeroVideoPlaying] = useState(false);
   const [heroFetchSettled, setHeroFetchSettled] = useState(false);
+  const [heroImageFailed, setHeroImageFailed] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
   useEffect(() => {
@@ -11928,6 +11924,10 @@ function DestinationGuideView({
       tips: finalizeTravelTipsForUi(tipsSource, city, language),
     };
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
+
+  useEffect(() => {
+    setHeroImageFailed(false);
+  }, [displayGuide?.landscapeImageUrl, displayGuide?.imageUrl, confirmedDestination]);
 
   const verifiedHighlightChips = useMemo(
     () => (destinationHighlights || []).map(highlightToActivityChip),
@@ -12935,7 +12935,7 @@ function DestinationGuideView({
                       </div>
                     );
                   }
-                  if (!heroSrc) {
+                  if (!heroSrc || heroImageFailed) {
                     return (
                       <div
                         className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center"
@@ -12964,18 +12964,14 @@ function DestinationGuideView({
                       fetchPriority="high"
                       onError={(e) => {
                         const el = e.currentTarget;
-                        if (guideCleanup) {
-                          el.removeAttribute("src");
-                          el.style.display = "none";
-                          return;
+                        if (!guideCleanup) {
+                          const next = pickNextDestinationGuideImgSrc(el, displayGuide);
+                          if (next) {
+                            el.src = next;
+                            return;
+                          }
                         }
-                        const next = pickNextDestinationGuideImgSrc(el, displayGuide);
-                        if (next) {
-                          el.src = next;
-                          return;
-                        }
-                        el.removeAttribute("src");
-                        el.style.display = "none";
+                        setHeroImageFailed(true);
                       }}
                     />
                   );

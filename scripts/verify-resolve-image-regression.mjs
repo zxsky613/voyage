@@ -19,6 +19,11 @@ import { resolveEntity } from "../api/images/_entityResolver.js";
 import { resolveImage } from "../api/images/_resolveImage.js";
 import { buildCityHeroUnsplashQuery } from "../cityDroneImagePrompt.js";
 import { buildCityImageCacheKey } from "../cityHeroStem.js";
+import {
+  fixDoubleEncodedUrl,
+  isCommonsThumbPath,
+  toCommonsThumbUrl,
+} from "../lib/images/commonsThumbUrl.js";
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -37,6 +42,22 @@ function sleep(ms) {
 }
 
 console.log("verify-resolve-image: unit tests…");
+
+const originalCommons =
+  "https://upload.wikimedia.org/wikipedia/commons/d/d0/Griffith_Observatory%2C_Los_Angeles_2011.jpg";
+const thumbFromOriginal = toCommonsThumbUrl(originalCommons);
+assert(isCommonsThumbPath(thumbFromOriginal), "original Commons URL → thumb path");
+assert(/\/1600px-/.test(thumbFromOriginal), "thumb width 1600px");
+
+const smallThumb =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Nice_vue_du_Ch%C3%A2teau.jpg/320px-Nice_vue_du_Ch%C3%A2teau.jpg";
+const upgradedThumb = toCommonsThumbUrl(smallThumb);
+assert(/\/1600px-/.test(upgradedThumb), "resize existing thumb to 1600px");
+
+const doubleFixed = fixDoubleEncodedUrl(
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/X%252C_Y.jpg/800px-X%252C_Y.jpg"
+);
+assert(!/%252C/.test(doubleFixed), "fix double-encoded path segment");
 
 assert(
   isLikelyOrbitalOrMapImagery("", "Crete_from_space_ISS.jpg"),
