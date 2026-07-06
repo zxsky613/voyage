@@ -1253,7 +1253,7 @@ function getCityGlassTheme(cityInput) {
   });
 
   if (c.includes("dubai") || c.includes("doha") || c.includes("abu dhabi")) {
-    return theme("rgba(249,115,22,0.44)", "rgba(15,23,42,0.32)");
+    return theme("rgba(241,106,46,0.44)", "rgba(15,23,42,0.32)");
   }
   if (c.includes("marrakech") || c.includes("le caire") || c.includes("tunis")) {
     return theme("rgba(244,114,182,0.38)", "rgba(251,146,60,0.34)");
@@ -1900,7 +1900,7 @@ function authHasInviteLink() {
   }
 }
 const TEXT = "#0B1220";
-/** Bleu cobalt — structure (nav, pastilles, liens). */
+/** Bleu marine — structure (nav, pastilles, liens). */
 const ACCENT = BRAND_BLUE;
 const ACCENT_MID = BRAND_BLUE_DEEP;
 const slots = ["09:30", "14:00", "18:30", "21:00"];
@@ -1909,7 +1909,7 @@ const slots = ["09:30", "14:00", "18:30", "21:00"];
 const BRAND_CTA_BTN_CLASS =
   "rounded-xl bg-brand-gradient font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60";
 
-/** Pastille / badge structure bleu cobalt. */
+/** Pastille / badge structure bleu marine. */
 const BRAND_BLUE_PILL_CLASS =
   "inline-flex items-center rounded-full bg-brand-blue font-bold text-white shadow-sm";
 
@@ -7601,7 +7601,7 @@ function TopNav({ onMenu, onAdd, title }) {
           type="button"
           onClick={onAdd}
           data-tour-id="plus-button"
-          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(29,78,216,0.22)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
+          className="inline-flex shrink-0 items-center justify-center rounded-[2rem] px-3.5 py-2.5 text-white shadow-[0_2px_10px_rgba(20,47,93,0.22)] transition hover:brightness-110 active:scale-[0.97] sm:px-4 sm:py-3"
           style={{ backgroundColor: ACCENT }}
         >
           <Plus size={20} className="shrink-0" aria-hidden />
@@ -8222,7 +8222,7 @@ function AuthView() {
                     setMode("signup");
                     setMsg("");
                   }}
-                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl px-5 py-3 text-center text-[17px] font-semibold leading-tight text-white shadow-[0_12px_28px_rgba(249,115,22,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3rem]"
+                  className="flex min-h-[clamp(2.75rem,7.5vh,3.5rem)] w-[90%] max-w-[22rem] items-center justify-center rounded-2xl px-5 py-3 text-center text-[17px] font-semibold leading-tight text-white shadow-[0_12px_28px_rgba(241,106,46,0.35)] transition hover:brightness-110 active:scale-[0.99] sm:min-h-[3rem]"
                   style={BRAND_CTA_STYLE}
                 >
                   {t("auth.landingSignUp")}
@@ -8278,14 +8278,14 @@ function AuthView() {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder={t("auth.firstName")}
-                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(20,47,93,0.12)]"
               />
               <input
                 type="text"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder={t("auth.lastName")}
-                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
+                className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(20,47,93,0.12)]"
               />
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("auth.profilePhotoOptional")}</p>
@@ -8327,20 +8327,20 @@ function AuthView() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder={t("auth.email")}
-            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(20,47,93,0.12)]"
           />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("auth.password")}
-            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(29,78,216,0.12)]"
+            className="min-h-[3.25rem] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[rgba(20,47,93,0.12)]"
           />
           <button
             type="button"
             onClick={submit}
             disabled={loading}
-            className={`mt-1 flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-5 py-3.5 text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_10px_28px_rgba(249,115,22,0.28)] transition hover:brightness-105 active:scale-[0.99] disabled:opacity-60 sm:min-h-[3.5rem] sm:text-base`}
+            className={`mt-1 flex min-h-[3.25rem] w-full items-center justify-center rounded-full px-5 py-3.5 text-[15px] font-semibold leading-tight tracking-wide text-white shadow-[0_10px_28px_rgba(241,106,46,0.28)] transition hover:brightness-105 active:scale-[0.99] disabled:opacity-60 sm:min-h-[3.5rem] sm:text-base`}
             style={BRAND_CTA_STYLE}
           >
             {loading
@@ -13138,7 +13138,7 @@ function DestinationGuideView({
               })()}
 
               {verifiedHighlightChips.length > 0 ? (
-              <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
+              <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
                 <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
                   <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
                     <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
@@ -13221,7 +13221,7 @@ function DestinationGuideView({
                 })()}
               </section>
               ) : destinationHighlightsLoading ? (
-                <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(29,78,216,0.06)] sm:p-6">
+                <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
                   <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
                     <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
                       <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
@@ -13279,7 +13279,7 @@ function DestinationGuideView({
                 {Array.isArray(generatedDayIdeas) && generatedDayIdeas.length > 0 ? (
                   <div className="mt-5">
                     {/* Aperçu condensé — invite à ouvrir le popup */}
-                    <div className="overflow-hidden rounded-2xl border border-brand-blue/20 bg-gradient-to-br from-slate-900 via-brand-blue-deep to-brand-blue-deep p-5 shadow-[0_8px_32px_rgba(29,78,216,0.2)]">
+                    <div className="overflow-hidden rounded-2xl border border-brand-blue/20 bg-gradient-to-br from-slate-900 via-brand-blue-deep to-brand-blue-deep p-5 shadow-[0_8px_32px_rgba(20,47,93,0.2)]">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-3">
                         <Sparkles className="h-4 w-4 shrink-0 text-brand-orange" strokeWidth={2.5} aria-hidden />
                         <p className="text-[10px] font-normal uppercase tracking-[0.22em] text-brand-orange-tint">

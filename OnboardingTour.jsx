@@ -381,7 +381,7 @@ function SpotlightOverlay({ rawRect, tourId }) {
           strokeWidth="2.25"
           style={{
             filter:
-              "drop-shadow(0 0 6px rgba(29,78,216,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
+              "drop-shadow(0 0 6px rgba(20,47,93,0.45)) drop-shadow(0 0 14px rgba(255,255,255,0.16))",
           }}
         >
           <animate attributeName="stroke-opacity" values="0.9;0.5;0.9" dur="1.8s" repeatCount="indefinite" />
