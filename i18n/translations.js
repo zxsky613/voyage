@@ -629,6 +629,16 @@ export const translations = {
       pastSubtitle: "Voyages terminés",
     },
     tripCard: { share: "Partager", edit: "Modifier", delete: "Supprimer" },
+    map: {
+      list: "Liste",
+      map: "Carte",
+      goThere: "S'y rendre",
+      viewWholeTrip: "Voir tout le voyage",
+      activitiesWithoutPosition: "{{n}} activité(s) sans position sur la carte",
+      loadError: "Impossible de charger la carte. Vérifie ta connexion.",
+      loading: "Chargement de la carte…",
+      myLocation: "Ma position",
+    },
   },
 
   en: {
@@ -1244,6 +1254,16 @@ export const translations = {
       pastSubtitle: "Completed trips",
     },
     tripCard: { share: "Share", edit: "Edit", delete: "Delete" },
+    map: {
+      list: "List",
+      map: "Map",
+      goThere: "Get directions",
+      viewWholeTrip: "View whole trip",
+      activitiesWithoutPosition: "{{n}} activity/activities without a map position",
+      loadError: "Could not load the map. Check your connection.",
+      loading: "Loading map…",
+      myLocation: "My location",
+    },
   },
 
   de: {
@@ -1856,6 +1876,16 @@ export const translations = {
       pastSubtitle: "Abgeschlossene Reisen",
     },
     tripCard: { share: "Teilen", edit: "Bearbeiten", delete: "Löschen" },
+    map: {
+      list: "Liste",
+      map: "Karte",
+      goThere: "Route anzeigen",
+      viewWholeTrip: "Ganze Reise anzeigen",
+      activitiesWithoutPosition: "{{n}} Aktivität(en) ohne Kartenposition",
+      loadError: "Karte konnte nicht geladen werden. Verbindung prüfen.",
+      loading: "Karte wird geladen…",
+      myLocation: "Mein Standort",
+    },
   },
 
   es: {
@@ -2467,6 +2497,16 @@ export const translations = {
       pastSubtitle: "Viajes terminados",
     },
     tripCard: { share: "Compartir", edit: "Editar", delete: "Eliminar" },
+    map: {
+      list: "Lista",
+      map: "Mapa",
+      goThere: "Cómo llegar",
+      viewWholeTrip: "Ver todo el viaje",
+      activitiesWithoutPosition: "{{n}} actividad(es) sin posición en el mapa",
+      loadError: "No se pudo cargar el mapa. Comprueba tu conexión.",
+      loading: "Cargando mapa…",
+      myLocation: "Mi ubicación",
+    },
   },
 
   it: {
@@ -3078,6 +3118,16 @@ export const translations = {
       pastSubtitle: "Viaggi conclusi",
     },
     tripCard: { share: "Condividi", edit: "Modifica", delete: "Elimina" },
+    map: {
+      list: "Lista",
+      map: "Mappa",
+      goThere: "Indicazioni",
+      viewWholeTrip: "Vedi tutto il viaggio",
+      activitiesWithoutPosition: "{{n}} attività senza posizione sulla mappa",
+      loadError: "Impossibile caricare la mappa. Controlla la connessione.",
+      loading: "Caricamento mappa…",
+      myLocation: "La mia posizione",
+    },
   },
 
   zh: {
@@ -3649,5 +3699,15 @@ export const translations = {
       pastSubtitle: "已完成的旅行",
     },
     tripCard: { share: "分享", edit: "编辑", delete: "删除" },
+    map: {
+      list: "列表",
+      map: "地图",
+      goThere: "导航",
+      viewWholeTrip: "查看整个行程",
+      activitiesWithoutPosition: "{{n}} 个活动没有地图位置",
+      loadError: "无法加载地图，请检查网络连接。",
+      loading: "正在加载地图…",
+      myLocation: "我的位置",
+    },
   },
 };

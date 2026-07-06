@@ -44,6 +44,8 @@ import {
   Bike,
   CalendarCheck,
   CalendarPlus,
+  List,
+  Map as MapIcon,
 } from "lucide-react";
 import { resolveTravelTips } from "./travelTipsData.js";
 import {
@@ -140,6 +142,7 @@ import {
   consumePendingOnboardingIntent,
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
+import LazyTripMap from "./lib/map/LazyTripMap.jsx";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
 import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
 import { formatNoticeForEndUser } from "./devUiNotices.js";
@@ -6221,6 +6224,9 @@ function ItineraryBulletRow({
   onSwapActivity,
   onMap,
   onRemove,
+  mapActivityId = "",
+  mapSelected = false,
+  onMapSelect,
 }) {
   const { t, language } = useI18n();
   const text = String(bullet || "").trim();
@@ -6439,10 +6445,29 @@ function ItineraryBulletRow({
   }
 
   return (
-    <li className="group rounded-2xl bg-white p-3 ring-1 ring-slate-100 transition hover:ring-slate-200/90 sm:p-4">
+    <li
+      id={mapActivityId ? `itinerary-act-${mapActivityId}` : undefined}
+      className={`group rounded-2xl bg-white p-3 transition sm:p-4 ${
+        mapSelected
+          ? "ring-2 ring-brand-blue/55 ring-offset-1"
+          : "ring-1 ring-slate-100 hover:ring-slate-200/90"
+      }`}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className={imageBoxClass}>{imageInner}</div>
-        <div className="min-w-0 flex-1">
+        <div
+          className={`min-w-0 flex-1 ${onMapSelect ? "cursor-pointer" : ""}`}
+          role={onMapSelect ? "button" : undefined}
+          tabIndex={onMapSelect ? 0 : undefined}
+          onClick={() => onMapSelect?.()}
+          onKeyDown={(e) => {
+            if (!onMapSelect) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onMapSelect();
+            }
+          }}
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 space-y-2">
               {periodChip}
@@ -10601,6 +10626,99 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 }
 
 // ─── ItineraryResultModal ──────────────────────────────────────────────────────
+const ITINERARY_DETAIL_VIEW_KEY = "tp_itinerary_detail_view";
+
+function readItineraryDetailViewMode() {
+  try {
+    return sessionStorage.getItem(ITINERARY_DETAIL_VIEW_KEY) === "map" ? "map" : "list";
+  } catch {
+    return "list";
+  }
+}
+
+function persistItineraryDetailViewMode(mode) {
+  try {
+    sessionStorage.setItem(ITINERARY_DETAIL_VIEW_KEY, mode === "map" ? "map" : "list");
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildItineraryDayMapActivities(dayIndex, bullets, activityMetaList, cityLabel, dayNum) {
+  let order = 0;
+  return bullets.map((bullet, j) => {
+    const meta = activityMetaList[j] || null;
+    const lat = Number(meta?.latitude);
+    const lon = Number(meta?.longitude);
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+    const text = String(bullet || "").trim();
+    const title =
+      stripItineraryBulletTimePrefix(text)
+      || String(meta?.description || meta?.name || "").trim();
+    const modalCacheKey = buildItineraryModalImageCacheKey(cityLabel, dayNum, j, bullet);
+    const photo = pickActivityPhotoForCalendarInsert(meta, readItineraryBulletImageCache(modalCacheKey));
+    return {
+      id: `${dayIndex}-${j}`,
+      dayIndex,
+      dayNum,
+      orderInDay: hasCoords ? ++order : j + 1,
+      title,
+      latitude: lat,
+      longitude: lon,
+      period: meta?.period || parseItineraryBulletPeriod(bullet),
+      time: String(meta?.time || "").slice(0, 5),
+      photoUrl: photo,
+      bulletIndex: j,
+    };
+  });
+}
+
+function ItineraryDetailViewToggle({ mode, onChange, fullWidth = false }) {
+  const { t } = useI18n();
+  const btnBase = "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition";
+  const activeCls = "bg-white text-brand-blue-deep shadow-sm";
+  const inactiveCls = "text-slate-600 hover:text-slate-900";
+
+  const listBtn = (
+    <button
+      type="button"
+      aria-pressed={mode === "list"}
+      className={`${btnBase} ${mode === "list" ? activeCls : inactiveCls}`}
+      onClick={() => onChange("list")}
+    >
+      <List className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      {t("map.list")}
+    </button>
+  );
+  const mapBtn = (
+    <button
+      type="button"
+      aria-pressed={mode === "map"}
+      className={`${btnBase} ${mode === "map" ? activeCls : inactiveCls}`}
+      onClick={() => onChange("map")}
+    >
+      <MapIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      {t("map.map")}
+    </button>
+  );
+
+  if (fullWidth) {
+    return (
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-0.5" role="group" aria-label={t("map.map")}>
+        {listBtn}
+        {mapBtn}
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex rounded-xl bg-slate-100 p-0.5" role="group" aria-label={t("map.map")}>
+      {listBtn}
+      {mapBtn}
+    </div>
+  );
+}
+
 function ItineraryResultModal({
   dayIdeas,
   cityLabel,
@@ -10618,12 +10736,26 @@ function ItineraryResultModal({
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [activeDayIndex, setActiveDayIndex] = useState(0);
+  const [detailViewMode, setDetailViewMode] = useState(() => readItineraryDetailViewMode());
+  const [selectedMapActivityId, setSelectedMapActivityId] = useState("");
+  // Vue carte desktop : 'trip' = voyage entier (marqueurs-jours), 'day' = jour actif.
+  const [mapView, setMapView] = useState("trip");
+  const [isDesktopSplit, setIsDesktopSplit] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+  );
   const daySectionRefs = useRef([]);
   const dayRailButtonRefs = useRef([]);
   const detailScrollRef = useRef(null);
   const railScrollRef = useRef(null);
-  const days = Array.isArray(dayIdeas) ? dayIdeas : [];
+  const days = useMemo(() => (Array.isArray(dayIdeas) ? dayIdeas : []), [dayIdeas]);
   const errLine = String(fetchError || "").trim();
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e) => setIsDesktopSplit(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const totalCost = days.reduce((sum, d) => sum + (Number(d?.costEur) || 0), 0);
   const hasCostData = days.some(
@@ -10635,7 +10767,65 @@ function ItineraryResultModal({
       if (days.length === 0) return 0;
       return i >= days.length ? 0 : i;
     });
+    setMapView("trip");
   }, [days.length]);
+
+  useEffect(() => {
+    // Ne garder la sélection carte que si elle appartient au jour actif.
+    setSelectedMapActivityId((cur) =>
+      cur && !cur.startsWith(`${activeDayIndex}-`) ? "" : cur
+    );
+  }, [activeDayIndex]);
+
+  useEffect(() => {
+    if (!selectedMapActivityId || (!isDesktopSplit && detailViewMode !== "list")) return undefined;
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById(`itinerary-act-${selectedMapActivityId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [selectedMapActivityId, detailViewMode, isDesktopSplit]);
+
+  const allMapActivities = useMemo(
+    () =>
+      days.flatMap((d, idx) => {
+        const bullets = normalizeItineraryDayBullets(d);
+        const metaList = getItineraryDayActivitiesMeta(d);
+        const dayNum = Number(d?.day) || idx + 1;
+        return buildItineraryDayMapActivities(idx, bullets, metaList, cityLabel, dayNum);
+      }),
+    [days, cityLabel]
+  );
+
+  // Voyage sans aucune coordonnée (pré-Phase 0b) : pas de carte du tout.
+  const hasAnyCoords = useMemo(
+    () =>
+      allMapActivities.some(
+        (a) => Number.isFinite(Number(a?.latitude)) && Number.isFinite(Number(a?.longitude))
+      ),
+    [allMapActivities]
+  );
+
+  const handleDetailViewChange = useCallback((mode) => {
+    persistItineraryDetailViewMode(mode);
+    setDetailViewMode(mode);
+  }, []);
+
+  const handleMapActivitySelect = useCallback((id) => {
+    const value = String(id || "").trim();
+    setSelectedMapActivityId(value);
+    if (value) {
+      const dayIdx = Number(value.split("-")[0]);
+      if (Number.isFinite(dayIdx)) setActiveDayIndex(dayIdx);
+      setMapView("day");
+    }
+  }, []);
+
+  const handleViewWholeTrip = useCallback(() => {
+    setMapView("trip");
+    setSelectedMapActivityId("");
+  }, []);
 
   const budgetTierLabel = (() => {
     const tier = prefs?.budget;
@@ -10731,6 +10921,24 @@ function ItineraryResultModal({
   const noopActivityAction = () => {};
   const handleRegenerateDay = () => {};
 
+  const handleRailDayClick = useCallback(
+    (idx) => {
+      scrollToDay(idx);
+      setMapView("day");
+    },
+    [scrollToDay]
+  );
+
+  const handleSelectDayFromMap = useCallback(
+    (idx) => {
+      setMapView("day");
+      scrollToDay(idx);
+    },
+    [scrollToDay]
+  );
+
+  const showDesktopSplitMap = isDesktopSplit && hasAnyCoords;
+
   return (
     <div
       className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
@@ -10739,7 +10947,9 @@ function ItineraryResultModal({
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem]"
+        className={`flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:h-[92svh] sm:max-h-[92svh] sm:rounded-[1.75rem] ${
+          showDesktopSplitMap ? "max-w-4xl lg:max-w-6xl" : "max-w-4xl"
+        }`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Handle (mobile) ── */}
@@ -10826,7 +11036,11 @@ function ItineraryResultModal({
               <p className="text-center text-sm text-slate-500">{t("destination.itineraryGenerating")}</p>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-col overflow-hidden md:grid md:h-full md:grid-cols-[11rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
+            <div
+              className={`flex min-h-0 flex-col overflow-hidden md:grid md:h-full md:grid-cols-[11rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] ${
+                showDesktopSplitMap ? "lg:grid-cols-[11rem_minmax(0,1fr)_minmax(0,23rem)]" : ""
+              }`}
+            >
               <nav
                 ref={railScrollRef}
                 className="itinerary-day-rail shrink-0 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-slate-100 px-4 py-2.5 [-webkit-overflow-scrolling:touch] md:min-h-0 md:snap-none md:overflow-x-hidden md:overflow-y-auto md:border-b-0 md:border-r md:p-0 lg:w-44"
@@ -10844,7 +11058,7 @@ function ItineraryResultModal({
                           dayRailButtonRefs.current[idx] = el;
                         }}
                         type="button"
-                        onClick={() => scrollToDay(idx)}
+                        onClick={() => handleRailDayClick(idx)}
                         aria-current={isActive ? "true" : undefined}
                         className={`shrink-0 snap-start rounded-xl px-3 py-2 text-left transition md:w-full md:py-2.5 ${
                           isActive
@@ -10870,6 +11084,15 @@ function ItineraryResultModal({
                 ref={detailScrollRef}
                 className="itinerary-day-rail min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4 pb-6 [-webkit-overflow-scrolling:touch] sm:p-5 md:p-6"
               >
+                {hasAnyCoords && !isDesktopSplit ? (
+                  <div className="sticky top-0 z-20 -mx-1 mb-4 bg-white/95 px-1 pb-1 backdrop-blur-sm">
+                    <ItineraryDetailViewToggle
+                      fullWidth
+                      mode={detailViewMode}
+                      onChange={handleDetailViewChange}
+                    />
+                  </div>
+                ) : null}
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;
                   const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
@@ -10918,9 +11141,26 @@ function ItineraryResultModal({
                           {t("destination.itineraryRegenerateDay")}
                         </button>
                       </div>
-                      {bullets.length > 0 ? (
+                      {!isDesktopSplit && hasAnyCoords && idx === activeDayIndex && detailViewMode === "map" ? (
+                        bullets.length > 0 ? (
+                          <LazyTripMap
+                            activities={allMapActivities}
+                            view="day"
+                            selectedDayIndex={idx}
+                            selectedActivityId={selectedMapActivityId}
+                            onSelectActivity={handleMapActivitySelect}
+                            mode="modal"
+                            cityLabel={cityLabel}
+                            className="mt-4"
+                          />
+                        ) : (
+                          <p className="mt-4 text-sm text-slate-500">{t("destination.itineraryEmptyResult")}</p>
+                        )
+                      ) : bullets.length > 0 ? (
                         <ul className="mt-4 space-y-3">
-                          {bullets.map((b, j) => (
+                          {bullets.map((b, j) => {
+                            const mapId = `${idx}-${j}`;
+                            return (
                             <ItineraryBulletRow
                               key={`${dayNum}-${j}`}
                               variant="card"
@@ -10930,10 +11170,18 @@ function ItineraryResultModal({
                               dayTitle={title}
                               dayNum={dayNum}
                               bulletIndex={j}
+                              mapActivityId={hasAnyCoords ? mapId : ""}
+                              mapSelected={hasAnyCoords && selectedMapActivityId === mapId}
+                              onMapSelect={
+                                hasAnyCoords
+                                  ? () => handleMapActivitySelect(mapId)
+                                  : undefined
+                              }
                               onSwapActivity={() => onSwapActivity?.(idx, j)}
                               onRemove={noopActivityAction}
                             />
-                          ))}
+                            );
+                          })}
                         </ul>
                       ) : (
                         <p className="mt-4 text-sm text-slate-500">{t("destination.itineraryEmptyResult")}</p>
@@ -10942,6 +11190,23 @@ function ItineraryResultModal({
                   );
                 })}
               </div>
+
+              {showDesktopSplitMap ? (
+                <div className="hidden min-h-0 border-l border-slate-100 p-3 lg:flex lg:flex-col">
+                  <LazyTripMap
+                    activities={allMapActivities}
+                    view={mapView}
+                    selectedDayIndex={activeDayIndex}
+                    selectedActivityId={selectedMapActivityId}
+                    onSelectActivity={handleMapActivitySelect}
+                    onSelectDay={handleSelectDayFromMap}
+                    onViewTrip={handleViewWholeTrip}
+                    mode="modal"
+                    cityLabel={cityLabel}
+                    className="h-full flex-1"
+                  />
+                </div>
+              ) : null}
             </div>
           )}
         </div>
