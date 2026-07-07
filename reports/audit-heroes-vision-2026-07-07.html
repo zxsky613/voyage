@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>Audit héros vision 2026-07-07</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #f6f7f9; color: #1a1a1a; }
+  h1, h2 { margin: 0 0 0.75rem; }
+  .summary { background: #fff; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+  .card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+  .card.reject { border-left: 4px solid #c62828; }
+  .card.excellent { border-left: 4px solid #2e7d32; }
+  .card.acceptable { border-left: 4px solid #f9a825; }
+  .thumb img { width: 100%; height: 180px; object-fit: cover; display: block; background: #ddd; }
+  .no-thumb { height: 180px; display: flex; align-items: center; justify-content: center; background: #eee; }
+  .meta { padding: 0.75rem 1rem 1rem; font-size: 0.9rem; }
+  .meta h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .meta p { margin: 0.35rem 0; line-height: 1.35; }
+  .badge { padding: 0.1rem 0.45rem; border-radius: 4px; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+  .badge.excellent { background: #e8f5e9; color: #2e7d32; }
+  .badge.reject { background: #ffebee; color: #c62828; }
+  .badge.acceptable { background: #fff8e1; color: #f57f17; }
+  .cmd { background: #263238; color: #eceff1; padding: 0.5rem 0.65rem; border-radius: 4px; font-size: 0.78rem; overflow-x: auto; margin-top: 0.5rem; }
+  .ref-ok { color: #2e7d32; font-weight: 600; }
+  .ref-fail { color: #c62828; font-weight: 600; }
+  section { margin-bottom: 2rem; }
+</style>
+</head>
+<body>
+<h1>Audit héros — juge vision</h1>
+<div class="summary">
+  <p><strong>Date:</strong> 2026-07-07 · <strong>Modèle:</strong> gemini-2.5-flash · <strong>Vision:</strong> ON</p>
+  <p><strong>Destinations:</strong> 5 · <strong>Excellent/OK:</strong> 5 · <strong>À revoir:</strong> 0 · <strong>Bans auto:</strong> 0</p>
+  <p><strong>Appels vision (session):</strong> 7 · Seuil froid revue: 50</p>
+</div>
+
+<section>
+<h2>Cas de référence</h2>
+<ul>
+<li class="ref-ok">annecy-subjectless — attendu <code>reject</code> → obtenu <code>reject</code> ✓</li>
+<li class="ref-ok">crete-wc — attendu <code>reject</code> → obtenu <code>reject</code> ✓</li>
+<li class="ref-ok">elounda-good — attendu <code>excellent</code> → obtenu <code>excellent</code> ✓</li>
+</ul>
+</section>
+
+<section>
+<h2>Bans automatiques (0)</h2>
+<p>reject IA + signal froid concordant → ban + re-résolution (max 3 candidats).</p>
+<div class="grid">
+<p>Aucun ban auto sur cette passe.</p>
+</div>
+</section>
+
+<section>
+<h2>À revoir — tranchage humain (0)</h2>
+<div class="grid">
+<p>Aucun cas limite.</p>
+</div>
+</section>
+</body>
+</html>
