@@ -22,6 +22,7 @@ const ROUTE_SOURCE_ID = "trip-route";
 const CLUSTER_LAYER = "trip-clusters";
 const CLUSTER_COUNT_LAYER = "trip-cluster-count";
 const BALLOON_LAYER = "trip-activity-balloon";
+const POINT_FALLBACK_LAYER = "trip-unclustered-point";
 const DAY_LAYER = "trip-day-markers";
 const DAY_LABEL_LAYER = "trip-day-labels";
 const ROUTE_LAYER = "trip-route-line";
@@ -234,41 +235,16 @@ export default function TripMap({
     if (!el) return undefined;
 
     let cancelled = false;
-    setLoadError(false);
-    setMapReady(false);
+    /** @type {import('maplibre-gl').Map | null} */
+    let map = null;
+    let initWatchdog = 0;
+    let layersReady = false;
+    let layerSetupStarted = false;
 
-    const initialCenter = fitTargets[0] || mappedActivities[0] || null;
-    const map = new maplibregl.Map({
-      container: el,
-      style: getMapStyleUrl(),
-      center: initialCenter
-        ? [Number(initialCenter.longitude), Number(initialCenter.latitude)]
-        : [2.35, 48.85],
-      zoom: initialCenter ? 12 : 4,
-      attributionControl: true,
-      pitchWithRotate: false,
-      dragRotate: false,
-    });
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-    mapRef.current = map;
-
-    const onError = (e) => {
-      if (cancelled) return;
-      const msg = String(e?.error?.message || e?.message || "");
-      if (/style|sprite|glyph|tile/i.test(msg)) setLoadError(true);
-    };
-
-    map.on("error", onError);
-
-    map.on("load", async () => {
-      if (cancelled) return;
-
-      try {
-        await registerActivityBalloonImages(map);
-      } catch {
-        /* fallback : clusters + jours restent utilisables */
-      }
+    const finishMapInit = (useBalloons) => {
+      if (cancelled || layersReady || !map || mapRef.current !== map) return;
+      layersReady = true;
+      window.clearTimeout(initWatchdog);
 
       map.addSource(SOURCE_ID, {
         type: "geojson",
@@ -324,24 +300,40 @@ export default function TripMap({
         paint: { "text-color": "#ffffff" },
       });
 
-      map.addLayer({
-        id: BALLOON_LAYER,
-        type: "symbol",
-        source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        layout: {
-          "icon-image": "activity-balloon-1",
-          "icon-size": 1,
-          "icon-anchor": "bottom",
-          "icon-allow-overlap": true,
-          "icon-ignore-placement": true,
-        },
-        paint: {
-          "icon-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
-        },
-      });
+      if (useBalloons) {
+        map.addLayer({
+          id: BALLOON_LAYER,
+          type: "symbol",
+          source: SOURCE_ID,
+          filter: ["!", ["has", "point_count"]],
+          layout: {
+            "icon-image": "activity-balloon-1",
+            "icon-size": 1,
+            "icon-anchor": "bottom",
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: {
+            "icon-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
+          },
+        });
+        applyBalloonIconLayout(map, selectedActivityIdRef.current);
+      } else {
+        map.addLayer({
+          id: POINT_FALLBACK_LAYER,
+          type: "circle",
+          source: SOURCE_ID,
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-color": ACTIVITY_BALLOON_ORANGE,
+            "circle-radius": 14,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+            "circle-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
+          },
+        });
+      }
 
-      applyBalloonIconLayout(map, selectedActivityIdRef.current);
       applyRouteStyle(map, effectiveViewRef.current);
 
       map.addLayer({
@@ -388,7 +380,10 @@ export default function TripMap({
         setSheetActivity(activityByIdRef.current.get(id) || null);
       };
 
-      map.on("click", BALLOON_LAYER, onPointClick);
+      const activityLayers = useBalloons ? [BALLOON_LAYER] : [POINT_FALLBACK_LAYER];
+      for (const layer of activityLayers) {
+        map.on("click", layer, onPointClick);
+      }
 
       const onDayClick = (e) => {
         const f = e.features?.[0];
@@ -406,14 +401,14 @@ export default function TripMap({
       const clearPointer = () => {
         map.getCanvas().style.cursor = "";
       };
-      for (const layer of [CLUSTER_LAYER, BALLOON_LAYER, DAY_LAYER]) {
+      for (const layer of [CLUSTER_LAYER, ...activityLayers, DAY_LAYER]) {
         map.on("mouseenter", layer, setPointer);
         map.on("mouseleave", layer, clearPointer);
       }
 
       map.on("click", (e) => {
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: [BALLOON_LAYER, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
+          layers: [...activityLayers, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
         });
         if (!hits.length) {
           onSelectRef.current?.(null);
@@ -426,17 +421,81 @@ export default function TripMap({
         padding: mode === "modal" ? 88 : 64,
         animate: false,
       });
-    });
+      map.resize();
+    };
 
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => map.resize()) : null;
+    const beginLayerSetup = () => {
+      if (cancelled || layersReady || layerSetupStarted || !map) return;
+      layerSetupStarted = true;
+      void (async () => {
+        const balloonsOk = await registerActivityBalloonImages(map, { timeoutMs: 3500 });
+        finishMapInit(balloonsOk);
+      })();
+    };
+
+    const mountMap = () => {
+      if (cancelled || map) return;
+      if (el.offsetWidth < 2 || el.offsetHeight < 2) return;
+
+      setLoadError(false);
+      setMapReady(false);
+
+      const initialCenter = fitTargets[0] || mappedActivities[0] || null;
+      map = new maplibregl.Map({
+        container: el,
+        style: getMapStyleUrl(),
+        center: initialCenter
+          ? [Number(initialCenter.longitude), Number(initialCenter.latitude)]
+          : [2.35, 48.85],
+        zoom: initialCenter ? 12 : 4,
+        attributionControl: true,
+        pitchWithRotate: false,
+        dragRotate: false,
+      });
+
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+      mapRef.current = map;
+
+      const onError = (e) => {
+        if (cancelled) return;
+        const msg = String(e?.error?.message || e?.message || "");
+        if (/style|sprite|glyph|tile/i.test(msg)) setLoadError(true);
+      };
+
+      map.on("error", onError);
+      map.on("load", beginLayerSetup);
+      map.once("idle", () => {
+        if (!layersReady && !cancelled) beginLayerSetup();
+      });
+
+      initWatchdog = window.setTimeout(() => {
+        if (cancelled || layersReady || !map) return;
+        if (map.loaded() || map.isStyleLoaded()) {
+          finishMapInit(false);
+          return;
+        }
+        setLoadError(true);
+      }, 12000);
+    };
+
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            mountMap();
+            map?.resize();
+          })
+        : null;
     ro?.observe(el);
+    mountMap();
 
     return () => {
       cancelled = true;
+      window.clearTimeout(initWatchdog);
       ro?.disconnect();
       userMarkerRef.current?.remove();
       userMarkerRef.current = null;
-      map.remove();
+      map?.remove();
+      map = null;
       mapRef.current = null;
       setMapReady(false);
     };
@@ -445,8 +504,10 @@ export default function TripMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !map.getLayer(BALLOON_LAYER)) return;
-    applyBalloonIconLayout(map, selectedActivityId);
+    if (!map || !mapReady) return;
+    if (map.getLayer(BALLOON_LAYER)) {
+      applyBalloonIconLayout(map, selectedActivityId);
+    }
   }, [selectedActivityId, mapReady, applyBalloonIconLayout]);
 
   const handleLocate = () => {
@@ -487,7 +548,11 @@ export default function TripMap({
           {t("map.loading")}
         </div>
       ) : null}
-      <div ref={containerRef} className="h-full min-h-[inherit] w-full" aria-hidden={loadError} />
+      <div
+        ref={containerRef}
+        className="absolute inset-0 h-full w-full min-h-[min(55vh,28rem)]"
+        aria-hidden={loadError}
+      />
       <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5 sm:inset-x-3">
         {legendDays.length > 0 ? (
           <TripMapDayLegend
