@@ -1,9 +1,19 @@
 /**
- * Repères nommés via OpenStreetMap (Overpass) — sans clé API.
- * Utilisé quand Foursquare est vide ou indisponible.
+ * Repères nommés via OpenStreetMap (Overpass) — retry + User-Agent + endpoints de repli.
  */
 
-const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+import {
+  osmLandmarksServerCacheKey,
+  readOsmLandmarksServerCache,
+  writeOsmLandmarksServerCache,
+} from "./_landmarksCache.js";
+
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
+
+const OVERPASS_USER_AGENT = "JustTrip/1.0 (https://justtrip.fr; guide-landmarks)";
 
 const NAME_JUNK =
   /parking|toilet|\bwc\b|tankstelle|diesel|car wash|^\s*bus stop\s*$|friedhof|cemetery|fuel|gas station|atm\b|cash machine/i;
@@ -81,14 +91,12 @@ export function parseOverpassToRankedNames(elements, preferredLang = "fr") {
   return out;
 }
 
-/**
- * @param {number} lat
- * @param {number} lon
- * @param {number} [radiusMeters] défaut ~11 km autour du centre-ville
- */
-export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11000, preferredLang = "fr") {
-  const r = Math.min(Math.max(Math.round(Number(radiusMeters) || 11000), 2000), 25000);
-  const query = `[out:json][timeout:35];
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function buildOverpassQuery(lat, lon, r) {
+  return `[out:json][timeout:35];
 (
   node["name"]["tourism"](around:${r},${lat},${lon});
   way["name"]["tourism"](around:${r},${lat},${lon});
@@ -106,16 +114,53 @@ export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11
   way["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
 );
 out center 72;`;
+}
 
-  const resp = await fetch(OVERPASS_ENDPOINT, {
+async function postOverpass(endpoint, query) {
+  const resp = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "User-Agent": OVERPASS_USER_AGENT,
+    },
     body: `data=${encodeURIComponent(query)}`,
   });
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
     throw new Error(`Overpass HTTP ${resp.status}: ${t.slice(0, 200)}`);
   }
-  const json = await resp.json();
-  return parseOverpassToRankedNames(json?.elements, preferredLang);
+  return resp.json();
+}
+
+/**
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} [radiusMeters] défaut ~11 km autour du centre-ville
+ * @param {string} [preferredLang]
+ */
+export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11000, preferredLang = "fr") {
+  const r = Math.min(Math.max(Math.round(Number(radiusMeters) || 11000), 2000), 25000);
+  const cacheKey = osmLandmarksServerCacheKey(lat, lon, r, preferredLang);
+  const cached = readOsmLandmarksServerCache(cacheKey);
+  if (cached?.length) return cached;
+
+  const query = buildOverpassQuery(lat, lon, r);
+  let lastErr = null;
+
+  for (let i = 0; i < OVERPASS_ENDPOINTS.length; i += 1) {
+    const endpoint = OVERPASS_ENDPOINTS[i];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const json = await postOverpass(endpoint, query);
+        const names = parseOverpassToRankedNames(json?.elements, preferredLang);
+        if (names.length) writeOsmLandmarksServerCache(cacheKey, names);
+        return names;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 0) await sleep(800);
+      }
+    }
+  }
+
+  throw lastErr || new Error("Overpass unavailable");
 }

@@ -18,6 +18,8 @@ import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "./placeG
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
 import { buildItineraryEnrichmentBlock, dedupeItineraryDayIdeas, buildProperNamesScriptConsistencyRule, tipsContainForbiddenNonLatinScript, suggestionsBundleContainsForbiddenNonLatinScript, buildTipsRewriteRetryInstruction } from "./api/_helpers.js";
 import { fetchLandmarkNamesFromOverpass } from "./api/osm/_overpassLandmarks.js";
+import { readDestinationHighlightsCacheStale } from "./lib/planner/highlightsListCache.js";
+import { highlightObjectsToPlaceNames } from "./lib/guide/mergeMustSeePlaces.js";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -578,6 +580,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isItinerary = pathname === "/api/gemini/itinerary";
     const isFoursquare = pathname === "/api/foursquare/places";
     const isOsmLandmarks = pathname === "/api/osm/landmarks";
+    const isGuideHighlightsCache = pathname === "/api/guide/highlights-cache";
     const isGroqItinerary   = pathname === "/api/groq/itinerary";
     const isGroqTips        = pathname === "/api/groq/tips";
     const isGroqDescription = pathname === "/api/groq/description";
@@ -586,7 +589,7 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     const isUiTranslate = pathname === "/api/ui-translate";
     if (
       !isSuggestions && !isSuggestedActivities && !isItinerary &&
-      !isFoursquare && !isOsmLandmarks && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
+      !isFoursquare && !isOsmLandmarks && !isGuideHighlightsCache && !isGroqItinerary && !isGroqTips && !isGroqDescription &&
       !isGroqSuggestions && !isGroqSuggestedActivities && !isUiTranslate
     ) return next();
 
@@ -638,6 +641,34 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
         sendJson(res, 200, { ok: true, translations });
       } catch (e) {
         sendJson(res, 502, { ok: false, error: formatError(e) });
+      }
+      return;
+    }
+
+    // ── Cache highlights guide (repli FSQ/OSM) ─────────────────────────────
+    if (isGuideHighlightsCache) {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = {};
+      }
+      const destination = String(body.destination || body.city || "").trim();
+      const locale = String(body.locale || body.language || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+      if (!destination) {
+        sendJson(res, 400, { ok: false, error: "destination requise" });
+        return;
+      }
+      try {
+        const cached = await readDestinationHighlightsCacheStale(destination, locale);
+        if (!cached?.highlights?.length) {
+          sendJson(res, 200, { ok: true, names: [], highlights: [], stale: false });
+          return;
+        }
+        const names = highlightObjectsToPlaceNames(cached.highlights);
+        sendJson(res, 200, { ok: true, names, highlights: cached.highlights, stale: true, count: names.length });
+      } catch (e) {
+        sendJson(res, 502, { ok: false, error: String(e?.message || e), names: [] });
       }
       return;
     }
@@ -702,6 +733,15 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
           ? FSQ_PRESET_RESTAURANTS
           : FSQ_PRESET_POI);
       const fields = "name,location,categories,price";
+      if (process.env.FSQ_SIMULATE_429 === "1") {
+        sendJson(res, 429, {
+          ok: false,
+          error: "Foursquare quota exceeded (simulated)",
+          quotaExceeded: true,
+          results: [],
+        });
+        return;
+      }
       try {
         const fsqUrl =
           `https://api.foursquare.com/v3/places/search` +

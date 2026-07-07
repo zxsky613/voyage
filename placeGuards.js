@@ -206,7 +206,7 @@ function fold(s) {
 }
 
 const PLACE_SUBSTRINGS =
-  /mus[eé]e|tour|parc|park|place|pont|bridge|jardin|garden|cath[eé]drale|basilique|temple|ch[aâ]teau|castle|liberty|statue|observato|quartier|district|avenue|street|st\.|center|centre|plaza|square|hall|op[eé]ra|gallery|galerie|m[eé]morial|memorial|monument|arena|stadium|zoo|aquarium|island|[îi]le|beach|plage|march[eé]|market|tower|palace|palais|gate|wall|mur|central|rockefeller|broadway|empire|brooklyn|manhattan|queens|bronx|soho|tribeca|dumbo|high\s*line|chelsea|midtown|uptown|downtown|times\s*sq|metropolitan|guggenheim|\bmo\b|moma|one\s*world|ellis|battery|wharf|pier|botanical|cathedral|chapel|abbaye|abbatiale|forum|colosseum|colis[eé]e/i;
+  /mus[eé]e|tour|parc|park|place|pont|bridge|jardin|garden|cath[eé]drale|basilique|temple|ch[aâ]teau|castle|liberty|statue|observato|quartier|district|avenue|street|st\.|center|centre|plaza|square|hall|op[eé]ra|gallery|galerie|m[eé]morial|memorial|monument|arena|stadium|zoo|aquarium|island|[îi]le|beach|plage|march[eé]|market|tower|palace|palais|gate|wall|mur|central|rockefeller|broadway|empire|brooklyn|manhattan|queens|bronx|soho|tribeca|dumbo|high\s*line|chelsea|midtown|uptown|downtown|times\s*sq|metropolitan|guggenheim|\bmo\b|moma|one\s*world|ellis|battery|wharf|pier|botanical|cathedral|chapel|abbaye|abbatiale|forum|colosseum|colis[eé]e|teatro|theatre|theater|quattro|canti|piazza|piazzetta|fontana|palazzo|duomo|basilica|oratorio|chiesa|catacombe/i;
 
 /**
  * Filtre les entrées « lieux incontournables » manifestement hors sujet (WP, hallucinations).

@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     const hint = String(body.cityHint || body.destination || "").trim();
     const cleaned = sanitizeMustSeePlaces(raw, hint || "destination");
     const names = pickPlacesListAfterScriptFilter(cleaned, locale);
-    sendJson(res, 200, { ok: true, names, count: names.length });
+    sendJson(res, 200, { ok: true, names, count: names.length, cached: false });
   } catch (e) {
     sendJson(res, 502, { ok: false, error: String(e?.message || e), names: [] });
   }

@@ -66,6 +66,17 @@ import {
   isUninformativeMustSeePlaceLabel,
 } from "./placeGuards.js";
 import { ICONIC_PLACES_CANONICAL } from "./iconicPlacesData.js";
+import {
+  fsqGuideCacheKey,
+  readFsqGuideCache,
+  writeFsqGuideCache,
+} from "./lib/guide/fsqPlacesCache.js";
+import {
+  osmLandmarksCacheKey,
+  readOsmLandmarksCache,
+  writeOsmLandmarksCache,
+} from "./lib/guide/osmLandmarksCache.js";
+import { mergeMustSeePlaceCandidates } from "./lib/guide/mergeMustSeePlaces.js";
 import { computeTricountBalances, simplifyTricountDebts } from "./tricountLogic.js";
 import {
   buildCityHeroUnsplashQuery,
@@ -4857,15 +4868,23 @@ function fsqEstimateCost(categories) {
  */
 async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
   const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const cacheKey = fsqGuideCacheKey(lat, lon, locale);
+  const cached = cacheKey ? readFsqGuideCache(cacheKey) : null;
+  if (cached) return { places: cached.places, activities: cached.activities, fromCache: true };
+
   try {
     const resp = await fetch("/api/foursquare/places", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lat, lon, limit: 20, locale }),
     });
-    if (!resp.ok) return { places: [], activities: [] };
+    if (!resp.ok) {
+      return { places: [], activities: [], quotaExceeded: resp.status === 429, fromCache: false };
+    }
     const json = await resp.json();
-    if (!json.ok || !Array.isArray(json.results)) return { places: [], activities: [] };
+    if (!json.ok || !Array.isArray(json.results)) {
+      return { places: [], activities: [], fromCache: false };
+    }
 
     // Dédupe par nom
     const seen = new Set();
@@ -4903,9 +4922,11 @@ async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
       };
     });
 
-    return { places, activities };
+    const payload = { places, activities };
+    if (cacheKey) writeFsqGuideCache(cacheKey, payload);
+    return { ...payload, fromCache: false };
   } catch (_e) {
-    return { places: [], activities: [] };
+    return { places: [], activities: [], fromCache: false };
   }
 }
 
@@ -4914,6 +4935,10 @@ async function fetchFoursquarePlaces(lat, lon, uiLang = "fr") {
  */
 async function fetchOsmLandmarkNames(lat, lon, cityHint = "", uiLang = "fr") {
   const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  const cacheKey = osmLandmarksCacheKey(lat, lon, locale);
+  const cached = cacheKey ? readOsmLandmarksCache(cacheKey) : null;
+  if (cached?.length) return cached;
+
   try {
     const resp = await fetch("/api/osm/landmarks", {
       method: "POST",
@@ -4925,6 +4950,28 @@ async function fetchOsmLandmarkNames(lat, lon, cityHint = "", uiLang = "fr") {
         cityHint: String(cityHint || "").trim(),
         locale,
       }),
+    });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    if (!json?.ok || !Array.isArray(json.names)) return [];
+    const names = json.names.map((x) => String(x || "").trim()).filter(Boolean);
+    if (cacheKey && names.length) writeOsmLandmarksCache(cacheKey, names);
+    return names;
+  } catch (_e) {
+    return [];
+  }
+}
+
+/** Repli guide : highlights Supabase (même périmés) quand FSQ/OSM échouent. */
+async function fetchGuideHighlightsFallback(destination, uiLang = "fr") {
+  const dest = String(destination || "").trim();
+  if (!dest) return [];
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  try {
+    const resp = await fetch("/api/guide/highlights-cache", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destination: dest, locale }),
     });
     if (!resp.ok) return [];
     const json = await resp.json();
@@ -5102,21 +5149,30 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   // Wikivoyage si disponible (description voyage > encyclopédie Wikipedia)
   const summaryText = wikivoyageText || summaryPack.summaryText;
 
-  // Foursquare + OSM en parallèle : OSM fournit name:xx (langue UI) quand le tag existe — complète / corrige les noms Foursquare.
-  const wikiGeoP =
-    Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? fetchWikipediaGeoNearbyPlaceTitles(latitude, longitude, uiLanguage, safeCity)
-      : Promise.resolve([]);
+  // Foursquare + OSM + cache highlights en parallèle — jamais de geosearch Wikipedia pour les incontournables.
+  const highlightsFallbackP = fetchGuideHighlightsFallback(safeCity, uiLanguage);
 
-  const [otmData, osmLandmarkNames, wikiGeoTitles] = await Promise.all([
+  const [otmData, osmLandmarkNames, highlightsNames] = await Promise.all([
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchFoursquarePlaces(latitude, longitude, uiLanguage)
-      : Promise.resolve({ places: [], activities: [] }),
+      : Promise.resolve({ places: [], activities: [], fromCache: false }),
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchOsmLandmarkNames(latitude, longitude, safeCity, uiLanguage)
       : Promise.resolve([]),
-    wikiGeoP,
+    highlightsFallbackP,
   ]);
+
+  const iconicFallback = getIconicPlacesFallback(safeCity) || [];
+  let mergedFromApis = mergeMustSeePlaceCandidates({
+    iconicNames: iconicFallback,
+    highlightsNames,
+    osmNames: osmLandmarkNames,
+    fsqNames: otmData.places,
+    cap: 22,
+  });
+  if (mergedFromApis.length === 0) {
+    mergedFromApis = iconicFallback.slice();
+  }
 
   const commonsCandidates = getCityHeroImageCandidates(imageCtx);
   const wikiThumbRaw = String(summaryPack.thumb || "").trim();
@@ -5164,34 +5220,17 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
         .filter((u) => !isBlockedHeroImageUrl(u))
         .map((u) => upgradeLandscapeImageUrl(String(u || "")));
 
-  let mergedFromApis = mergePlaceCandidates(osmLandmarkNames, wikiGeoTitles, otmData.places, 22);
-  if (
-    mergedFromApis.length === 0 &&
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude)
-  ) {
-    const nomi = await fetchNominatimLandmarkHints(safeCity, uiLanguage, latitude, longitude);
-    mergedFromApis = mergePlaceCandidates(nomi, [], [], 22);
-  }
-  /** Pas de pastilles « exploration » génériques ; repli = catalogue emblématique ou vide. */
-  const rawPlacesList =
-    mergedFromApis.length > 0 ? mergedFromApis : getIconicPlacesFallback(safeCity) || [];
-
-  const placesForGuide = finalizeMustSeePlacesListForUi(rawPlacesList, safeCity, uiLanguage);
+  const placesForGuide = finalizeMustSeePlacesListForUi(mergedFromApis, safeCity, uiLanguage);
 
   const tips = buildTravelTips(safeCity, placesForGuide, uiLanguage);
 
-  /** Pas de liste dédiée « restaurants » — POI / OTM / repli catalogue. */
+  const fromPlacesActs = buildSuggestedActivitiesFromDistinctPlaces(placesForGuide, safeCity);
+  /** Pas de micro-POI OSM brut comme activités — catalogue / lieux validés uniquement. */
   const suggestedActivitySourceRaw =
     otmData.activities.length > 0
       ? otmData.activities
-      : osmLandmarkNames.length >= 4
-        ? osmLandmarkNames.slice(0, 8).map((title) => ({
-            title,
-            estimatedCostEur: 0,
-            costNote: "",
-            location: safeCity,
-          }))
+      : fromPlacesActs.length > 0
+        ? fromPlacesActs
         : buildSuggestedActivitiesForCity(safeCity);
   const suggestedActivitySource = applyLocalizedPlaceTitlesToActivities(
     suggestedActivitySourceRaw,
