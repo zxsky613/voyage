@@ -33,6 +33,7 @@ loadEnvLocal();
 
 const sqlFiles = [
   "supabase/sql/place_enrichment_cache_fsq_place_id.sql",
+  "supabase/sql/travel_preferences.sql",
 ];
 
 async function tryApplyViaPg(connectionString) {

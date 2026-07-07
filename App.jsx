@@ -104,6 +104,21 @@ import {
 import { isVerifiedPlannerEnabled } from "./lib/planner/featureFlags.js";
 import { categoryForActivityTitle } from "./lib/planner/activityCategoryThumb.js";
 import {
+  appendTravelMemorySnapshot,
+  buildTripPrefsPrefill,
+  consumePendingTravelSignals,
+  emptyTravelPreferencesDoc,
+  humanizeTravelPreferences,
+  recordDeletedActivityStyleSignal,
+  recordItineraryRegenerationSignal,
+  tripDurationDaysInclusive,
+} from "./lib/travelMemory/travelPreferences.js";
+import {
+  clearUserTravelPreferences,
+  fetchUserTravelPreferences,
+  upsertUserTravelPreferences,
+} from "./lib/travelMemory/travelPreferencesStore.js";
+import {
   pickTripAdvisorActivityPhoto,
   pickActivityDisplayPhotoUrl,
   pickResolvedActivityPhoto,
@@ -9784,6 +9799,9 @@ function AccountModal({
   onUpdateProfile,
   deleting,
   saving,
+  travelMemoryLines = [],
+  onClearTravelMemory,
+  clearingTravelMemory = false,
 }) {
   useScrollLock(open);
   const { t } = useI18n();
@@ -9955,6 +9973,34 @@ function AccountModal({
           >
             {saving ? t("accountModal.saving") : t("accountModal.saveProfile")}
           </button>
+        </div>
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+          <p className="mb-1 text-xs uppercase tracking-[0.16em] text-slate-500">{t("travelMemory.sectionTitle")}</p>
+          <p className="mb-3 text-[11px] leading-snug text-slate-500">{t("travelMemory.sectionHint")}</p>
+          {travelMemoryLines.length > 0 ? (
+            <ul className="mb-3 space-y-1.5 text-[13px] leading-snug text-slate-700">
+              {travelMemoryLines.map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span className="text-brand-blue" aria-hidden>
+                    ·
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mb-3 text-[13px] italic text-slate-400">{t("travelMemory.empty")}</p>
+          )}
+          {onClearTravelMemory ? (
+            <button
+              type="button"
+              onClick={onClearTravelMemory}
+              disabled={clearingTravelMemory || deleting || saving}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-[12px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {clearingTravelMemory ? t("travelMemory.clearing") : t("travelMemory.clear")}
+            </button>
+          ) : null}
         </div>
         <button
           type="button"
@@ -10485,14 +10531,37 @@ function ItineraryErrorNotice({ raw }) {
 // ─── TripPrefsModal ────────────────────────────────────────────────────────────
 const TRIP_PREFS_WIZARD_STEPS = 5;
 
-function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
+function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel, prefillPrefs = null, showMemoryBanner = false, onDismissMemoryBanner }) {
   const { t } = useI18n();
   const [step, setStep] = useState(0);
+  const [memoryBannerVisible, setMemoryBannerVisible] = useState(showMemoryBanner);
   const [pace, setPace] = useState("moderate");
   const [styles, setStyles] = useState([]);
   const [travelers, setTravelers] = useState("couple");
   const [budget, setBudget] = useState("medium");
   const [wishes, setWishes] = useState("");
+
+  useEffect(() => {
+    setMemoryBannerVisible(showMemoryBanner);
+    if (!prefillPrefs) return;
+    if (prefillPrefs.pace) setPace(prefillPrefs.pace);
+    if (Array.isArray(prefillPrefs.styles)) setStyles(prefillPrefs.styles);
+    if (prefillPrefs.travelers) setTravelers(prefillPrefs.travelers);
+    if (prefillPrefs.budget) setBudget(prefillPrefs.budget);
+    setWishes(String(prefillPrefs.wishes || ""));
+    setStep(0);
+  }, [prefillPrefs, showMemoryBanner]);
+
+  const handleResetPrefill = () => {
+    setPace("moderate");
+    setStyles([]);
+    setTravelers("couple");
+    setBudget("medium");
+    setWishes("");
+    setStep(0);
+    setMemoryBannerVisible(false);
+    onDismissMemoryBanner?.();
+  };
 
   const lastStepIndex = TRIP_PREFS_WIZARD_STEPS - 1;
   const isLastStep = step === lastStepIndex;
@@ -10587,6 +10656,18 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
 
         {/* One step per screen */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {memoryBannerVisible ? (
+            <div className="mb-4 flex flex-col gap-2 rounded-xl border border-brand-blue/20 bg-brand-blue-tint/40 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[12px] leading-snug text-brand-blue-deep">{t("destination.prefsMemoryBanner")}</p>
+              <button
+                type="button"
+                onClick={handleResetPrefill}
+                className="shrink-0 rounded-lg border border-brand-blue/25 bg-white px-3 py-1.5 text-[11px] font-medium text-brand-blue-deep hover:bg-white/90"
+              >
+                {t("destination.prefsMemoryReset")}
+              </button>
+            </div>
+          ) : null}
           {step === 0 ? (
             <section className="space-y-2">
               <p className="text-[12px] font-normal uppercase tracking-[0.12em] text-slate-500">{t("destination.prefsPace")}</p>
@@ -11747,6 +11828,7 @@ function DestinationGuideView({
   onCreateTrip,
   onBack,
   trips = [],
+  travelPreferencesDoc = null,
 }) {
   const { t, language } = useI18n();
 
@@ -11798,6 +11880,17 @@ function DestinationGuideView({
   /** Dernier contexte de génération (dest + dates) — pour « Régénérer » sans repasser par les modales. */
   const [lastItineraryRequest, setLastItineraryRequest] = useState(null);
   const [itineraryRegenerating, setItineraryRegenerating] = useState(false);
+  const [prefsPrefillDismissed, setPrefsPrefillDismissed] = useState(false);
+
+  const tripPrefsPrefill = useMemo(() => {
+    if (prefsPrefillDismissed || !travelPreferencesDoc) return null;
+    return buildTripPrefsPrefill(travelPreferencesDoc);
+  }, [travelPreferencesDoc, prefsPrefillDismissed]);
+
+  useEffect(() => {
+    const count = Number(travelPreferencesDoc?.derived?.savedTripCount) || 0;
+    if (count === 0) setPrefsPrefillDismissed(false);
+  }, [travelPreferencesDoc?.derived?.savedTripCount]);
 
   // ── sessionStorage helpers ────────────────────────────────────────────────
   const ITIN_SS_KEY = "tp_last_itinerary_result";
@@ -12691,6 +12784,7 @@ function DestinationGuideView({
       return;
     }
     await runItineraryGenerationWithDates(dest, startDate, endDate, lastItineraryPrefs, "regenerate");
+    recordItineraryRegenerationSignal();
   }
 
   function persistGeneratedDayIdeas(nextIdeas) {
@@ -12861,9 +12955,10 @@ function DestinationGuideView({
         selectedActivities: schedule.map((r) => r.title),
         /** Après génération IA : ramener la vue sur le résumé voyage + calendrier, pas sur la liste d’activités. */
         plannerFocusTripAndCalendar: true,
+        itineraryPrefs: lastItineraryPrefs,
       });
     },
-    [trips, buildItineraryActivitySchedule, displayGuide, confirmedDestination, onCreateTrip]
+    [trips, buildItineraryActivitySchedule, displayGuide, confirmedDestination, onCreateTrip, lastItineraryPrefs]
   );
 
   const exportItineraryToPhoneCalendar = useCallback(async () => {
@@ -13478,6 +13573,9 @@ function DestinationGuideView({
       {tripPrefsOpen && pendingTripRequest ? (
         <TripPrefsModal
           cityLabel={displayCityForLocale(String(pendingTripRequest.dest), language)}
+          prefillPrefs={tripPrefsPrefill}
+          showMemoryBanner={Boolean(tripPrefsPrefill)}
+          onDismissMemoryBanner={() => setPrefsPrefillDismissed(true)}
           onConfirm={handleGenerateWithPrefs}
           onSkip={() => handleGenerateWithPrefs(null)}
           onClose={() => { setTripPrefsOpen(false); setPendingTripRequest(null); }}
@@ -15890,6 +15988,14 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
+  const [clearingTravelMemory, setClearingTravelMemory] = useState(false);
+  const [travelPreferencesDoc, setTravelPreferencesDoc] = useState(null);
+  const travelPreferencesDocRef = useRef(null);
+  travelPreferencesDocRef.current = travelPreferencesDoc;
+  const travelMemoryLines = useMemo(
+    () => humanizeTravelPreferences(travelPreferencesDoc || emptyTravelPreferencesDoc(), t),
+    [travelPreferencesDoc, t]
+  );
   const [notice, setNoticeState] = useState("");
   const setNotice = useCallback(
     (msg) => {
@@ -16395,6 +16501,22 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
+    const uid = session?.user?.id ? String(session.user.id) : "";
+    if (!uid) {
+      setTravelPreferencesDoc(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const doc = await fetchUserTravelPreferences(supabase, uid);
+      if (!cancelled) setTravelPreferencesDoc(doc);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
     } catch (_e) {
@@ -16561,6 +16683,22 @@ export default function App() {
       );
     } finally {
       setDeletingAccount(false);
+    }
+  };
+
+  const clearTravelMemory = async () => {
+    const uid = session?.user?.id ? String(session.user.id) : "";
+    if (!uid) return;
+    setClearingTravelMemory(true);
+    try {
+      const res = await clearUserTravelPreferences(supabase, uid);
+      if (!res.ok) throw new Error(res.error || t("modals.unknownError"));
+      setTravelPreferencesDoc(emptyTravelPreferencesDoc());
+      setNotice(t("travelMemory.cleared"));
+    } catch (e) {
+      setNotice(String(e?.message || t("modals.unknownError")));
+    } finally {
+      setClearingTravelMemory(false);
     }
   };
 
@@ -17080,7 +17218,27 @@ export default function App() {
                 replaceTripActivitiesInState(newTripId, actRows);
               }
             } catch (_e) { /* ignore */ }
-          })()
+          })();
+
+          if (ownerId) {
+            void (async () => {
+              try {
+                const prefs =
+                  payload?.itineraryPrefs && typeof payload.itineraryPrefs === "object"
+                    ? payload.itineraryPrefs
+                    : null;
+                const durationDays = tripDurationDaysInclusive(body.start_date, body.end_date);
+                const signals = consumePendingTravelSignals();
+                const prev = travelPreferencesDocRef.current || emptyTravelPreferencesDoc();
+                const next = appendTravelMemorySnapshot(prev, { prefs, durationDays, signals });
+                setTravelPreferencesDoc(next);
+                await upsertUserTravelPreferences(supabase, ownerId, next);
+              } catch (_e) {
+                /* ignore */
+              }
+            })();
+          }
+
           return true;
         }
 
@@ -17346,6 +17504,7 @@ export default function App() {
       if (linked?.id) await deleteGroupExpense(linked);
       const { error } = await supabase.from("activities").delete().eq("id", activity.id);
       if (error) throw error;
+      recordDeletedActivityStyleSignal(activity.title || activity.name);
       void cancelActivityReminders(activity.id);
       cacheActivityDescription(activity.id, "");
       setActivities((prev) => (prev || []).filter((a) => String(a.id) !== String(activity.id)));
@@ -17918,6 +18077,7 @@ export default function App() {
               confirmedDestination={destinationConfirmed}
               onConfirmDestination={handleConfirmDestination}
               onBack={() => setActiveTab("trips")}
+              travelPreferencesDoc={travelPreferencesDoc}
               trips={trips}
               onCreateTrip={async (payload) => {
                 const ok = await createTrip(payload);
@@ -18350,6 +18510,9 @@ export default function App() {
         onUpdateProfile={updateMyAccount}
         deleting={deletingAccount}
         saving={savingAccount}
+        travelMemoryLines={travelMemoryLines}
+        onClearTravelMemory={clearTravelMemory}
+        clearingTravelMemory={clearingTravelMemory}
       />
       {destinationInvalidModalOpen ? (
         <div
