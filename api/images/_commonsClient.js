@@ -28,7 +28,7 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const api =
     "https://commons.wikimedia.org/w/api.php?action=query&format=json&redirects=1" +
     `&titles=${encodeURIComponent(filePage)}` +
-    "&prop=imageinfo&iiprop=url|thumburl|extmetadata|size";
+    "&prop=imageinfo&iiprop=url|thumburl|extmetadata|size|coordinates";
 
   const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
     headers: { "User-Agent": wikiUserAgent() },
@@ -51,6 +51,10 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   if (hero && (!isHeroLandscapeDimensions(w, h) || w < HERO_MIN_LANDSCAPE_WIDTH)) return null;
   if (source === "commons-category" && w < HERO_MIN_WIDTH) return null;
 
+  const coord = Array.isArray(info?.coordinates) ? info.coordinates[0] : null;
+  const imageLat = Number(coord?.lat);
+  const imageLon = Number(coord?.lon);
+
   return {
     url: commonsThumbUrl(url),
     source: /** @type {import('../../lib/images/types.js').ImageSource} */ (source),
@@ -64,6 +68,10 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
     sourceUrl: String(info?.descriptionurl || "").trim() || undefined,
     width: w,
     height: h,
+    categories: categoriesRaw,
+    extmetadata: meta,
+    imageLat: Number.isFinite(imageLat) ? imageLat : undefined,
+    imageLon: Number.isFinite(imageLon) ? imageLon : undefined,
     score: scoreScenicCommonsFile(title, url, w, h, {
       hero,
       categories: categoriesRaw,

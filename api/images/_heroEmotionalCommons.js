@@ -12,28 +12,18 @@ const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
 const HERO_GEO_RADIUS_M = 8000;
 const HERO_GEO_LIMIT = 28;
 
-/** @param {string} searchLabel */
-function englishCommonsPlaceName(searchLabel) {
-  const head = String(searchLabel || "")
-    .trim()
-    .split(",")[0]
-    ?.trim();
-  if (!head) return "";
-  return head.charAt(0).toUpperCase() + head.slice(1);
-}
-
 /**
- * Catégories Commons « émotion » — ordre de priorité.
- * @param {string} placeName
+ * Catégories Commons « émotion » ancrées sur P373 de l'entité Wikidata (pas le nom texte seul).
+ * @param {{ commonsCategory?: string }} entity
  */
-export function buildEmotionalCommonsCategories(placeName) {
-  const p = englishCommonsPlaceName(placeName);
-  if (!p) return [];
+export function buildEmotionalCommonsCategoriesFromEntity(entity) {
+  const p373 = String(entity?.commonsCategory || "").trim();
+  if (!p373) return [];
   return [
-    { name: `Featured pictures of ${p}`, heroSource: /** @type {const} */ ("commons-featured") },
-    { name: `Quality images of ${p}`, heroSource: /** @type {const} */ ("commons-quality") },
-    { name: `Views of ${p}`, heroSource: /** @type {const} */ ("commons") },
-    { name: `Landscapes of ${p}`, heroSource: /** @type {const} */ ("commons") },
+    { name: `Featured pictures of ${p373}`, heroSource: /** @type {const} */ ("commons-featured") },
+    { name: `Quality images of ${p373}`, heroSource: /** @type {const} */ ("commons-quality") },
+    { name: `Views of ${p373}`, heroSource: /** @type {const} */ ("commons") },
+    { name: `Landscapes of ${p373}`, heroSource: /** @type {const} */ ("commons") },
   ];
 }
 
@@ -53,29 +43,34 @@ async function fetchGeoSearchFileTitles(lat, lon) {
   });
   if (throttled || timedOut || !ok) return [];
   return (Array.isArray(json?.query?.geosearch) ? json.query.geosearch : [])
-    .map((item) => String(item?.title || "").trim())
-    .filter((t) => t.startsWith("File:"));
+    .map((item) => ({
+      title: String(item?.title || "").trim(),
+      distM: Number(item?.dist) || 0,
+    }))
+    .filter((item) => item.title.startsWith("File:"));
 }
 
 /**
- * @param {string[]} titles
+ * @param {Array<{ title: string, distM?: number }>} geoItems
  * @param {{ destinationTokens?: string[] }} options
  */
-async function fetchGeoHeroCandidates(titles, options = {}) {
-  const list = (Array.isArray(titles) ? titles : []).filter(Boolean).slice(0, HERO_GEO_LIMIT);
+async function fetchGeoHeroCandidates(geoItems, options = {}) {
+  const list = (Array.isArray(geoItems) ? geoItems : []).filter((x) => x?.title).slice(0, HERO_GEO_LIMIT);
   if (!list.length) return [];
 
   const api =
     `${COMMONS_API}?action=query&format=json&redirects=1&origin=*` +
-    `&prop=imageinfo&iiprop=url|thumburl|extmetadata|size|mime` +
+    `&prop=imageinfo&iiprop=url|thumburl|extmetadata|size|mime|coordinates` +
     `&iiurlwidth=${HERO_COMMONS_THUMB_WIDTH}` +
-    `&titles=${list.map((t) => encodeURIComponent(t)).join("%7C")}`;
+    `&titles=${list.map((x) => encodeURIComponent(x.title)).join("%7C")}`;
 
   const { ok, json, throttled, timedOut } = await fetchJsonWithRetry(api, {
     headers: { "User-Agent": wikiUserAgent() },
     timeoutMs: 12000,
   });
   if (throttled || timedOut || !ok) return [];
+
+  const distByTitle = Object.fromEntries(list.map((x) => [x.title, Number(x.distM) || 0]));
 
   /** @type {import('../../lib/images/types.js').ImageCandidate[]} */
   const out = [];
@@ -100,6 +95,10 @@ async function fetchGeoHeroCandidates(titles, options = {}) {
     });
     if (score < 50) continue;
 
+    const coord = Array.isArray(info?.coordinates) ? info.coordinates[0] : null;
+    const imageLat = Number(coord?.lat);
+    const imageLon = Number(coord?.lon);
+
     out.push({
       url: commonsThumbUrl(url),
       source: /** @type {import('../../lib/images/types.js').ImageSource} */ ("commons-category"),
@@ -115,24 +114,28 @@ async function fetchGeoHeroCandidates(titles, options = {}) {
       width: w,
       height: h,
       score,
+      categories: categoriesRaw,
+      extmetadata: meta,
+      geosearchDistM: distByTitle[`File:${title}`] || distByTitle[title] || 0,
+      imageLat: Number.isFinite(imageLat) ? imageLat : undefined,
+      imageLon: Number.isFinite(imageLon) ? imageLon : undefined,
     });
   }
   return out.sort((a, b) => (b.score || 0) - (a.score || 0));
 }
 
 /**
- * Étape émotion — Featured/Quality/Views/Landscapes + geosearch filtré.
+ * Étape émotion — catégories P373 de l'entité + geosearch autour du P625.
  * @param {NonNullable<Awaited<ReturnType<import('./_entityResolver.js').resolveEntity>>>} entity
  * @param {string} searchLabel
  * @param {{ kind?: import('../../lib/images/types.js').ImageKind, uiLang?: string, destinationTokens?: string[] }} options
  */
 export async function fetchHeroEmotionalCandidates(entity, searchLabel, options = {}) {
   const heroOpts = { ...options, kind: /** @type {'hero'} */ ("hero") };
-  const placeName = englishCommonsPlaceName(searchLabel);
   /** @type {import('../../lib/images/types.js').ImageCandidate[]} */
   const merged = [];
 
-  for (const cat of buildEmotionalCommonsCategories(placeName)) {
+  for (const cat of buildEmotionalCommonsCategoriesFromEntity(entity)) {
     const batch = await fetchCommonsCategoryScenicCandidates(cat.name, {
       ...heroOpts,
       emotionalCategory: cat.name,
@@ -145,8 +148,8 @@ export async function fetchHeroEmotionalCandidates(entity, searchLabel, options 
 
   const coords = entity?.coordinates;
   if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lon)) {
-    const titles = await fetchGeoSearchFileTitles(coords.lat, coords.lon);
-    const geo = await fetchGeoHeroCandidates(titles, heroOpts);
+    const geoItems = await fetchGeoSearchFileTitles(coords.lat, coords.lon);
+    const geo = await fetchGeoHeroCandidates(geoItems, heroOpts);
     merged.push(...geo);
   }
 
