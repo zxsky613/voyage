@@ -4962,6 +4962,29 @@ async function fetchOsmLandmarkNames(lat, lon, cityHint = "", uiLang = "fr") {
   }
 }
 
+/** Lieux notables Wikidata (sitelinks) — qualité uniforme hors catalogue emblématique. */
+async function fetchWikidataNotableLandmarkNames(lat, lon, cityHint = "", uiLang = "fr") {
+  const locale = String(uiLang || "fr").toLowerCase().split("-")[0].slice(0, 2) || "fr";
+  try {
+    const resp = await fetch("/api/guide/wikidata-landmarks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lat,
+        lon,
+        cityHint: String(cityHint || "").trim(),
+        locale,
+      }),
+    });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    if (!json?.ok || !Array.isArray(json.names)) return [];
+    return json.names.map((x) => String(x || "").trim()).filter(Boolean);
+  } catch (_e) {
+    return [];
+  }
+}
+
 /** Repli guide : highlights Supabase (même périmés) quand FSQ/OSM échouent. */
 async function fetchGuideHighlightsFallback(destination, uiLang = "fr") {
   const dest = String(destination || "").trim();
@@ -5149,15 +5172,18 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   // Wikivoyage si disponible (description voyage > encyclopédie Wikipedia)
   const summaryText = wikivoyageText || summaryPack.summaryText;
 
-  // Foursquare + OSM + cache highlights en parallèle — jamais de geosearch Wikipedia pour les incontournables.
+  // Foursquare + OSM + Wikidata sitelinks + cache highlights — jamais de geosearch Wikipedia pour les incontournables.
   const highlightsFallbackP = fetchGuideHighlightsFallback(safeCity, uiLanguage);
 
-  const [otmData, osmLandmarkNames, highlightsNames] = await Promise.all([
+  const [otmData, osmLandmarkNames, wikidataNames, highlightsNames] = await Promise.all([
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchFoursquarePlaces(latitude, longitude, uiLanguage)
       : Promise.resolve({ places: [], activities: [], fromCache: false }),
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? fetchOsmLandmarkNames(latitude, longitude, safeCity, uiLanguage)
+      : Promise.resolve([]),
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? fetchWikidataNotableLandmarkNames(latitude, longitude, safeCity, uiLanguage)
       : Promise.resolve([]),
     highlightsFallbackP,
   ]);
@@ -5166,6 +5192,7 @@ async function fetchDestinationGuide(city, uiLanguage = "fr") {
   let mergedFromApis = mergeMustSeePlaceCandidates({
     iconicNames: iconicFallback,
     highlightsNames,
+    wikidataNames,
     osmNames: osmLandmarkNames,
     fsqNames: otmData.places,
     cap: 22,

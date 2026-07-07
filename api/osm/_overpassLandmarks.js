@@ -96,40 +96,37 @@ function sleep(ms) {
 }
 
 function buildOverpassQuery(lat, lon, r) {
-  return `[out:json][timeout:35];
+  return `[out:json][timeout:55];
 (
-  node["name"]["tourism"](around:${r},${lat},${lon});
-  way["name"]["tourism"](around:${r},${lat},${lon});
-  node["name"]["historic"](around:${r},${lat},${lon});
-  way["name"]["historic"](around:${r},${lat},${lon});
-  node["name"]["leisure"="park"](around:${r},${lat},${lon});
-  way["name"]["leisure"="park"](around:${r},${lat},${lon});
-  node["name"]["amenity"="museum"](around:${r},${lat},${lon});
-  way["name"]["amenity"="museum"](around:${r},${lat},${lon});
-  node["name"]["amenity"="arts_centre"](around:${r},${lat},${lon});
-  way["name"]["amenity"="arts_centre"](around:${r},${lat},${lon});
-  node["name"]["amenity"="theatre"](around:${r},${lat},${lon});
-  way["name"]["amenity"="theatre"](around:${r},${lat},${lon});
-  node["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
-  way["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
+  nwr["name"]["tourism"](around:${r},${lat},${lon});
+  nwr["name"]["historic"](around:${r},${lat},${lon});
+  nwr["name"]["amenity"="museum"](around:${r},${lat},${lon});
+  nwr["name"]["amenity"="place_of_worship"](around:${r},${lat},${lon});
 );
-out center 72;`;
+out center 48;`;
 }
 
 async function postOverpass(endpoint, query) {
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "User-Agent": OVERPASS_USER_AGENT,
-    },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Overpass HTTP ${resp.status}: ${t.slice(0, 200)}`);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 28000);
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "User-Agent": OVERPASS_USER_AGENT,
+      },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      throw new Error(`Overpass HTTP ${resp.status}: ${t.slice(0, 200)}`);
+    }
+    return resp.json();
+  } finally {
+    clearTimeout(timer);
   }
-  return resp.json();
 }
 
 /**
@@ -149,16 +146,17 @@ export async function fetchLandmarkNamesFromOverpass(lat, lon, radiusMeters = 11
 
   for (let i = 0; i < OVERPASS_ENDPOINTS.length; i += 1) {
     const endpoint = OVERPASS_ENDPOINTS[i];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const json = await postOverpass(endpoint, query);
-        const names = parseOverpassToRankedNames(json?.elements, preferredLang);
-        if (names.length) writeOsmLandmarksServerCache(cacheKey, names);
-        return names;
-      } catch (e) {
-        lastErr = e;
-        if (attempt === 0) await sleep(800);
+    try {
+      const json = await postOverpass(endpoint, query);
+      if (json?.remark && /timed out|runtime error/i.test(String(json.remark))) {
+        throw new Error(String(json.remark));
       }
+      const names = parseOverpassToRankedNames(json?.elements, preferredLang);
+      if (names.length) writeOsmLandmarksServerCache(cacheKey, names);
+      return names;
+    } catch (e) {
+      lastErr = e;
+      if (i < OVERPASS_ENDPOINTS.length - 1) await sleep(600);
     }
   }
 
