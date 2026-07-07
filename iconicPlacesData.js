@@ -574,6 +574,15 @@ export const ICONIC_PLACES_CANONICAL = {
     "Église Panagia Paraportiani",
     "Ano Mera & monastère de la Panagia Tourliani",
   ],
+  crete: [
+    "Palais de Knossos",
+    "Musée archéologique d'Héraklion",
+    "Gorges de Samaria",
+    "Vieux port de La Canée",
+    "Plage d'Elafonisi",
+    "Spinalonga",
+    "Vieille ville de Réthymnon",
+  ],
   santorini: [
     "Village d'Oia & coucher de soleil",
     "Caldeira & randonnée Fira–Oia",
@@ -802,6 +811,7 @@ export const ICONIC_PLACES_CANONICAL = {
   palermo: [
     "Cathédrale de Palerme",
     "Palais des Normands & chapelle Palatine",
+    "Quattro Canti",
     "Teatro Massimo",
     "Marché Ballarò",
     "Quartier Kalsa & Piazza Marina",

@@ -2,6 +2,10 @@
  * Conseils voyage par destination — multilingues (fr/en/de/es/it/zh).
  * Priorité : entrées explicites > modèles liés aux lieux emblématiques > génériques.
  */
+import {
+  buildTransportLinkTip,
+  getDestinationTransportProfile,
+} from "./lib/guide/destinationTransport.js";
 
 const LANG_FALLBACK = "en";
 
@@ -109,14 +113,18 @@ const TIPS_FROM_ICONIC_ML = [
   },
 ];
 
-function tipsFromIconicPlaces(displayLabel, places, lang) {
+function tipsFromIconicPlaces(displayLabel, places, lang, normalizedCatalogKey = "") {
   const label = String(displayLabel || "").trim() || "this destination";
   const list = (places || []).map(String).filter(Boolean);
   if (list.length < 2) return null;
   const a = shortPlaceLabel(list[0]);
   const b = shortPlaceLabel(list[1]);
   const c = list[2] ? shortPlaceLabel(list[2]) : b;
-  return TIPS_FROM_ICONIC_ML.map((o) => (pickLang(o, lang))(label, a, b, c));
+  const profile = getDestinationTransportProfile(normalizedCatalogKey);
+  const tip0 = pickLang(TIPS_FROM_ICONIC_ML[0], lang)(label, a, b, c);
+  const tip1 = buildTransportLinkTip(profile, label, a, b, lang);
+  const tip2 = pickLang(TIPS_FROM_ICONIC_ML[2], lang)(label, a, b, c);
+  return [tip0, tip1, tip2];
 }
 
 /**
@@ -151,7 +159,7 @@ export function resolveTravelTips(normalizedCatalogKey, displayLabel, iconicPlac
     return { do: explicit.do.map((o) => pickLang(o, lang)), dont: dontList };
   }
 
-  const fromIconic = tipsFromIconicPlaces(label, iconicPlaces, lang);
+  const fromIconic = tipsFromIconicPlaces(label, iconicPlaces, lang, k);
   if (fromIconic) {
     return { do: fromIconic, dont: genericDont(lang) };
   }
@@ -161,6 +169,34 @@ export function resolveTravelTips(normalizedCatalogKey, displayLabel, iconicPlac
 
 /** Multilingual city-specific tip overrides. */
 const TRAVEL_TIPS_OVERRIDES_ML = {
+  crete: {
+    do: [
+      {
+        fr: "Loue une voiture ou prends les bus KTEL entre Héraklion, La Canée et Réthymnon — les sites (Knossos, Samaria, Elafonisi) sont éloignés, sans réseau urbain dense.",
+        en: "Rent a car or use KTEL buses between Heraklion, Chania and Rethymno — sights (Knossos, Samaria, Elafonisi) are spread out with no dense urban rail.",
+        de: "Mietwagen oder KTEL-Busse zwischen Heraklion, Chania und Rethymno — die Sehenswürdigkeiten (Knossos, Samaria, Elafonisi) liegen weit auseinander, es gibt keine Metro.",
+        es: "Alquila coche o usa los autobuses KTEL entre Heraclión, La Canea y Rétino — los lugares (Knossos, Samaria, Elafonisi) están dispersos y no hay metro.",
+        it: "Noleggia un'auto o usa i bus KTEL tra Heraklion, Chania e Rethymno — i siti (Knossos, Samaria, Elafonisi) sono distanti e non c'è metropolitana.",
+        zh: "在伊拉克利翁、哈尼亚和雷西姆农之间建议租车或乘坐KTEL巴士——景点分散，没有地铁。",
+      },
+      {
+        fr: "Réserve le ferry pour Spinalonga ou l'île de Chrissi à l'avance en été ; les places partent vite depuis Agios Nikolaos ou Ierapetra.",
+        en: "Book ferries to Spinalonga or Chrissi Island ahead in summer; sailings from Agios Nikolaos or Ierapetra fill up fast.",
+        de: "Fähren nach Spinalonga oder Chrissi im Sommer vorab buchen; Abfahrten ab Agios Nikolaos oder Ierapetra sind schnell ausgebucht.",
+        es: "Reserva el ferry a Spinalonga o la isla de Chrissi con antelación en verano; las plazas desde Agios Nikolaos o Ierapetra se agotan rápido.",
+        it: "Prenota in anticipo i traghetti per Spinalonga o l'isola di Chrissi in estate; le partenze da Agios Nikolaos o Ierapetra si esauriscono in fretta.",
+        zh: "夏季请提前预订前往斯皮纳隆加或克里西岛的渡轮——从阿吉奥斯尼科拉奥斯或耶拉佩特拉出发的班次很快售罄。",
+      },
+      {
+        fr: "Pour la gorge de Samaria, pars tôt le matin depuis Omalos : la descente dure 4–6 h et le dernier bus de retour vers la côte est strict.",
+        en: "For Samaria Gorge, leave early from Omalos: the hike takes 4–6 hours and the last bus back to the coast is strict.",
+        de: "Für die Samaria-Schlucht früh von Omalos starten: die Wanderung dauert 4–6 Stunden, der letzte Bus zurück zur Küste fährt pünktlich.",
+        es: "Para la garganta de Samaria, sal pronto desde Omalos: la bajada dura 4–6 h y el último autobús de vuelta a la costa es estricto.",
+        it: "Per la gola di Samaria, parti presto da Omalos: la discesa dura 4–6 ore e l'ultimo bus verso la costa è puntuale.",
+        zh: "萨马利亚峡谷建议清晨从奥马洛斯出发：徒步需4–6小时，返回海岸的末班车时间严格。",
+      },
+    ],
+  },
   paris: {
     do: [
       {

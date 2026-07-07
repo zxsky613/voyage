@@ -1,6 +1,12 @@
 import { handleCors, sendJson, parseBody, getFoursquareKey } from "../_helpers.js";
 import { searchFoursquarePlace } from "./_textSearch.js";
 import { FOURSQUARE_PLACES_BASE, foursquarePlacesHeaders } from "./_client.js";
+import { noteFoursquarePlacesCall } from "./_fsqMetrics.js";
+import {
+  fsqServerCacheKey,
+  readFsqServerCache,
+  writeFsqServerCache,
+} from "./_guidePlacesCache.js";
 
 /** Loisirs / culture / plein air — lieux « incontournables ». */
 const FSQ_PRESET_POI = "10000,16000,12000";
@@ -42,6 +48,26 @@ export default async function handler(req, res) {
     (preset === "restaurants" || preset === "dining" || preset === "food" ? FSQ_PRESET_RESTAURANTS : FSQ_PRESET_POI);
   const fields = "name,location,categories,price,latitude,longitude,fsq_place_id";
 
+  const simulate429 =
+    process.env.FSQ_SIMULATE_429 === "1" ||
+    String(req.headers?.["x-fsq-simulate-429"] || "").trim() === "1";
+  if (simulate429) {
+    noteFoursquarePlacesCall({ simulated: true });
+    return sendJson(res, 429, {
+      ok: false,
+      error: "Foursquare quota exceeded (simulated)",
+      quotaExceeded: true,
+      results: [],
+    });
+  }
+
+  const cacheKey = fsqServerCacheKey(lat, lon, localeRaw, categories);
+  const cachedResults = readFsqServerCache(cacheKey);
+  if (cachedResults) {
+    noteFoursquarePlacesCall({ cached: true });
+    return sendJson(res, 200, { ok: true, results: cachedResults, cached: true });
+  }
+
   try {
     const params = new URLSearchParams({
       ll: `${lat},${lon}`,
@@ -54,12 +80,21 @@ export default async function handler(req, res) {
     const fsqResp = await fetch(`${FOURSQUARE_PLACES_BASE}/places/search?${params}`, {
       headers: foursquarePlacesHeaders(localeRaw),
     });
+    noteFoursquarePlacesCall();
     if (!fsqResp.ok) {
       const errText = await fsqResp.text();
-      return sendJson(res, fsqResp.status, { error: `Foursquare ${fsqResp.status}: ${errText.slice(0, 300)}` });
+      const payload = {
+        ok: false,
+        error: `Foursquare ${fsqResp.status}: ${errText.slice(0, 300)}`,
+        results: [],
+      };
+      if (fsqResp.status === 429) payload.quotaExceeded = true;
+      return sendJson(res, fsqResp.status, payload);
     }
     const fsqJson = await fsqResp.json();
-    sendJson(res, 200, { ok: true, results: fsqJson.results || [] });
+    const results = fsqJson.results || [];
+    if (results.length) writeFsqServerCache(cacheKey, results);
+    sendJson(res, 200, { ok: true, results, cached: false });
   } catch (e) {
     sendJson(res, 502, { error: String(e?.message || e) });
   }
