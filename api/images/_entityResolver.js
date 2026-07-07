@@ -1,6 +1,7 @@
 import { wikiUserAgent } from "./_headCheck.js";
 import { fetchJsonWithRetry, WikiApiThrottledError } from "./_fetchRetry.js";
 import { buildEntitySearchAttempts } from "../../lib/images/entitySearchPlan.js";
+import { buildEntityGeoAnchor } from "../../lib/images/imageEntityGuard.js";
 
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
 
@@ -97,10 +98,44 @@ function entityClaimQids(entity, propId) {
 
 function isHomonymEntity(entity, label, context) {
   const blob = `${normalizeForLookup(label)} ${normalizeForLookup(context)}`;
+  const ctx = normalizeForLookup(context);
   const id = String(entity?.id || "");
   const labelEn = normalizeForLookup(entity?.labels?.en?.value || entity?.labels?.fr?.value || "");
+  const desc = normalizeForLookup(
+    entity?.descriptions?.en?.value || entity?.descriptions?.fr?.value || ""
+  );
+
+  if (/\bpalerme\b|\bpalermo\b/.test(blob)) {
+    const wantsItaly = /italy|italie|italia|sicily|sicile|sicilia/.test(ctx) || /italy|sicily|sicile/.test(blob);
+    const wantsArgentina = /argentina|buenos aires/.test(ctx) || /argentina|buenos aires/.test(blob);
+    if (wantsItaly && (id === "Q1010212" || id === "Q1486" || /buenos aires|argentina/.test(labelEn + " " + desc))) {
+      return true;
+    }
+    if (wantsArgentina && id === "Q2656") return true;
+  }
+
+  if (/\bvalence\b|\bvalencia\b/.test(blob)) {
+    const wantsFrance = /france|french|drome|provence/.test(ctx) || (/valence/.test(blob) && !/espana|spain/.test(blob));
+    const wantsSpain = /spain|espana|espagne|comunidad valenciana/.test(ctx) || /valencia/.test(blob);
+    if (wantsFrance && (id === "Q8818" || /valencia.*spain|spain/.test(desc))) return true;
+    if (wantsSpain && (id === "Q8848" || /drome|france/.test(desc) && !/spain|espana/.test(desc))) return true;
+  }
+
+  if (/\bcordoue\b|\bcordoba\b|\bcórdoba\b/.test(blob)) {
+    const wantsSpain = /spain|espana|espagne|andalusia|andalousie/.test(ctx) || /spain|espana/.test(blob);
+    const wantsArgentina = /argentina|buenos aires/.test(ctx) || /argentina/.test(blob);
+    if (wantsSpain && (id === "Q44210" || /argentina/.test(labelEn + " " + desc))) return true;
+    if (wantsArgentina && (id === "Q5818" || /spain|espana|andalusia/.test(desc))) return true;
+  }
+
+  if (/\btripoli\b|\btripolis\b/.test(blob)) {
+    const wantsGreece = /greece|grece|hellas|peloponnese|arcadia/.test(ctx) || /greece|grece/.test(blob);
+    const wantsLibya = /libya|libye|libyan/.test(ctx) || /libya|libye/.test(blob);
+    if (wantsGreece && (id === "Q3579" || /libya|libyan/.test(labelEn + " " + desc))) return true;
+    if (wantsLibya && (id === "Q193409" || /greece|peloponnese|arcadia/.test(desc))) return true;
+  }
+
   if (/\bcapri\b/.test(normalizeForLookup(label))) {
-    const ctx = normalizeForLookup(context);
     if (/honduras|gracias a dios|nebraska|saline county/.test(ctx)) {
       if (id === "Q173292" || id === "Q71902") return true;
     }
@@ -467,6 +502,8 @@ async function pickBestEntityFromHits(hits, searchLabel, context, contextTokens,
       if (wvTitle) wikivoyageSitelinks.push({ lang: l, title: wvTitle });
     }
 
+    const geoAnchor = buildEntityGeoAnchor(ent, geoLabelMap);
+
     return {
       qid: String(ent.id),
       p18Filenames,
@@ -475,6 +512,8 @@ async function pickBestEntityFromHits(hits, searchLabel, context, contextTokens,
       sitelinks,
       wikivoyageSitelinks,
       p31Ids: ids,
+      geoAnchor,
+      countryLabel: geoAnchor.countryLabels[0] || "",
     };
   }
 

@@ -5,6 +5,7 @@ import {
   isWikimediaUploadUrl,
 } from "../../lib/images/commonsThumbUrl.js";
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage, isLikelyNonScenicHeroImagery } from "../../lib/images/wikiImageFilters.js";
+import { passesEntityImageGuards, resetImageGeoMismatchLog } from "../../lib/images/imageEntityGuard.js";
 import {
   isCacheConfigured,
   noteCacheStatusAtResolveStart,
@@ -65,14 +66,16 @@ function passesKindFilters(c, kind) {
 }
 
 /**
- * Premier candidat valide (filtres + HEAD) — ordre séquentiel, stop à la 1re image sûre.
+ * Premier candidat valide (filtres + verrous entité + HEAD).
  * @param {import('../../lib/images/types.js').ImageCandidate[]} candidates
  * @param {import('../../lib/images/types.js').ImageKind} kind
+ * @param {Awaited<ReturnType<typeof resolveEntity>>|null|undefined} entity
  */
-async function firstValidSequential(candidates, kind) {
+async function firstValidSequential(candidates, kind, entity = null) {
   const list = Array.isArray(candidates) ? candidates : [];
   for (const c of list) {
     if (!passesKindFilters(c, kind)) continue;
+    if (!passesEntityImageGuards(c, entity?.geoAnchor, kind)) continue;
     if (await headCheckUrl(c.url)) return c;
   }
   return null;
@@ -92,7 +95,7 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
   };
 
   const emotional = await fetchHeroEmotionalCandidates(entity, searchLabel, heroOpts);
-  const emotionalHit = await firstValidSequential(emotional, "hero");
+  const emotionalHit = await firstValidSequential(emotional, "hero", entity);
   if (emotionalHit) return emotionalHit;
 
   if (entity.p18Filenames?.length) {
@@ -100,13 +103,13 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
       ...c,
       heroSource: /** @type {const} */ ("p18"),
     }));
-    const hit = await firstValidSequential(p18, "hero");
+    const hit = await firstValidSequential(p18, "hero", entity);
     if (hit) return hit;
   }
 
   if (entity.sitelinks?.length) {
     const wiki = await fetchWikipediaCandidates(entity.sitelinks, heroOpts);
-    const hit = await firstValidSequential(wiki, "hero");
+    const hit = await firstValidSequential(wiki, "hero", entity);
     if (hit) return hit;
   }
 
@@ -114,7 +117,7 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
     ...c,
     heroSource: /** @type {const} */ ("wikivoyage"),
   }));
-  const wvHit = await firstValidSequential(wikivoyage, "hero");
+  const wvHit = await firstValidSequential(wikivoyage, "hero", entity);
   if (wvHit) return wvHit;
 
   if (entity.commonsCategory) {
@@ -122,7 +125,7 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
       ...c,
       heroSource: /** @type {const} */ ("commons"),
     }));
-    const hit = await firstValidSequential(category, "hero");
+    const hit = await firstValidSequential(category, "hero", entity);
     if (hit) return hit;
   }
 
@@ -136,13 +139,13 @@ async function resolveHeroFromEntity(entity, uiLang, searchLabel) {
 async function resolvePlaceFromEntity(entity, kind) {
   if (entity.p18Filenames?.length) {
     const p18 = await fetchP18Candidates(entity.p18Filenames);
-    const hit = await firstValidSequential(p18, kind);
+    const hit = await firstValidSequential(p18, kind, entity);
     if (hit) return hit;
   }
 
   if (entity.sitelinks?.length) {
     const wiki = await fetchWikipediaCandidates(entity.sitelinks);
-    const hit = await firstValidSequential(wiki, kind);
+    const hit = await firstValidSequential(wiki, kind, entity);
     if (hit) return hit;
   }
 
@@ -255,6 +258,13 @@ export async function resolveImage(params) {
       reason: wikiThrottled ? "wikidata_throttled" : "not_found",
       cache: cacheField,
     };
+  }
+
+  if (kind === "hero") {
+    resetImageGeoMismatchLog();
+    console.info(
+      `entityAnchor: ${entity.qid}${entity.countryLabel ? ` (${entity.countryLabel})` : ""}`
+    );
   }
 
   if (entity?.qid && cacheReady && cacheField !== "disabled") {
