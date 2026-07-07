@@ -3,6 +3,8 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useI18n } from "../../i18n/I18nContext.jsx";
 import TripMapActivitySheet from "./TripMapActivitySheet.jsx";
+import TripMapDayLegend from "./TripMapDayLegend.jsx";
+import { registerActivityBalloonImages, ACTIVITY_BALLOON_ORANGE } from "./activityBalloonMarker.js";
 import {
   activitiesToPointGeoJSON,
   activitiesToRouteGeoJSON,
@@ -19,12 +21,10 @@ const DAY_SOURCE_ID = "trip-days";
 const ROUTE_SOURCE_ID = "trip-route";
 const CLUSTER_LAYER = "trip-clusters";
 const CLUSTER_COUNT_LAYER = "trip-cluster-count";
-const POINT_LAYER = "trip-unclustered-point";
-const POINT_LABEL_LAYER = "trip-unclustered-label";
+const BALLOON_LAYER = "trip-activity-balloon";
 const DAY_LAYER = "trip-day-markers";
 const DAY_LABEL_LAYER = "trip-day-labels";
 const ROUTE_LAYER = "trip-route-line";
-const SELECTED_LAYER = "trip-selected-ring";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
@@ -97,6 +97,21 @@ export default function TripMap({
 
   const dayCentroids = useMemo(() => computeDayCentroids(mappedActivities), [mappedActivities]);
 
+  const legendDays = useMemo(() => {
+    const byIdx = new Map();
+    for (const a of activities || []) {
+      const dayIndex = Number(a?.dayIndex);
+      if (!Number.isFinite(dayIndex)) continue;
+      if (!byIdx.has(dayIndex)) {
+        byIdx.set(dayIndex, {
+          dayIndex,
+          dayNum: Number(a?.dayNum) || dayIndex + 1,
+        });
+      }
+    }
+    return [...byIdx.values()].sort((a, b) => a.dayIndex - b.dayIndex);
+  }, [activities]);
+
   const activityPointsData = useMemo(
     () =>
       effectiveView === "day" ? activitiesToPointGeoJSON(dayActivities, selectedDayIndex) : EMPTY_FC,
@@ -131,6 +146,32 @@ export default function TripMap({
   onSelectRef.current = onSelectActivity;
   const onSelectDayRef = useRef(onSelectDay);
   onSelectDayRef.current = onSelectDay;
+  const selectedActivityIdRef = useRef(selectedActivityId);
+  selectedActivityIdRef.current = selectedActivityId;
+  const effectiveViewRef = useRef(effectiveView);
+  effectiveViewRef.current = effectiveView;
+
+  const applyBalloonIconLayout = useCallback((map, selId) => {
+    if (!map?.getLayer(BALLOON_LAYER)) return;
+    const sid = String(selId || "__none__");
+    map.setLayoutProperty(BALLOON_LAYER, "icon-image", [
+      "case",
+      ["==", ["get", "id"], sid],
+      ["concat", "activity-balloon-", ["get", "label"], "-sel"],
+      ["concat", "activity-balloon-", ["get", "label"]],
+    ]);
+  }, []);
+
+  const applyRouteStyle = useCallback((map, viewMode) => {
+    if (!map?.getLayer(ROUTE_LAYER)) return;
+    if (viewMode === "day") {
+      map.setPaintProperty(ROUTE_LAYER, "line-dasharray", [4, 3]);
+      map.setPaintProperty(ROUTE_LAYER, "line-opacity", 0.7);
+    } else {
+      map.setPaintProperty(ROUTE_LAYER, "line-dasharray", [1, 0]);
+      map.setPaintProperty(ROUTE_LAYER, "line-opacity", 0.55);
+    }
+  }, []);
 
   const syncSources = useCallback(() => {
     const map = mapRef.current;
@@ -138,7 +179,18 @@ export default function TripMap({
     map.getSource(SOURCE_ID)?.setData(activityPointsData);
     map.getSource(DAY_SOURCE_ID)?.setData(dayMarkersData);
     map.getSource(ROUTE_SOURCE_ID)?.setData(routeData);
-  }, [mapReady, activityPointsData, dayMarkersData, routeData]);
+    applyRouteStyle(map, effectiveView);
+    applyBalloonIconLayout(map, selectedActivityId);
+  }, [
+    mapReady,
+    activityPointsData,
+    dayMarkersData,
+    routeData,
+    effectiveView,
+    selectedActivityId,
+    applyRouteStyle,
+    applyBalloonIconLayout,
+  ]);
 
   useEffect(() => {
     syncSources();
@@ -209,8 +261,14 @@ export default function TripMap({
 
     map.on("error", onError);
 
-    map.on("load", () => {
+    map.on("load", async () => {
       if (cancelled) return;
+
+      try {
+        await registerActivityBalloonImages(map);
+      } catch {
+        /* fallback : clusters + jours restent utilisables */
+      }
 
       map.addSource(SOURCE_ID, {
         type: "geojson",
@@ -247,7 +305,7 @@ export default function TripMap({
         source: SOURCE_ID,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": BRAND_BLUE,
+          "circle-color": ACTIVITY_BALLOON_ORANGE,
           "circle-opacity": 0.82,
           "circle-radius": ["step", ["get", "point_count"], 18, 5, 22, 10, 28],
         },
@@ -267,56 +325,24 @@ export default function TripMap({
       });
 
       map.addLayer({
-        id: POINT_LAYER,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-color": ["get", "color"],
-          "circle-radius": [
-            "case",
-            ["==", ["get", "id"], String(selectedActivityId || "")],
-            16,
-            13,
-          ],
-          // Coords estimées (LLM) : marqueur atténué — normal pour tripadvisor/geocoded.
-          "circle-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-opacity": ["case", ["==", ["get", "estimated"], true], 0.5, 1],
-        },
-      });
-
-      map.addLayer({
-        id: POINT_LABEL_LAYER,
+        id: BALLOON_LAYER,
         type: "symbol",
         source: SOURCE_ID,
         filter: ["!", ["has", "point_count"]],
         layout: {
-          "text-field": ["get", "label"],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 11,
-          "text-allow-overlap": true,
+          "icon-image": "activity-balloon-1",
+          "icon-size": 1,
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
         },
-        paint: { "text-color": "#ffffff" },
+        paint: {
+          "icon-opacity": ["case", ["==", ["get", "estimated"], true], 0.45, 1],
+        },
       });
 
-      map.addLayer({
-        id: SELECTED_LAYER,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: [
-          "all",
-          ["!", ["has", "point_count"]],
-          ["==", ["get", "id"], String(selectedActivityId || "__none__")],
-        ],
-        paint: {
-          "circle-color": "transparent",
-          "circle-radius": 20,
-          "circle-stroke-width": 3,
-          "circle-stroke-color": BRAND_BLUE,
-        },
-      });
+      applyBalloonIconLayout(map, selectedActivityIdRef.current);
+      applyRouteStyle(map, effectiveViewRef.current);
 
       map.addLayer({
         id: DAY_LAYER,
@@ -362,8 +388,7 @@ export default function TripMap({
         setSheetActivity(activityByIdRef.current.get(id) || null);
       };
 
-      map.on("click", POINT_LAYER, onPointClick);
-      map.on("click", POINT_LABEL_LAYER, onPointClick);
+      map.on("click", BALLOON_LAYER, onPointClick);
 
       const onDayClick = (e) => {
         const f = e.features?.[0];
@@ -381,14 +406,14 @@ export default function TripMap({
       const clearPointer = () => {
         map.getCanvas().style.cursor = "";
       };
-      for (const layer of [CLUSTER_LAYER, POINT_LAYER, DAY_LAYER]) {
+      for (const layer of [CLUSTER_LAYER, BALLOON_LAYER, DAY_LAYER]) {
         map.on("mouseenter", layer, setPointer);
         map.on("mouseleave", layer, clearPointer);
       }
 
       map.on("click", (e) => {
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: [POINT_LAYER, POINT_LABEL_LAYER, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
+          layers: [BALLOON_LAYER, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
         });
         if (!hits.length) {
           onSelectRef.current?.(null);
@@ -420,21 +445,9 @@ export default function TripMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !map.getLayer(POINT_LAYER)) return;
-    map.setPaintProperty(POINT_LAYER, "circle-radius", [
-      "case",
-      ["==", ["get", "id"], String(selectedActivityId || "")],
-      16,
-      13,
-    ]);
-    if (map.getLayer(SELECTED_LAYER)) {
-      map.setFilter(SELECTED_LAYER, [
-        "all",
-        ["!", ["has", "point_count"]],
-        ["==", ["get", "id"], String(selectedActivityId || "__none__")],
-      ]);
-    }
-  }, [selectedActivityId, mapReady]);
+    if (!map || !mapReady || !map.getLayer(BALLOON_LAYER)) return;
+    applyBalloonIconLayout(map, selectedActivityId);
+  }, [selectedActivityId, mapReady, applyBalloonIconLayout]);
 
   const handleLocate = () => {
     if (!showUserLocation || !navigator.geolocation || !mapRef.current) return;
@@ -475,7 +488,15 @@ export default function TripMap({
         </div>
       ) : null}
       <div ref={containerRef} className="h-full min-h-[inherit] w-full" aria-hidden={loadError} />
-      <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[min(100%-1rem,18rem)] flex-col items-start gap-1.5">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5 sm:inset-x-3">
+        {legendDays.length > 0 ? (
+          <TripMapDayLegend
+            days={legendDays}
+            selectedDayIndex={selectedDayIndex}
+            onSelectDay={onSelectDay}
+          />
+        ) : null}
+        <div className="flex max-w-full flex-col items-start gap-1.5">
         {onViewTrip && requestedDayView ? (
           <button
             type="button"
@@ -490,6 +511,7 @@ export default function TripMap({
             {t("map.activitiesWithoutPosition", { n: missingCount })}
           </p>
         ) : null}
+        </div>
       </div>
       {showUserLocation ? (
         <button

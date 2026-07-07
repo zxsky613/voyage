@@ -164,6 +164,7 @@ import {
   clearSignupOnboardingMarkers,
 } from "./OnboardingTour.jsx";
 import LazyTripMap from "./lib/map/LazyTripMap.jsx";
+import { dayMarkerColor } from "./lib/map/tripMapHelpers.js";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
 import { DestinationSearchWeather } from "./DestinationSearchWeather.jsx";
 import { formatNoticeForEndUser } from "./devUiNotices.js";
@@ -10765,6 +10766,9 @@ function buildItineraryDayMapActivities(dayIndex, bullets, activityMetaList, cit
       period: meta?.period || parseItineraryBulletPeriod(bullet),
       time: String(meta?.time || "").slice(0, 5),
       photoUrl: photo,
+      photos: meta?.photos,
+      photo_urls: meta?.photo_urls,
+      photoSource: meta?.photoSource || meta?.photo_source,
       bulletIndex: j,
     };
   });
@@ -11148,6 +11152,7 @@ function ItineraryResultModal({
                     const dayNum = Number(d?.day) || idx + 1;
                     const isActive = idx === activeDayIndex;
                     const title = String(d?.title || "").trim();
+                    const dayColor = dayMarkerColor(idx, activeDayIndex);
                     return (
                       <button
                         key={`rail-${dayNum}`}
@@ -11159,15 +11164,21 @@ function ItineraryResultModal({
                         aria-current={isActive ? "true" : undefined}
                         className={`shrink-0 snap-start rounded-xl px-3 py-2 text-left transition md:w-full md:py-2.5 ${
                           isActive
-                            ? "bg-brand-blue text-white shadow-sm"
+                            ? "bg-white text-slate-900 shadow-sm ring-2 ring-offset-1"
                             : "bg-slate-50 text-slate-700 ring-1 ring-slate-100 hover:bg-slate-100"
                         }`}
+                        style={isActive ? { boxShadow: `0 0 0 2px ${dayColor}` } : undefined}
                       >
-                        <span className="block whitespace-nowrap text-[11px] font-bold uppercase tracking-wide">
+                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-bold uppercase tracking-wide">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: dayColor }}
+                            aria-hidden
+                          />
                           {t("destination.itineraryDayLabel")} {dayNum}
                         </span>
                         {title ? (
-                          <span className={`mt-0.5 hidden line-clamp-2 text-[11px] leading-snug md:block ${isActive ? "text-white/90" : "text-slate-500"}`}>
+                          <span className={`mt-0.5 hidden line-clamp-2 text-[11px] leading-snug md:block ${isActive ? "text-slate-600" : "text-slate-500"}`}>
                             {title}
                           </span>
                         ) : null}
@@ -11197,6 +11208,8 @@ function ItineraryResultModal({
                   const activityMetaList = getItineraryDayActivitiesMeta(d);
                   const cost = Number(d?.costEur) || 0;
                   const hasDayActivities = activityMetaList.length > 0 || bullets.length > 0;
+                  const dayColor = dayMarkerColor(idx, activeDayIndex);
+                  const dayActive = idx === activeDayIndex;
                   return (
                     <section
                       key={`detail-${dayNum}`}
@@ -11211,7 +11224,19 @@ function ItineraryResultModal({
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className={`${BRAND_BLUE_PILL_CLASS} shrink-0 px-2.5 py-1 text-[11px]`}>
+                            <span
+                              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold text-slate-800 ring-1 ring-slate-200/90 ${
+                                dayActive ? "ring-2 ring-offset-1" : ""
+                              }`}
+                              style={{
+                                boxShadow: dayActive ? `0 0 0 2px ${dayColor}` : undefined,
+                              }}
+                            >
+                              <span
+                                className="h-2 w-2 rounded-full"
+                                style={{ backgroundColor: dayColor }}
+                                aria-hidden
+                              />
                               {t("destination.itineraryDayLabel")} {dayNum}
                             </span>
                             <h3
@@ -11246,6 +11271,7 @@ function ItineraryResultModal({
                             selectedDayIndex={idx}
                             selectedActivityId={selectedMapActivityId}
                             onSelectActivity={handleMapActivitySelect}
+                            onSelectDay={handleSelectDayFromMap}
                             mode="modal"
                             cityLabel={cityLabel}
                             className="mt-4"
