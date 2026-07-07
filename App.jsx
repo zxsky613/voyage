@@ -13323,7 +13323,7 @@ function DestinationGuideView({
                 if (!cityToken) return null;
                 return (
                   <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
-                    <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
+                    <div className="flex items-center gap-2.5 border-b border-brand-orange-tint/80 pb-2.5">
                       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
                         <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                       </span>
@@ -13335,13 +13335,13 @@ function DestinationGuideView({
                       </div>
                     </div>
                     {destinationHighlightsLoading ? (
-                      <div className="mt-4 flex flex-wrap gap-2.5" aria-busy="true">
+                      <div className="mt-3 flex flex-wrap gap-2" aria-busy="true">
                         <span className="inline-block h-8 w-[10rem] animate-pulse rounded-2xl bg-slate-200/90" />
                         <span className="inline-block h-8 w-[12rem] animate-pulse rounded-2xl bg-slate-200/85" />
                         <span className="inline-block h-8 w-[9rem] animate-pulse rounded-2xl bg-slate-200/80" />
                       </div>
                     ) : verifiedHighlightChips.length > 0 ? (
-                      <div className="mt-4 flex flex-wrap gap-2.5">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         {verifiedHighlightChips.map((a, i) => {
                           const highlight = destinationHighlights[i];
                           const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
@@ -13380,10 +13380,10 @@ function DestinationGuideView({
                       </div>
                     ) : null}
                     <GygActivitiesWidget
+                      embedded
                       cityLabel={displayCityForLocale(cityToken, language)}
                       language={language}
                       partnerId={resolveGygPartnerId()}
-                      className="mt-4"
                     />
                   </section>
                 );

@@ -1,0 +1,62 @@
+/* GYG — mobile inchangé (< lg). Desktop : teaser compact, une rangée. */
+
+.gyg-widget-embedded {
+  min-height: 0;
+}
+
+.gyg-widget-embedded .gyg-widget-mount {
+  max-width: 24.375rem; /* 390px — mobile */
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media (min-width: 1024px) {
+  .gyg-widget-embedded {
+    max-height: 25rem; /* ~400px */
+    overflow: hidden;
+  }
+
+  .gyg-widget-embedded .gyg-widget-mount {
+    max-width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    max-height: 21rem;
+    overflow: hidden;
+    border-radius: 1rem;
+    box-shadow: 0 8px 32px rgba(20, 47, 93, 0.06), 0 0 0 1px rgba(20, 47, 93, 0.08);
+  }
+
+  .gyg-widget-embedded .gyg-widget-mount .gyg-widget-embed,
+  .gyg-widget-embedded .gyg-widget-mount iframe {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 21rem !important;
+    min-height: 0 !important;
+    border-radius: 1rem;
+  }
+
+  /* Cartes GYG côte à côte quand le script injecte des blocs directs */
+  .gyg-widget-embedded .gyg-widget-mount .gyg-widget-embed {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .gyg-widget-embedded .gyg-widget-mount .gyg-widget-embed > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .gyg-widget-embedded .gyg-widget-mount .gyg-widget-embed img {
+    max-height: 7.5rem;
+    object-fit: cover;
+  }
+}
+
+/* Bloc autonome (hors section guide) — desktop plus large */
+@media (min-width: 1024px) {
+  .gyg-widget-block:not(.gyg-widget-embedded) .gyg-widget-mount {
+    max-width: 100%;
+  }
+}
