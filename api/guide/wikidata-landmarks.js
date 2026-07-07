@@ -1,5 +1,5 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
-import { fetchWikidataNotablePlaceNames } from "../../lib/guide/wikidataNotablePlaces.js";
+import { fetchWikidataNotablePlaceNames, purgeWikidataNotableCacheNear } from "../../lib/guide/wikidataNotablePlaces.js";
 import { sanitizeMustSeePlaces, pickPlacesListAfterScriptFilter } from "../../placeGuards.js";
 
 export default async function handler(req, res) {
@@ -16,6 +16,9 @@ export default async function handler(req, res) {
   const cityHint = String(body.cityHint || body.destination || "").trim();
 
   try {
+    if (body.bypassCache === true || body.purgeCache === true) {
+      purgeWikidataNotableCacheNear(lat, lon);
+    }
     const raw = await fetchWikidataNotablePlaceNames(lat, lon, locale);
     const cleaned = sanitizeMustSeePlaces(raw, cityHint || "destination");
     const names = pickPlacesListAfterScriptFilter(cleaned, locale);
