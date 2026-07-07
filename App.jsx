@@ -120,6 +120,7 @@ import {
   pickResolvedActivityPhoto,
   isActivityPhotoPlaceholder,
   shouldShowTripAdvisorAttribution,
+  buildActivityPhotoFieldsForPersist,
 } from "./lib/planner/activityImageSource.js";
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
 import { GygActivitiesWidget } from "./lib/gyg/GygActivitiesWidget.jsx";
@@ -6232,13 +6233,7 @@ function buildPlannerActivityImageCacheKey(cityLabel, activityId, title) {
 
 /** Photo persistable à l'insert calendrier : TA → URL résolue modale → vide. */
 function pickActivityPhotoForCalendarInsert(meta, modalCachedUrl = "") {
-  const resolved = pickResolvedActivityPhoto(meta);
-  if (resolved) return resolved;
-  const ta = pickTripAdvisorActivityPhoto(meta);
-  if (ta) return ta;
-  const cached = String(modalCachedUrl || "").trim();
-  if (/^https?:\/\//i.test(cached)) return cached;
-  return "";
+  return buildActivityPhotoFieldsForPersist(meta, modalCachedUrl).photo_url;
 }
 
 /** @type {Record<string, import('react').ComponentType<{ size?: number, className?: string, strokeWidth?: number, 'aria-hidden'?: boolean }>>} */
@@ -12817,7 +12812,7 @@ function DestinationGuideView({
                   if (!desc || isItineraryMealOrRestBulletClient(desc)) return null;
                   const bulletText = formatItineraryActivityBullet(meta?.period, desc, language);
                   const modalCacheKey = buildItineraryModalImageCacheKey(city, dayNum, j, bulletText);
-                  const photo = pickActivityPhotoForCalendarInsert(
+                  const { photo_url: photo, photo_source: photoSource } = buildActivityPhotoFieldsForPersist(
                     meta,
                     readItineraryBulletImageCache(modalCacheKey)
                   );
@@ -12839,6 +12834,7 @@ function DestinationGuideView({
                     estimated_price_eur: actPrice,
                     description: `Jour ${dayNum} — ${dayTitle}`,
                     photo_url: photo,
+                    photo_source: photoSource,
                     image_url: photo,
                     ...(Number.isFinite(lat) && Number.isFinite(lon)
                       ? { latitude: lat, longitude: lon }
@@ -12858,7 +12854,7 @@ function DestinationGuideView({
         bullets.forEach((b, j) => {
           const meta = activityMetaList[j] || null;
           const modalCacheKey = buildItineraryModalImageCacheKey(city, dayNum, j, b);
-          const photo = pickActivityPhotoForCalendarInsert(
+          const { photo_url: photo, photo_source: photoSource } = buildActivityPhotoFieldsForPersist(
             meta,
             readItineraryBulletImageCache(modalCacheKey)
           );
@@ -12874,6 +12870,7 @@ function DestinationGuideView({
             estimated_price_eur: actPrice,
             description: `Jour ${dayNum} — ${dayTitle}`,
             photo_url: photo,
+            photo_source: photoSource,
             image_url: photo,
             ...(Number.isFinite(lat) && Number.isFinite(lon)
               ? { latitude: lat, longitude: lon }
@@ -16853,6 +16850,7 @@ export default function App() {
           estimated_price_eur: readActivityEstimatedPriceEur(item),
           description: String(item?.description || "").trim(),
           photo_url: String(item?.photo_url || item?.image_url || "").trim(),
+          photo_source: String(item?.photo_source || item?.photoSource || "").trim() || undefined,
           image_url: String(item?.image_url || item?.photo_url || "").trim(),
           latitude: Number.isFinite(Number(item?.latitude)) ? Number(item.latitude) : undefined,
           longitude: Number.isFinite(Number(item?.longitude)) ? Number(item.longitude) : undefined,
@@ -16869,6 +16867,7 @@ export default function App() {
       const safeDate = item.date && tripDaySet.has(item.date) ? item.date : toYMD(fallbackDates[i], toYMD(startYmd, getTodayStr()));
       const assignedTime = normalizeActivityTimeHHMM(item.time) || String(slots[i % slots.length]).slice(0, 5);
       const photo = String(item.photo_url || item.image_url || "").trim();
+      const photoSource = String(item.photo_source || "").trim();
       const estimatedPrice = readActivityEstimatedPriceEur(item);
       const row = {
         trip_id: normTripId(tripId), date: safeDate, date_key: safeDate, activity_date: safeDate,
@@ -16879,6 +16878,7 @@ export default function App() {
         photo_url: photo,
         image_url: photo || String(item.image_url || "").trim(),
       };
+      if (photoSource) row.photo_source = photoSource;
       if (Number.isFinite(item.latitude)) row.latitude = item.latitude;
       if (Number.isFinite(item.longitude)) row.longitude = item.longitude;
       // Colonne ajoutée par supabase/sql/activities_coords_source.sql ; si elle
@@ -17024,6 +17024,7 @@ export default function App() {
                     estimated_price_eur: readActivityEstimatedPriceEur(row),
                     description: String(row?.description || "").trim(),
                     photo_url: String(row?.photo_url || row?.image_url || "").trim(),
+                    photo_source: String(row?.photo_source || row?.photoSource || "").trim() || undefined,
                     image_url: String(row?.image_url || row?.photo_url || "").trim(),
                     latitude: Number.isFinite(Number(row?.latitude)) ? Number(row.latitude) : undefined,
                     longitude: Number.isFinite(Number(row?.longitude)) ? Number(row.longitude) : undefined,
