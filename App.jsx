@@ -12027,7 +12027,11 @@ function DestinationGuideView({
       return undefined;
     }
     let cancelled = false;
+    let uiTimeoutId = 0;
     setDestinationHighlightsLoading(true);
+    uiTimeoutId = window.setTimeout(() => {
+      if (!cancelled) setDestinationHighlightsLoading(false);
+    }, 45000);
     fetchSuggestHighlights({
       destination: destLabel,
       country: String(guide?.country || "").trim(),
@@ -12047,10 +12051,14 @@ function DestinationGuideView({
         }
       })
       .finally(() => {
-        if (!cancelled) setDestinationHighlightsLoading(false);
+        if (!cancelled) {
+          window.clearTimeout(uiTimeoutId);
+          setDestinationHighlightsLoading(false);
+        }
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(uiTimeoutId);
     };
   }, [confirmedDestination, guide?.city, guide?.country, guide?.countryCode, guide?.adminRegion, language]);
 
@@ -13194,6 +13202,79 @@ function DestinationGuideView({
               </section>
 
               {(() => {
+                const cityToken = String(displayGuide?.city || confirmedDestination || "")
+                  .split(",")[0]
+                  .trim();
+                if (!cityToken) return null;
+                return (
+                  <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
+                    <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
+                        <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                      </span>
+                      <div>
+                        <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
+                          {t("destination.activitiesTitle")}
+                        </h4>
+                        <p className="text-[11px] text-brand-orange-ink/75">{t("destination.activitiesSubtitle")}</p>
+                      </div>
+                    </div>
+                    {destinationHighlightsLoading ? (
+                      <div className="mt-4 flex flex-wrap gap-2.5" aria-busy="true">
+                        <span className="inline-block h-8 w-[10rem] animate-pulse rounded-2xl bg-slate-200/90" />
+                        <span className="inline-block h-8 w-[12rem] animate-pulse rounded-2xl bg-slate-200/85" />
+                        <span className="inline-block h-8 w-[9rem] animate-pulse rounded-2xl bg-slate-200/80" />
+                      </div>
+                    ) : verifiedHighlightChips.length > 0 ? (
+                      <div className="mt-4 flex flex-wrap gap-2.5">
+                        {verifiedHighlightChips.map((a, i) => {
+                          const highlight = destinationHighlights[i];
+                          const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
+                          const priceEur = readActivityEstimatedPriceEur(highlight || a);
+                          const costBadge =
+                            priceEur > 0
+                              ? t("destination.activityPriceEstimate", { n: priceEur })
+                              : t("destination.activityPriceFree");
+                          const isFreeBadge = priceEur === 0;
+                          const showRating = highlightShowsRatingBadge(highlight);
+                          return (
+                            <span
+                              key={`act-${i}-${cell.title.slice(0, 20)}`}
+                              className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-brand-blue/20 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-brand-blue-deep shadow-sm ring-1 ring-white/80"
+                            >
+                              <span>
+                                <UiTranslatedActivityTitle raw={cell.title} />
+                              </span>
+                              {showRating ? (
+                                <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                                  ★{Number(highlight.rating).toFixed(1)}
+                                </span>
+                              ) : null}
+                              <span
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  isFreeBadge
+                                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                    : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
+                                }`}
+                              >
+                                {costBadge}
+                              </span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    <GygActivitiesWidget
+                      cityLabel={displayCityForLocale(cityToken, language)}
+                      language={language}
+                      partnerId={resolveGygPartnerId()}
+                      className="mt-4"
+                    />
+                  </section>
+                );
+              })()}
+
+              {(() => {
                 /** Conseils du guide déjà générés dans la langue UI (`buildTravelTips` + `resolveTravelTips`). */
                 const doList = (displayGuide.tips?.do || []).map(String).filter(Boolean);
                 const cityLabel = String(displayGuide.city || "").trim();
@@ -13270,86 +13351,6 @@ function DestinationGuideView({
                   </section>
                 );
               })()}
-
-              {verifiedHighlightChips.length > 0 ? (
-              <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
-                <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
-                    <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
-                  </span>
-                  <div>
-                    <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
-                      {t("destination.activitiesTitle")}
-                    </h4>
-                    <p className="text-[11px] text-brand-orange-ink/75">{t("destination.activitiesSubtitle")}</p>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2.5">
-                  {verifiedHighlightChips.map((a, i) => {
-                    const highlight = destinationHighlights[i];
-                    const cell = normalizeSuggestedActivityShape(a, displayGuide.city);
-                    const priceEur = readActivityEstimatedPriceEur(highlight || a);
-                    const costBadge =
-                      priceEur > 0
-                        ? t("destination.activityPriceEstimate", { n: priceEur })
-                        : t("destination.activityPriceFree");
-                    const isFreeBadge = priceEur === 0;
-                    const showRating = highlightShowsRatingBadge(highlight);
-                    return (
-                      <span
-                        key={`act-${i}-${cell.title.slice(0, 20)}`}
-                        className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-brand-blue/20 bg-white px-3.5 py-2 text-xs font-normal leading-snug tracking-[0.02em] text-brand-blue-deep shadow-sm ring-1 ring-white/80"
-                      >
-                        <span>
-                          <UiTranslatedActivityTitle raw={cell.title} />
-                        </span>
-                        {showRating ? (
-                          <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                            ★{Number(highlight.rating).toFixed(1)}
-                          </span>
-                        ) : null}
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            isFreeBadge
-                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                              : "bg-slate-100 text-slate-500 ring-1 ring-slate-200"
-                          }`}
-                        >
-                          {costBadge}
-                        </span>
-                      </span>
-                    );
-                  })}
-                </div>
-                {(() => {
-                  const cityToken = String(displayGuide.city || "").split(",")[0].trim();
-                  if (!cityToken) return null;
-                  return (
-                    <GygActivitiesWidget
-                      cityLabel={displayCityForLocale(cityToken, language)}
-                      language={language}
-                      partnerId={resolveGygPartnerId()}
-                      className="mt-4"
-                    />
-                  );
-                })()}
-              </section>
-              ) : destinationHighlightsLoading ? (
-                <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
-                  <div className="flex items-center gap-2.5 border-b border-brand-orange-tint pb-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
-                      <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
-                    </span>
-                    <div>
-                      <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
-                        {t("destination.activitiesTitle")}
-                      </h4>
-                      <p className="text-[11px] text-brand-orange-ink/75">{t("destination.activitiesSubtitle")}</p>
-                    </div>
-                  </div>
-                  <p className="mt-4 text-xs text-slate-500">{t("destination.itineraryGenerating")}</p>
-                </section>
-              ) : null}
 
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
                 <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
