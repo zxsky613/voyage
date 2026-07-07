@@ -111,6 +111,12 @@ import {
   shouldShowTripAdvisorAttribution,
 } from "./lib/planner/activityImageSource.js";
 import { readActivityEstimatedPriceEur } from "./lib/planner/activityPricing.js";
+import { GygActivitiesWidget } from "./lib/gyg/GygActivitiesWidget.jsx";
+import {
+  buildGetYourGuideActivityDeepLink,
+  isGygEligibleItineraryActivity,
+  resolveGygPartnerId,
+} from "./lib/gyg/getYourGuide.js";
 import { highlightToActivityChip, highlightShowsRatingBadge } from "./lib/planner/highlightShape.js";
 import { exportTripActivitiesToIcs } from "./lib/calendar/exportTripIcs.js";
 import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
@@ -1314,73 +1320,6 @@ function destinationGuideHeroObjectPositionClass(cityStemOrLabel) {
   }
   return "object-[center_45%] sm:object-[center_40%]";
 }
-
-/**
- * GetYourGuide — `data-gyg-location-id` (portail partenaire > Outils > Widget ville).
- * Clés = normalizeTextForSearch(ville), ex. "paris". Sinon pas d’ID : lien recherche `?q=` (évite slug + ID Paris par défaut).
- */
-const GYG_LOCATION_IDS_BY_NORMALIZED_CITY = {
-  paris: "16",
-  /** https://www.getyourguide.com/mykonos-l472/ — Cyclades, Grèce */
-  mykonos: "472",
-};
-
-/** Slug URL getyourguide.com/{slug}-l{id}/ quand le nom affiché ≠ segment anglais (optionnel). */
-const GYG_SLUG_BY_NORMALIZED_CITY = {
-  "new york": "new-york",
-  "los angeles": "los-angeles",
-  "san francisco": "san-francisco",
-  "rio de janeiro": "rio-de-janeiro",
-  "sao paulo": "sao-paulo",
-  "le caire": "cairo",
-  bruxelles: "brussels",
-  florence: "florence",
-  venise: "venice",
-  vienne: "vienna",
-  munich: "munich",
-  marrakech: "marrakesh",
-  pekin: "beijing",
-  "hong kong": "hong-kong",
-};
-
-function resolveGetYourGuideLocationId(cityLabel) {
-  const key = normalizeTextForSearch(String(cityLabel || "").trim());
-  if (key && Object.prototype.hasOwnProperty.call(GYG_LOCATION_IDS_BY_NORMALIZED_CITY, key)) {
-    return String(GYG_LOCATION_IDS_BY_NORMALIZED_CITY[key] || "").trim();
-  }
-  return "";
-}
-
-function slugForGetYourGuidePath(cityLabel) {
-  const key = normalizeTextForSearch(String(cityLabel || "").split(",")[0].trim());
-  if (!key) return "";
-  if (Object.prototype.hasOwnProperty.call(GYG_SLUG_BY_NORMALIZED_CITY, key)) {
-    return GYG_SLUG_BY_NORMALIZED_CITY[key];
-  }
-  return key.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-}
-
-/** Lien affilié destination (partner_id). Préfère /{slug}-l{id}/ ; sinon recherche sur getyourguide.com/s/. */
-function buildGetYourGuideAffiliateUrl(cityLabel, partnerId) {
-  const pid = String(partnerId || "").trim();
-  if (!pid) return "";
-  const cityToken = String(cityLabel || "").split(",")[0].trim();
-  const q = cityToken || "tours";
-  const lid = resolveGetYourGuideLocationId(cityToken);
-  const slug = slugForGetYourGuidePath(cityToken);
-  let u;
-  if (slug && lid) {
-    u = new URL(`https://www.getyourguide.com/${slug}-l${lid}/`);
-  } else {
-    u = new URL("https://www.getyourguide.com/s/");
-    u.searchParams.set("q", q);
-  }
-  u.searchParams.set("partner_id", pid);
-  return u.toString();
-}
-
-/** Logo servi en local (l’ancienne URL Commons renvoyait 404 → cadre « vide »). */
-const GYG_LOGO_SRC = `${import.meta.env.BASE_URL}getyourguide-logo.svg`;
 
 /** Open-Meteo Geocoding : langue des résultats (aligné sur les codes app). */
 function openMeteoLanguageParam(appLang) {
@@ -6376,6 +6315,15 @@ function ItineraryBulletRow({
     (Number.isFinite(rating) && rating > 0 && Number.isFinite(numReviews) && numReviews > 0) ||
     (usingTaPhoto && taUrl);
   const priceEur = activityMeta ? readActivityEstimatedPriceEur(activityMeta) : null;
+  const gygPid = resolveGygPartnerId();
+  const placeForGyg =
+    extractItineraryBulletPlaceHint(text, dayTitle) ||
+    String(activityMeta?.name || "").trim() ||
+    displayText.slice(0, 80);
+  const gygActivityHref =
+    gygPid && isGygEligibleItineraryActivity(activityMeta)
+      ? buildGetYourGuideActivityDeepLink(placeForGyg, cityLabel, gygPid)
+      : "";
 
   const ratingBadge = showRatingLine || priceEur != null ? (
     <p className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
@@ -6541,6 +6489,17 @@ function ItineraryBulletRow({
               {periodChip}
               <p className="text-[13px] leading-relaxed text-slate-700 sm:text-[14px]">{displayText}</p>
               {ratingBadge}
+              {gygActivityHref ? (
+                <a
+                  href={gygActivityHref}
+                  target="_blank"
+                  rel="sponsored noopener noreferrer"
+                  className="inline-flex text-[11px] font-medium text-brand-blue-deep underline-offset-2 hover:underline"
+                  aria-label={t("destination.gygItineraryBookSimilarAria", { place: placeForGyg })}
+                >
+                  {t("destination.gygItineraryBookSimilar")}
+                </a>
+              ) : null}
             </div>
             {hoverActions}
           </div>
@@ -13274,35 +13233,15 @@ function DestinationGuideView({
                   })}
                 </div>
                 {(() => {
-                  const gygPid = String(import.meta.env?.VITE_GYG_PARTNER_ID || "").trim();
                   const cityToken = String(displayGuide.city || "").split(",")[0].trim();
-                  if (!gygPid || !cityToken) return null;
-                  const gygHref = buildGetYourGuideAffiliateUrl(cityToken, gygPid);
-                  if (!gygHref) return null;
+                  if (!cityToken) return null;
                   return (
-                    <div className="mt-4 rounded-2xl border border-brand-blue/15 bg-white/95 px-4 py-3 ring-1 ring-brand-blue/10">
-                      <p className="mb-2 text-[11px] font-normal uppercase tracking-[0.2em] text-slate-600">
-                        {t("destination.gygWidgetTitle")}
-                      </p>
-                      <p className="mb-3 text-[11px] leading-snug text-slate-500">{t("destination.gygWidgetHint")}</p>
-                      <a
-                        href={gygHref}
-                        target="_blank"
-                        rel="sponsored noopener noreferrer"
-                        className="inline-flex max-w-full items-center justify-center rounded-xl border border-brand-blue/20 bg-white px-4 py-2.5 shadow-sm ring-1 ring-slate-100/90 transition hover:border-orange-300/90 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue"
-                        aria-label={t("destination.gygLinkAria", { city: displayCityForLocale(cityToken, language) })}
-                      >
-                        <img
-                          src={GYG_LOGO_SRC}
-                          alt="GetYourGuide"
-                          className="h-8 w-auto max-w-[min(220px,100%)] object-contain object-center"
-                          loading="lazy"
-                          decoding="async"
-                          width={160}
-                          height={40}
-                        />
-                      </a>
-                    </div>
+                    <GygActivitiesWidget
+                      cityLabel={displayCityForLocale(cityToken, language)}
+                      language={language}
+                      partnerId={resolveGygPartnerId()}
+                      className="mt-4"
+                    />
                   );
                 })()}
               </section>
