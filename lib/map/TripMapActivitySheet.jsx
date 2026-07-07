@@ -26,7 +26,7 @@ export default function TripMapActivitySheet({ activity, cityLabel = "", onClose
       </span>
     ) : period === "afternoon" ? (
       <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-orange-ink ring-1 ring-brand-orange-tint">
-        <Sun className="h-3 w-3" strokeWidth={2} aria-hidden />
+        <Sun className="h-3 w-3" strokeWidth={2} />
         {t("destination.itineraryPeriodAfternoon")}
       </span>
     ) : null;
