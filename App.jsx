@@ -113,6 +113,8 @@ import {
   stripGuideImageFields,
 } from "./lib/images/featureFlags.js";
 import { isVerifiedPlannerEnabled } from "./lib/planner/featureFlags.js";
+import GenerationProgressPanel from "./lib/planner/GenerationProgressPanel.jsx";
+import { useGenerationProgressDisplay } from "./lib/planner/useGenerationProgressDisplay.js";
 import { categoryForActivityTitle } from "./lib/planner/activityCategoryThumb.js";
 import {
   pickTripAdvisorActivityPhoto,
@@ -10928,6 +10930,7 @@ function ItineraryResultModal({
   onSwapActivity,
   regenerating = false,
   fetchError = "",
+  regenerationProgress = null,
 }) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
@@ -11216,14 +11219,13 @@ function ItineraryResultModal({
               aria-busy="true"
               aria-live="polite"
             >
-              <div className="flex flex-col items-center gap-2 px-4">
-                <span
-                  className="h-9 w-9 animate-spin rounded-full border-2 border-brand-blue border-t-transparent"
-                  aria-hidden
+              <div className="flex w-full max-w-xs flex-col items-center gap-3 px-6">
+                <GenerationProgressPanel
+                  displayPercent={regenerationProgress?.displayPercent ?? 8}
+                  phase={regenerationProgress?.phase ?? ""}
+                  slowWarning={Boolean(regenerationProgress?.slowWarning)}
+                  compact
                 />
-                <span className="text-center text-xs font-medium text-slate-600">
-                  {t("destination.itineraryBuildingProgram")}
-                </span>
               </div>
             </div>
           ) : null}
@@ -11985,6 +11987,7 @@ function DestinationGuideView({
   const [itineraryCalendarConflictErr, setItineraryCalendarConflictErr] = useState("");
   const [itineraryCalendarConflictSaving, setItineraryCalendarConflictSaving] = useState(false);
   const [itineraryLoading, setItineraryLoading] = useState(false);
+  const generationProgress = useGenerationProgressDisplay();
   const [itineraryError, setItineraryError] = useState("");
   const [generatedDayIdeas, setGeneratedDayIdeas] = useState(null);
   const [creatingVoyage, setCreatingVoyage] = useState(false);
@@ -12711,7 +12714,7 @@ function DestinationGuideView({
     };
   }, [confirmedDestination, language]);
 
-  async function fetchItineraryProgram(dest, startDate, endDate, prefs) {
+  async function fetchItineraryProgram(dest, startDate, endDate, prefs, onProgress) {
     const countryCode = String(displayGuide?.countryCode || "").trim();
     const country = String(displayGuide?.country || "").trim();
     if (isVerifiedPlannerEnabled()) {
@@ -12723,6 +12726,7 @@ function DestinationGuideView({
         prefs,
         countryCode,
         country,
+        onProgress,
       });
     }
     return fetchItineraryGroqFirst({
@@ -12776,9 +12780,13 @@ function DestinationGuideView({
     const regen = kind === "regenerate";
     if (regen) setItineraryRegenerating(true);
     else setItineraryLoading(true);
+    generationProgress.reset();
     setItineraryError("");
     try {
-      const res = await fetchItineraryProgram(dest, startDate, endDate, prefs);
+      const res = await fetchItineraryProgram(dest, startDate, endDate, prefs, (evt) => {
+        generationProgress.onServerProgress(evt.phase, evt.percent);
+      });
+      generationProgress.finish();
       const ideas = res?.ok && Array.isArray(res.data?.dayIdeas) ? res.data.dayIdeas : [];
       const ideasHaveContent =
         ideas.length > 0 &&
@@ -12806,6 +12814,7 @@ function DestinationGuideView({
         setItineraryModalOpen(false);
       }
     } finally {
+      generationProgress.cancel();
       if (regen) setItineraryRegenerating(false);
       else setItineraryLoading(false);
     }
@@ -13637,11 +13646,12 @@ function DestinationGuideView({
           role="status"
           aria-live="polite"
         >
-          <div className="flex flex-col items-center gap-4 rounded-3xl bg-white px-10 py-10 shadow-2xl">
-            <span className="h-11 w-11 animate-spin rounded-full border-[3px] border-brand-blue border-t-transparent" aria-hidden />
-            <p className="text-sm font-normal tracking-[0.03em] text-slate-700">
-              {t("destination.itineraryBuildingProgram")}
-            </p>
+          <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-3xl bg-white px-8 py-10 shadow-2xl sm:px-10">
+            <GenerationProgressPanel
+              displayPercent={generationProgress.displayPercent}
+              phase={generationProgress.phase}
+              slowWarning={generationProgress.slowWarning}
+            />
           </div>
         </div>
       ) : null}
@@ -13658,6 +13668,15 @@ function DestinationGuideView({
           )}
           prefs={lastItineraryPrefs}
           regenerating={itineraryRegenerating}
+          regenerationProgress={
+            itineraryRegenerating
+              ? {
+                  displayPercent: generationProgress.displayPercent,
+                  phase: generationProgress.phase,
+                  slowWarning: generationProgress.slowWarning,
+                }
+              : null
+          }
           fetchError={itineraryError}
           onClose={() => {
             setItineraryError("");
