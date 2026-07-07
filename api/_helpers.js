@@ -316,6 +316,12 @@ export function formatPrefsForPrompt(prefs) {
   const budgetLabel = { low: "Économique", medium: "Modéré", high: "Confortable", luxury: "Luxe" };
   if (prefs.budget) lines.push(`- Budget : ${budgetLabel[prefs.budget] || prefs.budget}`);
   if (prefs.wishes && String(prefs.wishes).trim()) lines.push(`- Souhaits : « ${String(prefs.wishes).trim()} »`);
+  if (prefs.arrivalTime && String(prefs.arrivalTime).trim()) {
+    lines.push(`- Heure d'arrivée sur place (jour 1) : ${String(prefs.arrivalTime).trim()}`);
+  }
+  if (prefs.departureTime && String(prefs.departureTime).trim()) {
+    lines.push(`- Heure de départ (dernier jour) : ${String(prefs.departureTime).trim()}`);
+  }
   if (lines.length === 0) return "";
   return `\nPréférences du voyageur :\n${lines.join("\n")}\nTiens ABSOLUMENT compte de ces préférences.`;
 }

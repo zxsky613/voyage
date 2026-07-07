@@ -25,7 +25,16 @@ import {
   dayHourBudget,
   pass1CandidateCount,
   pass1UniqueTarget,
+  computePerDayTargets,
+  parseTimeToMinutes,
+  partialDayPeriodProfile,
+  earliestFirstActivityMinutes,
+  latestActivityEndMinutes,
+  perDayForIndex,
 } from "../../lib/planner/paceContract.js";
+import {
+  reconcileDayActivityTimes,
+} from "../../lib/planner/activitySchedule.js";
 import { coordsSourceForPlace, placeHasCoords } from "../../lib/planner/coordsSource.js";
 import { geocodeCoordlessPlaces } from "./_geocode.js";
 import { resolveActivityPhotosForPlaces } from "./_resolveActivityPhotos.js";
@@ -47,10 +56,14 @@ import {
  * Complète avec le pool restant (géolocalisés proches d'abord, puis non vérifiés)
  * PLUTÔT que de réduire le nombre.
  */
-function backfillDayAssignments(clusters, days, perDay, pool) {
+function backfillDayAssignments(clusters, days, perDayOrTargets, pool) {
+  const targets = Array.isArray(perDayOrTargets)
+    ? perDayOrTargets
+    : Array.from({ length: days }, () => Math.max(1, Number(perDayOrTargets) || 2));
   const out = Array.from({ length: days }, (_, i) => [...(clusters[i] || [])]);
   const used = new Set(out.flat().map((p) => p.id));
   for (let d = 0; d < days; d += 1) {
+    const perDay = Math.max(1, Number(targets[d]) || 1);
     const day = out[d];
     if (day.length >= perDay) continue;
     const centroid = computePlacesCentroid(day);
@@ -92,15 +105,85 @@ function fitDayToHourBudget(places, perDay) {
   return list;
 }
 
-function assignDayPeriods(dayPlaces, perDay = 2) {
-  // slice dur : capPlacesPerDay laisse passer les « full day » hors plafond,
-  // ce qui produisait des jours à perDay+1 — le contrat est un compte exact.
+function assignDayPeriods(dayPlaces, perDay = 2, partialProfile = "full") {
   const capped = capPlacesPerDay(dayPlaces, perDay).slice(0, perDay);
+  if (partialProfile === "evening") {
+    return capped.map((p) => ({ ...p, period: "evening" }));
+  }
+  if (partialProfile === "afternoon") {
+    return capped.map((p) => ({ ...p, period: "afternoon" }));
+  }
+  if (partialProfile === "morning") {
+    return capped.map((p) => ({ ...p, period: "morning" }));
+  }
   const morningCount = Math.ceil(capped.length / 2);
   return capped.map((p, i) => ({
     ...p,
     period: i < morningCount ? "morning" : "afternoon",
   }));
+}
+
+/**
+ * Jour 1 partiel : privilégier les lieux proches du point d'entrée (centroïde pool).
+ */
+function biasPartialDayTowardEntry(dayAssignments, pool, perDayTargets, basePerDay) {
+  const target0 = perDayForIndex(perDayTargets, 0);
+  if (target0 >= basePerDay || !Array.isArray(dayAssignments?.[0])) return dayAssignments;
+  const entryCentroid = computePlacesCentroid(
+    (pool || []).filter(placeHasCoords).slice(0, 40)
+  );
+  if (!entryCentroid) return dayAssignments;
+
+  const usedElsewhere = new Set(
+    dayAssignments.slice(1).flat().map((p) => String(p?.id || "").trim())
+  );
+  const closerPool = (pool || [])
+    .filter((p) => p && placeHasCoords(p) && !usedElsewhere.has(String(p.id || "").trim()))
+    .sort(
+      (a, b) =>
+        haversineKm(a, entryCentroid) - haversineKm(b, entryCentroid) ||
+        (Number(b.score) || 0) - (Number(a.score) || 0)
+    );
+
+  let day0 = [...dayAssignments[0]]
+    .sort(
+      (a, b) =>
+        (placeHasCoords(a) ? haversineKm(a, entryCentroid) : 999) -
+          (placeHasCoords(b) ? haversineKm(b, entryCentroid) : 999) ||
+        (Number(b.score) || 0) - (Number(a.score) || 0)
+    )
+    .slice(0, target0);
+
+  const day0Ids = new Set(day0.map((p) => String(p?.id || "").trim()));
+  for (const alt of closerPool) {
+    if (day0.length >= target0) break;
+    const id = String(alt?.id || "").trim();
+    if (!id || day0Ids.has(id)) continue;
+    day0.push(alt);
+    day0Ids.add(id);
+  }
+
+  return [day0.slice(0, target0), ...dayAssignments.slice(1)];
+}
+
+function partialProfileForDay(dayIndex, days, perDayTargets, basePerDay, arrivalTime, departureTime) {
+  if (dayIndex === 0) {
+    return partialDayPeriodProfile(
+      parseTimeToMinutes(arrivalTime),
+      "arrival",
+      basePerDay,
+      perDayForIndex(perDayTargets, 0)
+    );
+  }
+  if (dayIndex === days - 1 && days > 1) {
+    return partialDayPeriodProfile(
+      parseTimeToMinutes(departureTime),
+      "departure",
+      basePerDay,
+      perDayForIndex(perDayTargets, dayIndex)
+    );
+  }
+  return "full";
 }
 
 /**
@@ -139,14 +222,14 @@ function dedupePass1Candidates(candidates, city) {
   return mergePass1Candidates(candidates, city).map((c, i) => ({ ...c, id: `c${i + 1}` }));
 }
 
-function finalizeDayCluster(cluster, perDay, sanityKm) {
+function finalizeDayCluster(cluster, perDay, sanityKm, partialProfile = "full") {
   let list = capPlacesPerDay(cluster, perDay);
-  list = orderDayNearestNeighbor(assignDayPeriods(list, perDay));
+  list = orderDayNearestNeighbor(assignDayPeriods(list, perDay, partialProfile));
   list = fitDayToHourBudget(list, perDay);
   if (list.length >= 2 && !dayOrderPassesSanityCheck(list, sanityKm)) {
     list = orderDayNearestNeighbor(list);
   }
-  return assignDayPeriods(list.slice(0, perDay), perDay);
+  return assignDayPeriods(list.slice(0, perDay), perDay, partialProfile);
 }
 
 /**
@@ -219,7 +302,7 @@ function buildPass1Prompt({
 }
 
 function buildPass2Prompt({
-  destination, days, startDate, endDate, prefsBlock, enrichBlock, langRule, budgetHint, dayAssignments, placeCatalog, perDay,
+  destination, days, startDate, endDate, prefsBlock, enrichBlock, langRule, budgetHint, dayAssignments, placeCatalog, perDayTargets,
 }) {
   const catalogLines = placeCatalog
     .map(
@@ -234,7 +317,7 @@ function buildPass2Prompt({
   const assignLines = dayAssignments
     .map(
       (places, i) =>
-        `Jour ${i + 1} — IDs autorisés: ${places.map((p) => p.id).join(", ") || "(aucun — laisse activities vide)"}`
+        `Jour ${i + 1} — ${perDayForIndex(perDayTargets, i)} activité(s) — IDs autorisés: ${places.map((p) => p.id).join(", ") || "(aucun — laisse activities vide)"}`
     )
     .join("\n");
 
@@ -244,12 +327,14 @@ function buildPass2Prompt({
     `Catalogue vérifié (utilise UNIQUEMENT ces IDs dans activities[].id):\n${catalogLines}\n\n` +
     `Affectation géographique imposée par le moteur:\n${assignLines}\n\n` +
     `Réponds UNIQUEMENT avec:\n` +
-    `{"dayIdeas":[{"day":1,"title":"titre thématique","activities":[{"id":"c1","period":"morning","description":"phrase de visite concrète"}, ...]}, ...]}\n` +
+    `{"dayIdeas":[{"day":1,"title":"titre thématique","activities":[{"id":"c1","period":"morning","suggestedTime":"09:45","durationMinutes":90,"description":"phrase de visite concrète"}, ...]}, ...]}\n` +
     `Règles STRICTES:\n` +
     `- Exactement ${days} objets dayIdeas, day = 1 … ${days}.\n` +
-    `- CONTRAINTE DURE : chaque jour utilise TOUS les IDs autorisés de son jour (${perDay} activités/jour attendues), dans un ordre de visite logique. N'en retire aucun, n'en invente aucun.\n` +
+    `- CONTRAINTE DURE : chaque jour utilise TOUS les IDs autorisés de son jour, dans un ordre de visite logique. N'en retire aucun, n'en invente aucun.\n` +
     `- Chaque activities[].id DOIT être dans la liste autorisée du jour correspondant.\n` +
-    `- period = "morning" ou "afternoon" (première moitié de la journée = morning).\n` +
+    `- period = "morning", "afternoon" ou "evening" (cohérent avec suggestedTime).\n` +
+    `- suggestedTime : heure de début réaliste HH:MM (ex. 09:15, 11:40, 15:20, 18:45) — varie les horaires, pas de 09:00/14:00 mécaniques.\n` +
+    `- durationMinutes : durée estimée de visite (30–240), cohérente avec le type de lieu.\n` +
     `- description : visite concrète, sans repas ni repos hôtel.\n` +
     `- Ne fournis PAS de costEur journalier (calculé côté serveur).\n` +
     `${langRule}\n`
@@ -305,9 +390,10 @@ async function estimateMissingCoordsWithLlm(places, destination, country) {
   return { places: next, estimated };
 }
 
-function fallbackDayIdeasFromClusters(dayAssignments, registry, perDay = 2) {
+function fallbackDayIdeasFromClusters(dayAssignments, registry, perDayOrTargets) {
   return dayAssignments.map((places, i) => {
-    const activities = assignDayPeriods(places, perDay).map((p) => {
+    const dayTarget = perDayForIndex(perDayOrTargets, i);
+    const activities = assignDayPeriods(places, dayTarget).map((p) => {
       const meta = registry.get(p.id) || p;
       return {
         id: p.id,
@@ -369,6 +455,18 @@ function mergeDayIdeasWithRegistry(dayIdeas, registry) {
   });
 }
 
+function applyScheduleToDayIdeas(dayIdeas, days, arrivalTime, departureTime) {
+  const arrEarliest = earliestFirstActivityMinutes(arrivalTime);
+  const depLatest = latestActivityEndMinutes(departureTime);
+  return (Array.isArray(dayIdeas) ? dayIdeas : []).map((day, i) => {
+    const acts = reconcileDayActivityTimes(Array.isArray(day?.activities) ? day.activities : [], {
+      earliestMinutes: i === 0 ? arrEarliest : null,
+      latestEndMinutes: i === days - 1 ? depLatest : null,
+    });
+    return { ...day, activities: acts };
+  });
+}
+
 export async function handler(req, res) {
   if (handleCors(req, res)) return;
 
@@ -394,9 +492,13 @@ export async function handler(req, res) {
   const bHint = budgetRangeHint(prefs);
   // Contrat questionnaire : rythme → nombre d'activités/jour (contrainte dure),
   // Pass 1 dimensionnée dynamiquement (jours × activités × 3) au lieu du plafond 28.
-  const perDay = activitiesPerDayForPace(prefs?.pace);
-  const candidateCount = pass1CandidateCount(days, perDay);
-  const uniqueTarget = pass1UniqueTarget(days, perDay);
+  const basePerDay = activitiesPerDayForPace(prefs?.pace);
+  const arrivalTime = String(prefs?.arrivalTime || body.arrivalTime || "").trim() || null;
+  const departureTime = String(prefs?.departureTime || body.departureTime || "").trim() || null;
+  const perDayTargets = computePerDayTargets(days, basePerDay, arrivalTime, departureTime);
+  const maxPerDay = Math.max(...perDayTargets, basePerDay);
+  const candidateCount = pass1CandidateCount(days, maxPerDay);
+  const uniqueTarget = pass1UniqueTarget(days, maxPerDay);
   const debugMode =
     String(req.query?.debug || body.debug || "").trim() === "1" ||
     String(req.query?.debug || body.debug || "").trim() === "true";
@@ -406,7 +508,7 @@ export async function handler(req, res) {
 
   let enrichBlock = "";
   try {
-    enrichBlock = await buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang, perDay });
+    enrichBlock = await buildItineraryEnrichmentBlock({ startDate, endDate, countryCode, uiLang, perDay: maxPerDay });
   } catch {
     enrichBlock = "";
   }
@@ -578,7 +680,7 @@ export async function handler(req, res) {
       // Budget en requêtes HTTP (jusqu'à 2 variantes/lieu) : dimensionné pour
       // couvrir le catalogue final (days × perDay) même si TA a peu vérifié
       // (throttle/quota) — c'est l'assurance anti-'estimated'.
-      maxRequests: Math.min(56, Math.max(32, days * perDay + 16)),
+      maxRequests: Math.min(56, Math.max(32, days * maxPerDay + 16)),
     });
     let cascadePlaces = geocodeStats.places;
     timings.geocodeMs = Date.now() - tGeocode;
@@ -642,12 +744,21 @@ export async function handler(req, res) {
     const { sanityKm } = thresholdsForSpread(spread);
 
     const tCluster = Date.now();
-    const clusterInputSize = Math.max(days * perDay * 2, days * 2);
+    const clusterInputSize = Math.max(days * maxPerDay * 2, days * 2);
     const { clusterKm } = thresholdsForSpread(spread);
     /** @type {object[][]} */
     let dayAssignments = clusterPlacesIntoDays(scored.slice(0, clusterInputSize), days, {
       clusterKm,
-    }).map((cluster) => finalizeDayCluster(cluster, perDay, sanityKm));
+    }).map((cluster, dayIdx) =>
+      finalizeDayCluster(
+        cluster,
+        perDayForIndex(perDayTargets, dayIdx),
+        sanityKm,
+        partialProfileForDay(dayIdx, days, perDayTargets, basePerDay, arrivalTime, departureTime)
+      )
+    );
+
+    dayAssignments = biasPartialDayTowardEntry(dayAssignments, scored, perDayTargets, basePerDay);
 
     let editorialExcludedTotal = editorialExcluded;
     let mergedCandidatesState = mergedCandidates;
@@ -694,12 +805,15 @@ export async function handler(req, res) {
 
     while (clusterCompletionRounds < 2) {
       const counts = clusteredParJour(dayAssignments);
-      const deficient = counts.map((n, i) => (n < perDay ? i : -1)).filter((i) => i >= 0);
+      const deficient = counts
+        .map((n, i) => (n < perDayForIndex(perDayTargets, i) ? i : -1))
+        .filter((i) => i >= 0);
       if (!deficient.length) break;
 
       let anyAdded = false;
       for (const dayIdx of deficient) {
-        const gap = perDay - dayAssignments[dayIdx].length;
+        const dayTarget = perDayForIndex(perDayTargets, dayIdx);
+        const gap = dayTarget - dayAssignments[dayIdx].length;
         if (gap <= 0) continue;
 
         const excludeNames = allUsedPlaceNames(
@@ -738,7 +852,12 @@ export async function handler(req, res) {
             dayAssignments[dayIdx].push(p);
             anyAdded = true;
           }
-          dayAssignments[dayIdx] = finalizeDayCluster(dayAssignments[dayIdx], perDay, sanityKm);
+          dayAssignments[dayIdx] = finalizeDayCluster(
+            dayAssignments[dayIdx],
+            dayTarget,
+            sanityKm,
+            partialProfileForDay(dayIdx, days, perDayTargets, basePerDay, arrivalTime, departureTime)
+          );
 
           console.info("[planner/diag] cluster-completion", {
             round: clusterCompletionRounds + 1,
@@ -759,10 +878,16 @@ export async function handler(req, res) {
       if (!anyAdded) break;
     }
 
-    const relaxed = contractRelaxFill(dayAssignments, scored, perDay, days);
-    dayAssignments = relaxed.dayAssignments.map((cluster) =>
-      finalizeDayCluster(cluster, perDay, sanityKm)
+    const relaxed = contractRelaxFill(dayAssignments, scored, perDayTargets, days);
+    dayAssignments = relaxed.dayAssignments.map((cluster, dayIdx) =>
+      finalizeDayCluster(
+        cluster,
+        perDayForIndex(perDayTargets, dayIdx),
+        sanityKm,
+        partialProfileForDay(dayIdx, days, perDayTargets, basePerDay, arrivalTime, departureTime)
+      )
     );
+    dayAssignments = biasPartialDayTowardEntry(dayAssignments, scored, perDayTargets, basePerDay);
     const contractRelaxed = relaxed.contractRelaxed;
 
     if (contractRelaxed.length) {
@@ -772,9 +897,14 @@ export async function handler(req, res) {
       });
     }
 
-    dayAssignments = dayAssignments.map((cluster) =>
-      assignDayPeriods(capPlacesPerDay(cluster, perDay).slice(0, perDay), perDay)
-    );
+    dayAssignments = dayAssignments.map((cluster, dayIdx) => {
+      const dayTarget = perDayForIndex(perDayTargets, dayIdx);
+      return assignDayPeriods(
+        capPlacesPerDay(cluster, dayTarget).slice(0, dayTarget),
+        dayTarget,
+        partialProfileForDay(dayIdx, days, perDayTargets, basePerDay, arrivalTime, departureTime)
+      );
+    });
 
     const funnel = {
       bruts: allRawCandidates.length,
@@ -783,6 +913,7 @@ export async function handler(req, res) {
       editorialKept: funnelEditorialKept,
       afterCoordsPool: funnelAfterCoords,
       clusteredParJour: clusteredParJour(dayAssignments),
+      perDayTargetEffective: perDayTargets,
       clusterCompletionRounds,
       contractRelaxed,
     };
@@ -824,7 +955,8 @@ export async function handler(req, res) {
       scoredTotal: scored.length,
       geoPool: geoPlaces.length,
       clusterInput: clusterInputSize,
-      perDayTarget: perDay,
+      perDayTarget: perDayTargets,
+      perDayTargetEffective: perDayTargets,
       perDay: dayAssignments.map(
         (d) => `${d.length}(${d.filter(placeHasCoords).length}geo)`
       ).join(","),
@@ -850,7 +982,7 @@ export async function handler(req, res) {
           budgetHint: bHint,
           dayAssignments,
           placeCatalog,
-          perDay,
+          perDayTargets,
         }),
         systemPrompt: pass2System,
         temperature: 0.25,
@@ -875,13 +1007,14 @@ export async function handler(req, res) {
       !dayIdeas.some((d) => Array.isArray(d?.activities) && d.activities.length > 0)
     ) {
       dayIdeas = mergeDayIdeasWithRegistry(
-        fallbackDayIdeasFromClusters(dayAssignments, registry, perDay),
+        fallbackDayIdeasFromClusters(dayAssignments, registry, perDayTargets),
         registry
       );
     }
 
     let list = normalizeVerifiedDayIdeas(dayIdeas, uiLang);
     list = dedupeItineraryDayIdeas(list, uiLang, { skipFallbackPadding: true });
+    list = applyScheduleToDayIdeas(list, days, arrivalTime, departureTime);
 
     timings.totalMs = Date.now() - tPipeline;
     console.info("[planner/generate-itinerary]", {
@@ -913,7 +1046,8 @@ export async function handler(req, res) {
           ).length
       );
       console.info("[planner/diag] final", {
-        perDayTarget: perDay,
+        perDayTarget: perDayTargets,
+        perDayTargetEffective: perDayTargets,
         totalActivities: actCounts.reduce((s, n) => s + n, 0),
         perDayActivities: actCounts.join(","),
         perDayWithCoords: geoCounts.join(","),
@@ -971,7 +1105,8 @@ export async function handler(req, res) {
           clusterCompletionRounds,
           contractRelaxed,
           funnel,
-          perDayTarget: perDay,
+          perDayTarget: perDayTargets,
+          perDayTargetEffective: perDayTargets,
           verifiedCount: verifiedPlaces.filter((p) => p.status === "verified").length,
           partialCount: verifiedPlaces.filter((p) => p.status === "partial").length,
           unverifiedCount: verifiedPlaces.filter((p) => p.status === "unverified").length,
