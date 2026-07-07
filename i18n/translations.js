@@ -242,7 +242,6 @@ export const translations = {
       dateRangeMaxHint: "Jusqu'à {{max}} jours inclus pour le programme.",
     },
     destination: {
-      guideHeading: "Guide destination",
       searchPlaceholder: "Rechercher une destination…",
       guideLoadError: "Impossible de charger le guide destination.",
       invalidCountry:
@@ -871,7 +870,6 @@ export const translations = {
       dateRangeMaxHint: "Itinerary: up to {{max}} inclusive days.",
     },
     destination: {
-      guideHeading: "Destination guide",
       searchPlaceholder: "Search a destination…",
       guideLoadError: "Could not load the destination guide.",
       invalidCountry:
@@ -1502,7 +1500,6 @@ export const translations = {
       dateRangeMaxHint: "Programm: bis zu {{max}} Tage inklusive.",
     },
     destination: {
-      guideHeading: "Reiseführer",
       searchPlaceholder: "Reiseziel suchen…",
       guideLoadError: "Reiseführer konnte nicht geladen werden.",
       invalidCountry:
@@ -2125,7 +2122,6 @@ export const translations = {
       dateRangeMaxHint: "Programa: hasta {{max}} días incluidos.",
     },
     destination: {
-      guideHeading: "Guía del destino",
       searchPlaceholder: "Buscar un destino…",
       guideLoadError: "No se pudo cargar la guía del destino.",
       invalidCountry:
@@ -2747,7 +2743,6 @@ export const translations = {
       dateRangeMaxHint: "Programma: fino a {{max}} giorni inclusi.",
     },
     destination: {
-      guideHeading: "Guida alla destinazione",
       searchPlaceholder: "Cerca una destinazione…",
       guideLoadError: "Impossibile caricare la guida.",
       invalidCountry:
@@ -3364,7 +3359,6 @@ export const translations = {
       dateRangeMaxHint: "每日行程最多 {{max}} 天（含出发与返回日）。",
     },
     destination: {
-      guideHeading: "目的地指南",
       searchPlaceholder: "搜索目的地…",
       guideLoadError: "无法加载目的地指南。",
       invalidCountry: "若搜索国家，请从建议中选择城市（例如法国可选巴黎、里昂、尼斯）。",

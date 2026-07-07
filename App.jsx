@@ -4000,11 +4000,26 @@ function projectLonLatToSvg(lon, lat, b, svgW, svgH) {
   return [x, y];
 }
 
+/** Réduit les anneaux GeoJSON lourds (ex. France) pour un SVG vignette < ~30 Ko. */
+function decimateRingForMiniMap(ring, maxPts = 96) {
+  if (!Array.isArray(ring) || ring.length <= maxPts) return ring;
+  const step = Math.max(1, Math.ceil(ring.length / maxPts));
+  const out = [];
+  for (let i = 0; i < ring.length; i += step) out.push(ring[i]);
+  const last = ring[ring.length - 1];
+  const tail = out[out.length - 1];
+  if (last && tail && (Number(last[0]) !== Number(tail[0]) || Number(last[1]) !== Number(tail[1]))) {
+    out.push(last);
+  }
+  return out;
+}
+
 function ringToSvgPath(ring, b, svgW, svgH) {
   if (!Array.isArray(ring) || ring.length === 0) return "";
+  const slim = decimateRingForMiniMap(ring);
   const segs = [];
-  for (let i = 0; i < ring.length; i++) {
-    const p = ring[i];
+  for (let i = 0; i < slim.length; i++) {
+    const p = slim[i];
     const lo = Number(p?.[0]);
     const la = Number(p?.[1]);
     if (!Number.isFinite(lo) || !Number.isFinite(la)) continue;
@@ -4013,6 +4028,50 @@ function ringToSvgPath(ring, b, svgW, svgH) {
   }
   if (segs.length === 0) return "";
   return `${segs.join(" ")} Z`;
+}
+
+/** Un seul îlot (masse continentale) pour la vignette — évite les MultiPolygon lourds (France DOM-TOM). */
+function geometryForMiniMapOutline(geometry) {
+  if (!geometry?.type) return null;
+  if (geometry.type === "Polygon") return geometry;
+  if (geometry.type === "MultiPolygon") {
+    const polys = Array.isArray(geometry.coordinates) ? geometry.coordinates : [];
+    let bestPoly = null;
+    let bestScore = 0;
+    for (const poly of polys) {
+      const ring = poly?.[0];
+      const b = ring ? getRingLonLatBounds(ring) : null;
+      if (!b) continue;
+      const score = (b.east - b.west) * (b.north - b.south);
+      if (score > bestScore) {
+        bestScore = score;
+        bestPoly = poly;
+      }
+    }
+    return bestPoly ? { type: "Polygon", coordinates: bestPoly } : null;
+  }
+  if (geometry.type === "GeometryCollection") {
+    const geoms = Array.isArray(geometry.geometries)
+      ? geometry.geometries
+      : Array.isArray(geometry.coordinates)
+        ? geometry.coordinates
+        : [];
+    let best = null;
+    let bestScore = 0;
+    for (const g of geoms) {
+      const cand = geometryForMiniMapOutline(g);
+      if (!cand) continue;
+      const b = getMainLandLonLatBounds(cand);
+      if (!b) continue;
+      const score = (b.east - b.west) * (b.north - b.south);
+      if (score > bestScore) {
+        bestScore = score;
+        best = cand;
+      }
+    }
+    return best;
+  }
+  return null;
 }
 
 function geoJsonOutlineToPathD(geometry, b, svgW, svgH) {
@@ -10287,9 +10346,10 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
   const bbox = mini?.viewBbox;
   const lat = Number(coordinates?.lat);
   const lon = Number(coordinates?.lon);
-  if (!bbox || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
   const geojson = normalizeCountryGeoGeometry(mini?.geojson) || mini?.geojson;
+  const drawGeom = geometryForMiniMapOutline(geojson) || geojson;
   const { svgW, svgH, outlineD, mx, my } = useMemo(() => {
     const b = framingBboxForMiniMap(geojson, lat, lon, bbox);
     const lonSpan = Math.max(Number(b.east) - Number(b.west), 0.0001);
@@ -10297,21 +10357,20 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
     const aspect = lonSpan / latSpan;
     const svgHVal = 100;
     const svgWVal = Math.min(120, Math.max(70, Math.round(svgHVal * aspect)));
-    const d = geojson ? geoJsonOutlineToPathD(geojson, b, svgWVal, svgHVal) : "";
+    const d = drawGeom ? geoJsonOutlineToPathD(drawGeom, b, svgWVal, svgHVal) : "";
     const [x, y] = projectLonLatToSvg(lon, lat, b, svgWVal, svgHVal);
     const mxC = Math.max(6, Math.min(svgWVal - 6, x));
     const myC = Math.max(6, Math.min(svgHVal - 6, y));
     return { svgW: svgWVal, svgH: svgHVal, outlineD: d, mx: mxC, my: myC };
-  }, [bbox, geojson, lat, lon]);
-
-  if (!outlineD) return null;
+  }, [bbox, drawGeom, geojson, lat, lon]);
 
   const ariaLabel = [city, adminRegion, country].filter(Boolean).join(", ") || String(city);
-  const pinR = 4.75;
+  const hasOutline = Boolean(outlineD);
+  const pinR = hasOutline ? 4.75 : 5.25;
 
   return (
     <figure
-      className="pointer-events-none absolute right-3 top-1/2 z-10 flex h-[7.1rem] w-[6.1rem] -translate-y-1/2 items-center justify-center overflow-hidden rounded-[1.35rem] border border-white/28 bg-white/[0.055] shadow-[0_6px_22px_rgba(15,23,42,0.11),inset_0_1px_0_rgba(255,255,255,0.38)] backdrop-blur-xl backdrop-saturate-[1.25] sm:right-4 sm:h-[8rem] sm:w-[6.9rem]"
+      className="pointer-events-none absolute bottom-3 right-3 z-10 flex h-[4.75rem] w-[4.25rem] items-center justify-center overflow-hidden rounded-2xl border border-white/35 bg-white/22 shadow-[0_4px_16px_rgba(15,23,42,0.2),inset_0_1px_0_rgba(255,255,255,0.42)] sm:bottom-auto sm:right-4 sm:top-1/2 sm:h-[8rem] sm:w-[6.9rem] sm:-translate-y-1/2 sm:rounded-[1.35rem] sm:border-white/28 sm:bg-white/[0.055] sm:shadow-[0_6px_22px_rgba(15,23,42,0.11),inset_0_1px_0_rgba(255,255,255,0.38)] sm:backdrop-blur-xl sm:backdrop-saturate-[1.25]"
       aria-label={ariaLabel}
     >
       <svg
@@ -10330,15 +10389,20 @@ function DestinationMiniMapOverlay({ city, country, adminRegion, situationMap, c
             <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f172a" floodOpacity="0.14" />
           </filter>
         </defs>
-        <path
-          d={outlineD}
-          fill="#ffffff"
-          fillRule="evenodd"
-          stroke="rgba(255,255,255,0.55)"
-          strokeWidth={0.75}
-          strokeLinejoin="round"
-          filter={`url(#${landDropId})`}
-        />
+        {!hasOutline ? (
+          <rect width={svgW} height={svgH} fill="rgba(148,163,184,0.18)" rx="6" />
+        ) : null}
+        {hasOutline ? (
+          <path
+            d={outlineD}
+            fill="#ffffff"
+            fillRule="evenodd"
+            stroke="rgba(255,255,255,0.55)"
+            strokeWidth={0.75}
+            strokeLinejoin="round"
+            filter={`url(#${landDropId})`}
+          />
+        ) : null}
         <circle cx={mx} cy={my} r={pinR} fill={`url(#${pinGradId})`} stroke="white" strokeWidth={1.65} />
         <circle cx={mx} cy={my} r={pinR * 0.4} fill="rgba(255,255,255,0.32)" />
       </svg>
@@ -11485,7 +11549,20 @@ function _writeGuideCache(city, lang, guide, geminiContent, geminiAiActs, gemini
     const hasPlaces = Array.isArray(guide.places) && guide.places.some((p) => String(p || "").trim());
     const hasTips = Array.isArray(guide.tips?.do) && guide.tips.do.some((x) => String(x || "").trim());
     if (!hasDesc && !hasPlaces && !hasTips) return;
-    const { countryMap: _cm, ...guideSlim } = guide; // exclure le GeoJSON trop volumineux
+    const { countryMap: _cm, ...guideRest } = guide; // exclure le GeoJSON trop volumineux
+    const guideSlim =
+      guideRest.situationMap?.miniMap
+        ? {
+            ...guideRest,
+            situationMap: {
+              ...guideRest.situationMap,
+              miniMap: {
+                viewBbox: guideRest.situationMap.miniMap.viewBbox,
+                geojson: null,
+              },
+            },
+          }
+        : guideRest;
     const guideForDisk = isResolveGuideCleanupEnabled()
       ? stripGuideImageFields(guideSlim)
       : guideSlim;
@@ -12349,7 +12426,7 @@ function DestinationGuideView({
             countryCode: cc || prev.countryCode || null,
             adminRegion: geo.region ? geo.region : prev.adminRegion || null,
           };
-          if (situationEarly?.miniMap?.geojson) next.situationMap = situationEarly;
+          if (situationEarly) next.situationMap = situationEarly;
           return next;
         });
       } catch (_e) {
@@ -12390,7 +12467,16 @@ function DestinationGuideView({
             const prevSame = prev && String(prev.city || "") === cityKey;
             const prevImg = prevSame ? String(prev.landscapeImageUrl || prev.imageUrl || "").trim() : "";
             const nextImg = String(result.landscapeImageUrl || result.imageUrl || "").trim();
-            if (nextImg && !isBlockedHeroImageUrl(nextImg)) return result;
+            if (nextImg && !isBlockedHeroImageUrl(nextImg)) {
+              if (prevSame && prev?.situationMap?.miniMap?.geojson && !result?.situationMap?.miniMap?.geojson) {
+                return {
+                  ...result,
+                  situationMap: prev.situationMap,
+                  coordinates: result.coordinates || prev.coordinates || null,
+                };
+              }
+              return result;
+            }
             if (prevImg && prevSame && !isBlockedHeroImageUrl(prevImg)) {
               const merged = {
                 ...result,
@@ -13001,12 +13087,6 @@ function DestinationGuideView({
 
   return (
     <section className="space-y-6 pb-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-normal uppercase tracking-[0.35em] text-brand-blue-deep/45">
-          {t("destination.guideHeading")}
-        </h2>
-      </div>
-
       <div className="rounded-[2.2rem] bg-white/93 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <CitySearchBox
           value={searchInput}
@@ -13086,7 +13166,7 @@ function DestinationGuideView({
                     />
                   );
                 })()}
-                {displayGuide.situationMap?.miniMap?.viewBbox && displayGuide.coordinates ? (
+                {displayGuide.coordinates ? (
                   <DestinationMiniMapOverlay
                     city={displayGuide.city}
                     country={displayGuide.country}
