@@ -2,6 +2,7 @@ import {
   handleCors, sendJson, parseBody, countInclusiveTripDays, resolveUiLanguage,
   langRuleParagraph, formatPrefsForPrompt, budgetRangeHint, formatError,
   buildItineraryEnrichmentBlock, dedupeItineraryDayIdeas,
+  createGenerationProgressSink, wantsGenerationProgressStream,
 } from "../_helpers.js";
 import { runPlannerLlmJson } from "./_llm.js";
 import { verifyCandidatePlaces } from "./_verifyItinerary.js";
@@ -400,6 +401,8 @@ export async function handler(req, res) {
   const debugMode =
     String(req.query?.debug || body.debug || "").trim() === "1" ||
     String(req.query?.debug || body.debug || "").trim() === "true";
+  const streamProgress = wantsGenerationProgressStream(req, body);
+  const progress = createGenerationProgressSink(res, streamProgress);
   /** @type {Record<string, number>} */
   const timings = {};
   const tPipeline = Date.now();
@@ -462,8 +465,10 @@ export async function handler(req, res) {
       candidatesRawTotal > 0 ? Math.round((candidatesUnique / candidatesRawTotal) * 1000) / 1000 : 0;
     const rawCandidates = mergedCandidates;
     if (!rawCandidates.length) {
-      return sendJson(res, 502, { error: "Passe 1 : aucun candidat proposé." });
+      return progress.fail("Passe 1 : aucun candidat proposé.");
     }
+
+    progress.emit("candidates");
 
     console.info("[planner/diag] pass1", {
       destination,
@@ -496,6 +501,8 @@ export async function handler(req, res) {
     const funnelVerified = verifiedPlacesRaw.length;
     const funnelEditorialKept = verifiedPlaces.length;
     timings.verifyMs = Date.now() - tVerify;
+
+    progress.emit("verification");
 
     console.info("[planner/diag] editorial", {
       editorialExcluded,
@@ -602,6 +609,8 @@ export async function handler(req, res) {
     });
     const finalPool = cascadePlaces.filter((p) => !isGeoMismatchPlace(p));
     const funnelAfterCoords = finalPool.length;
+
+    progress.emit("positions");
 
     console.info("[planner/diag] coords-cascade", {
       poolSize: finalPool.length,
@@ -812,6 +821,8 @@ export async function handler(req, res) {
     }
     timings.photosMs = Date.now() - tPhotos;
 
+    progress.emit("photos");
+
     console.info("[planner/diag] photos-cascade", {
       catalogSize: placeCatalog.length,
       photoSource: photoResolve.photoSourceCounts,
@@ -882,6 +893,8 @@ export async function handler(req, res) {
 
     let list = normalizeVerifiedDayIdeas(dayIdeas, uiLang);
     list = dedupeItineraryDayIdeas(list, uiLang, { skipFallbackPadding: true });
+
+    progress.emit("composition");
 
     timings.totalMs = Date.now() - tPipeline;
     console.info("[planner/generate-itinerary]", {
@@ -989,8 +1002,9 @@ export async function handler(req, res) {
       },
     };
     if (debugMode) payload.data.timings = timings;
-    sendJson(res, 200, payload);
+    progress.emit("ready");
+    progress.finish(payload);
   } catch (e) {
-    sendJson(res, 502, { error: formatError(e) });
+    progress.fail(formatError(e));
   }
 }

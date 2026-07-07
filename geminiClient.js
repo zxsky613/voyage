@@ -7,13 +7,13 @@ const ITIN_FETCH_TIMEOUT_MS = 120000;
 const VERIFIED_ITIN_FETCH_TIMEOUT_MS = 180000;
 const SUGGEST_HIGHLIGHTS_TIMEOUT_MS = 90000;
 
-async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
+async function fetchPostWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS, headers = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -27,6 +27,78 @@ async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOU
   } finally {
     clearTimeout(id);
   }
+}
+
+async function fetchPostJsonWithTimeout(url, body, timeoutMs = ITIN_FETCH_TIMEOUT_MS) {
+  const r = await fetchPostWithTimeout(url, body, timeoutMs);
+  return r;
+}
+
+/**
+ * @param {Response} response
+ * @param {(evt: { phase: string, percent: number }) => void} [onProgress]
+ * @returns {Promise<object>}
+ */
+async function readVerifiedItineraryNdjsonStream(response, onProgress) {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const j = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof j.error === "string" ? j.error : `Planner erreur ${response.status}`);
+    }
+    return j;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  /** @type {object | null} */
+  let result = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const t = String(line || "").trim();
+      if (!t) continue;
+      let evt;
+      try {
+        evt = JSON.parse(t);
+      } catch {
+        continue;
+      }
+      if (evt?.type === "progress" && evt.phase) {
+        onProgress?.({ phase: String(evt.phase), percent: Number(evt.percent) || 0 });
+      } else if (evt?.type === "done") {
+        result = evt;
+      } else if (evt?.type === "error") {
+        throw new Error(typeof evt.error === "string" ? evt.error : "Planner erreur");
+      }
+    }
+  }
+
+  const tail = String(buffer || "").trim();
+  if (tail) {
+    try {
+      const evt = JSON.parse(tail);
+      if (evt?.type === "progress" && evt.phase) {
+        onProgress?.({ phase: String(evt.phase), percent: Number(evt.percent) || 0 });
+      } else if (evt?.type === "done") {
+        result = evt;
+      } else if (evt?.type === "error") {
+        throw new Error(typeof evt.error === "string" ? evt.error : "Planner erreur");
+      }
+    } catch (e) {
+      if (e instanceof Error && /Planner erreur/i.test(e.message)) throw e;
+    }
+  }
+
+  if (!result) {
+    throw new Error("La réponse était incomplète. Réessaie ou raccourcis la période (moins de jours).");
+  }
+  return result;
 }
 
 export async function fetchGeminiTripSuggestions({ destination, days = 3, language = "fr" }) {
@@ -118,9 +190,10 @@ export async function fetchVerifiedItinerary({
   countryCode = "",
   country = "",
   debug = false,
+  onProgress = null,
 }) {
   const debugQ = debug || import.meta.env.DEV ? "?debug=1" : "";
-  const r = await fetchPostJsonWithTimeout(
+  const r = await fetchPostWithTimeout(
     `/api/planner/generate-itinerary${debugQ}`,
     {
       destination,
@@ -130,11 +203,17 @@ export async function fetchVerifiedItinerary({
       prefs,
       countryCode: String(countryCode || "").trim(),
       country: String(country || "").trim(),
+      streamProgress: Boolean(onProgress),
     },
-    VERIFIED_ITIN_FETCH_TIMEOUT_MS
+    VERIFIED_ITIN_FETCH_TIMEOUT_MS,
+    onProgress ? { Accept: "application/x-ndjson, application/json" } : {}
   );
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
+  const ct = String(r.headers.get("content-type") || "");
+  const j =
+    onProgress && /ndjson/i.test(ct)
+      ? await readVerifiedItineraryNdjsonStream(r, onProgress)
+      : await r.json().catch(() => ({}));
+  if (!j?.ok) {
     throw new Error(typeof j.error === "string" ? j.error : `Planner erreur ${r.status}`);
   }
   if (import.meta.env.DEV && j?.data?.timings) {

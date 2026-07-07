@@ -10,6 +10,87 @@ export function sendJson(res, status, obj) {
   res.status(status).json(obj);
 }
 
+/** @typedef {{ emit: (phase: string) => void, finish: (payload: object) => void, fail: (message: string, status?: number) => void }} GenerationProgressSink */
+
+/**
+ * Progression itinéraire en NDJSON (une ligne JSON par événement).
+ * @param {import('@vercel/node').VercelResponse} res
+ * @param {boolean} enabled
+ * @returns {GenerationProgressSink}
+ */
+export function createGenerationProgressSink(res, enabled) {
+  /** @type {Record<string, number>} */
+  const PHASE_PERCENT = {
+    candidates: 15,
+    verification: 40,
+    positions: 60,
+    photos: 75,
+    composition: 95,
+    ready: 100,
+  };
+
+  if (!enabled) {
+    return {
+      emit() {},
+      finish(payload) {
+        sendJson(res, 200, payload);
+      },
+      fail(message, status = 502) {
+        sendJson(res, status, { error: message });
+      },
+    };
+  }
+
+  let started = false;
+  const ensureStarted = () => {
+    if (started) return;
+    started = true;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.statusCode = 200;
+  };
+
+  const writeLine = (obj) => {
+    ensureStarted();
+    res.write(`${JSON.stringify(obj)}\n`);
+  };
+
+  return {
+    emit(phase) {
+      const key = String(phase || "").trim();
+      const percent = PHASE_PERCENT[key];
+      if (!Number.isFinite(percent)) return;
+      writeLine({ type: "progress", phase: key, percent });
+    },
+    finish(payload) {
+      if (!started) {
+        sendJson(res, 200, payload);
+        return;
+      }
+      writeLine({ type: "done", ...payload });
+      res.end();
+    },
+    fail(message, status = 502) {
+      const msg = String(message || "Erreur");
+      if (!started) {
+        sendJson(res, status, { error: msg });
+        return;
+      }
+      writeLine({ type: "error", error: msg, status });
+      res.end();
+    },
+  };
+}
+
+export function wantsGenerationProgressStream(req, body) {
+  if (body?.streamProgress === true) return true;
+  const accept = String(req?.headers?.accept || req?.headers?.Accept || "");
+  return accept.includes("application/x-ndjson");
+}
+
 export function handleCors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
