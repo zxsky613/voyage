@@ -1886,6 +1886,97 @@ const BRAND_BLUE_PILL_CLASS =
 const BRAND_ORANGE_PILL_CLASS =
   "inline-flex items-center rounded-full bg-brand-orange-tint font-bold text-brand-orange-ink shadow-sm";
 
+/** Libellé IA : étincelle + texte (uniquement actions de génération). */
+function AiGenerateLabel({ children, iconClassName = "h-4 w-4 shrink-0", className = "" }) {
+  return (
+    <span className={`inline-flex items-center justify-center gap-2 ${className}`.trim()}>
+      <Sparkles className={iconClassName} strokeWidth={2.25} aria-hidden />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+/** Sheet « + » : IA dominante, création manuelle en alternative discrète. */
+function TripCreateChoiceSheet({ open, onClose, onChooseAi, onChooseManual }) {
+  const { t } = useI18n();
+  useScrollLock(open);
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="trip-create-choice-title"
+      className="fixed -inset-1 z-[75] flex items-end justify-center overscroll-none bg-black/40 p-0 sm:items-center sm:p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-md touch-auto rounded-t-[2rem] bg-white px-5 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] pt-3 shadow-2xl sm:rounded-[2rem] sm:pb-6 sm:pt-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300 sm:hidden" aria-hidden />
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 id="trip-create-choice-title" className="font-display text-base font-normal tracking-[0.04em] text-slate-900">
+            {t("aiFirst.choiceSheetTitle")}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+            aria-label={t("common.close")}
+          >
+            <X size={18} aria-hidden />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={onChooseAi}
+          className="w-full rounded-[1.35rem] border-2 border-brand-orange/35 bg-gradient-to-br from-brand-orange-tint via-white to-brand-orange-tint/40 p-4 text-left shadow-[0_10px_32px_rgba(234,88,12,0.12)] transition hover:border-brand-orange/50 active:scale-[0.99]"
+        >
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-orange text-white shadow-sm">
+            <Sparkles className="h-5 w-5" strokeWidth={2.25} aria-hidden />
+          </span>
+          <span className="mt-3 block text-base font-semibold text-slate-900">{t("aiFirst.choiceAiTitle")}</span>
+          <span className="mt-1 block text-sm leading-snug text-slate-600">{t("aiFirst.choiceAiSubtitle")}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onChooseManual}
+          className="mt-4 w-full py-2 text-center text-sm font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline"
+        >
+          {t("aiFirst.choiceManual")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Invitation IA pour écrans vides (ton positif, CTA primaire unique). */
+function AiEmptyInvite({ variant, onCta }) {
+  const { t } = useI18n();
+  const suffix = variant === "trips" ? "Trips" : variant === "planner" ? "Planner" : "Budget";
+  const title = t(`aiFirst.empty${suffix}Title`);
+  const body = t(`aiFirst.empty${suffix}Body`);
+  const cta = t(`aiFirst.empty${suffix}Cta`);
+  return (
+    <div className="rounded-[2rem] border border-brand-orange/25 bg-gradient-to-br from-brand-orange-tint/90 via-white to-brand-blue-tint/30 p-6 shadow-[0_14px_40px_rgba(234,88,12,0.08)] sm:p-8">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-orange text-white shadow-[0_4px_14px_rgba(234,88,12,0.35)]">
+        <Sparkles className="h-6 w-6" strokeWidth={2.25} aria-hidden />
+      </div>
+      <h3 className="mt-4 font-display text-xl font-normal tracking-[0.03em] text-slate-900 sm:text-2xl">{title}</h3>
+      <p className="mt-2 max-w-lg text-sm leading-relaxed text-slate-600">{body}</p>
+      <button
+        type="button"
+        onClick={onCta}
+        className={`mt-5 w-full px-5 py-3.5 text-sm sm:w-auto ${BRAND_CTA_BTN_CLASS}`}
+      >
+        <AiGenerateLabel>{cta}</AiGenerateLabel>
+      </button>
+    </div>
+  );
+}
+
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
 const TRIPS_SELECT_ATTEMPTS = [
   "*",
@@ -10800,7 +10891,7 @@ function TripPrefsModal({ onConfirm, onSkip, onClose, cityLabel }) {
                 onClick={handleConfirm}
                 className={`w-full rounded-xl px-6 py-2.5 text-sm sm:w-auto sm:shrink-0 ${BRAND_CTA_BTN_CLASS}`}
               >
-                {t("destination.prefsGenerate")}
+                <AiGenerateLabel>{t("destination.prefsGenerate")}</AiGenerateLabel>
               </button>
             ) : (
               <button
@@ -11450,7 +11541,9 @@ function ItineraryResultModal({
               disabled={regenerating || saving}
               className="rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {regenerating ? t("destination.itineraryGenerating") : t("destination.itineraryResultRegenerate")}
+              {regenerating ? t("destination.itineraryGenerating") : (
+                <AiGenerateLabel iconClassName="h-3.5 w-3.5 shrink-0">{t("destination.itineraryResultRegenerate")}</AiGenerateLabel>
+              )}
             </button>
             {typeof onExportPhoneCalendar === "function" ? (
               <button
@@ -12003,6 +12096,7 @@ function DestinationGuideView({
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
+  const [stickyItineraryCta, setStickyItineraryCta] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -12031,6 +12125,15 @@ function DestinationGuideView({
   const blockVideoForMotion = prefersReducedMotion && !mobileViewport;
   const showDestinationHeroVideo =
     Boolean(DESTINATION_GUIDE_HERO_VIDEO_URL) && !blockVideoForMotion && !heroVideoFailed;
+
+  const openItineraryGeneration = useCallback(() => {
+    setItineraryError("");
+    if (!userCanUseItineraryGeneration(session)) {
+      setItineraryPremiumGateOpen(true);
+      return;
+    }
+    setItineraryModalOpen(true);
+  }, [session]);
 
   const destHeroVideoRef = useRef(null);
   useEffect(() => {
@@ -12092,6 +12195,20 @@ function DestinationGuideView({
       tips: finalizeTravelTipsForUi(tipsSource, city, language),
     };
   }, [guide, geminiContent, geminiAiSuggestedActivities, geminiLangTips, language]);
+
+  useEffect(() => {
+    if (!visible || !displayGuide) {
+      setStickyItineraryCta(false);
+      return undefined;
+    }
+    const sync = () => {
+      const y = typeof window !== "undefined" ? window.scrollY || document.documentElement.scrollTop || 0 : 0;
+      setStickyItineraryCta(y > 280);
+    };
+    sync();
+    window.addEventListener("scroll", sync, { passive: true });
+    return () => window.removeEventListener("scroll", sync);
+  }, [visible, displayGuide]);
 
   const destinationHeroSrc = useMemo(() => {
     if (!displayGuide) return "";
@@ -13337,7 +13454,7 @@ function DestinationGuideView({
                   <section className="rounded-[1.75rem] border border-brand-blue/20 bg-gradient-to-br from-brand-blue-tint/80 via-white to-brand-blue-tint/40 p-5 shadow-[0_8px_32px_rgba(20,47,93,0.06)] sm:p-6">
                     <div className="flex items-center gap-2.5 border-b border-brand-orange-tint/80 pb-2.5">
                       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
-                        <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                        <MapPin className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                       </span>
                       <div>
                         <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-brand-orange-ink">
@@ -13444,7 +13561,6 @@ function DestinationGuideView({
                       >
                         {t("destination.tipsTitle")}
                       </h4>
-                      <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" strokeWidth={2} aria-hidden />
                       <span className="sr-only">{t("destination.tipsSr")}</span>
                     </div>
                     {threeTips.length === 0 ? (
@@ -13482,8 +13598,8 @@ function DestinationGuideView({
               <section className="rounded-[1.75rem] border border-slate-200/70 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
                 <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 ring-1 ring-slate-200/80">
-                      <Calendar className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-orange-tint text-brand-orange-ink ring-1 ring-brand-orange-tint">
+                      <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
                     </span>
                     <div>
                       <h4 className="text-[11px] font-normal uppercase tracking-[0.24em] text-slate-800">
@@ -13501,18 +13617,15 @@ function DestinationGuideView({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setItineraryError("");
-                      if (!userCanUseItineraryGeneration(session)) {
-                        setItineraryPremiumGateOpen(true);
-                        return;
-                      }
-                      setItineraryModalOpen(true);
-                    }}
+                    onClick={openItineraryGeneration}
                     disabled={itineraryLoading}
                     className={`shrink-0 rounded-2xl px-4 py-2.5 text-xs font-normal tracking-[0.04em] ${BRAND_CTA_BTN_CLASS}`}
                   >
-                    {itineraryLoading ? t("destination.itineraryGenerating") : t("destination.itineraryGenerate")}
+                    {itineraryLoading ? (
+                      t("destination.itineraryGenerating")
+                    ) : (
+                      <AiGenerateLabel iconClassName="h-3.5 w-3.5 shrink-0">{t("destination.itineraryGenerate")}</AiGenerateLabel>
+                    )}
                   </button>
                 </div>
                 {itineraryError && !itineraryModalOpen && !itineraryResultOpen ? (
@@ -14401,15 +14514,50 @@ function DestinationGuideView({
           </div>
         </div>
       ) : null}
+
+      {visible &&
+      stickyItineraryCta &&
+      displayGuide?.city &&
+      !itineraryModalOpen &&
+      !itineraryResultOpen &&
+      !tripPrefsOpen &&
+      !itineraryLoading &&
+      !itineraryPremiumGateOpen &&
+      typeof document !== "undefined"
+        ? createPortal(
+            <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5.25rem+env(safe-area-inset-bottom,0px))] z-[28] flex justify-center px-4 sm:bottom-[calc(5.75rem+env(safe-area-inset-bottom,0px))]">
+              <button
+                type="button"
+                onClick={openItineraryGeneration}
+                disabled={itineraryLoading}
+                className={`pointer-events-auto max-w-[min(100%,24rem)] rounded-full px-5 py-3 text-sm shadow-[0_12px_36px_rgba(234,88,12,0.35)] ring-1 ring-white/25 ${BRAND_CTA_BTN_CLASS}`}
+              >
+                <AiGenerateLabel iconClassName="h-4 w-4 shrink-0">
+                  {t("destination.itineraryStickyGenerate", {
+                    city: displayCityForLocale(String(displayGuide.city || ""), language),
+                  })}
+                </AiGenerateLabel>
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
         </>
       ) : null}
     </section>
   );
 }
 
-function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip }) {
+function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip, onStartAiCreate }) {
   const { t } = useI18n();
   const sections = classifyTrips(trips);
+  if (!trips?.length) {
+    return (
+      <section>
+        <AiEmptyInvite variant="trips" onCta={onStartAiCreate} />
+      </section>
+    );
+  }
   return (
     <section className="space-y-8">
       <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
@@ -16245,6 +16393,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tripModalOpen, setTripModalOpen] = useState(false);
+  const [tripCreateChoiceOpen, setTripCreateChoiceOpen] = useState(false);
   const [shareTrip, setShareTrip] = useState(null);
   const [tricountTrip, setTricountTrip] = useState(null);
   /** Voyage dont le panneau budget détaillé est ouvert (onglet Budget). */
@@ -16558,6 +16707,14 @@ export default function App() {
         document.title = baseDocumentTitle;
       }
     };
+  }, []);
+
+  const startAiTripCreation = useCallback(() => {
+    setTripCreateChoiceOpen(false);
+    setActiveTab("destination");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
   }, []);
 
   const openPlannerToday = (tripToOpen = null) => {
@@ -18286,7 +18443,7 @@ export default function App() {
             document.body
           )
         : null}
-      <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripModalOpen(true)} />
+      <TopNav title={uiTitle} onMenu={() => setMenuOpen(true)} onAdd={() => setTripCreateChoiceOpen(true)} />
 
       <main className="app-main mx-auto w-full min-w-0 max-w-6xl scroll-mt-[var(--app-header-clearance)] px-3 sm:px-5">
         {notice ? (
@@ -18340,6 +18497,7 @@ export default function App() {
             onShareTrip={setShareTrip}
             onEditTrip={setEditingTrip}
             onDeleteTrip={deleteTrip}
+            onStartAiCreate={startAiTripCreation}
           />
         ) : null}
 
@@ -18478,7 +18636,7 @@ export default function App() {
                   </div>
                 </TripLiquidGlassShell>
               ) : (
-                <p className="text-sm text-slate-500">{t("home.noCurrentTrip")}</p>
+                <AiEmptyInvite variant="planner" onCta={startAiTripCreation} />
               )}
             </div>
             <PlannerView
@@ -18501,6 +18659,9 @@ export default function App() {
 
         {activeTab === "budget" ? (
           <section className="pb-4">
+            {!trips?.length ? (
+              <AiEmptyInvite variant="budget" onCta={startAiTripCreation} />
+            ) : (
             <div className="space-y-7">
               {(() => {
                 const sections = classifyTrips(trips || []);
@@ -18576,6 +18737,7 @@ export default function App() {
                 );
               })()}
             </div>
+            )}
           </section>
         ) : null}
 
@@ -18657,6 +18819,15 @@ export default function App() {
         onShowTour={() => {
           setMenuOpen(false);
           setShowOnboarding(true);
+        }}
+      />
+      <TripCreateChoiceSheet
+        open={tripCreateChoiceOpen}
+        onClose={() => setTripCreateChoiceOpen(false)}
+        onChooseAi={startAiTripCreation}
+        onChooseManual={() => {
+          setTripCreateChoiceOpen(false);
+          setTripModalOpen(true);
         }}
       />
       <TripFormModal open={tripModalOpen} onClose={() => setTripModalOpen(false)} onCreate={createTrip} />
