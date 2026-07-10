@@ -17049,6 +17049,16 @@ export default function App() {
               ownerId
             );
           }
+          if (!activitiesInsertOk) {
+            if (newTripId) {
+              try {
+                await supabase.from("trips").delete().eq("id", newTripId);
+              } catch (_rollbackError) {
+                /* Keep the original activity insert error visible to the user. */
+              }
+            }
+            return false;
+          }
 
           let inviteErrorMsg = "";
           const inviteList = Array.isArray(body.invited_emails)
