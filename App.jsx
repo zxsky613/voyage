@@ -17318,14 +17318,7 @@ export default function App() {
     if (!activity?.id) return;
     try {
       const desiredDescription = String(activity?.description || "");
-      const refreshedPhoto =
-        (await resolveActivityPlaceImage({
-          title: activity?.title || activity?.name,
-          location: activity?.location,
-          tripTitle: String(selectedTrip?.title || "").trim(),
-          uiLang: language,
-        })) ||
-        String(activity?.photo_url || activity?.image_url || "").trim();
+      const existingPhoto = getActivityImageUrl(activity);
       let payload = {
         title: String(activity?.title || activity?.name || "Activite"),
         name: String(activity?.title || activity?.name || "Activite"),
@@ -17333,8 +17326,8 @@ export default function App() {
         location: String(activity?.location || ""),
         cost: Number(activity?.cost || 0),
         time: String(activity?.time || ""),
-        photo_url: String(refreshedPhoto || ""),
-        image_url: String(refreshedPhoto || ""),
+        photo_url: String(existingPhoto || ""),
+        image_url: String(existingPhoto || ""),
       };
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const { error } = await supabase.from("activities").update(payload).eq("id", activity.id);

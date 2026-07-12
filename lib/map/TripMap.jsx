@@ -245,6 +245,7 @@ export default function TripMap({
       if (cancelled || layersReady || !map || mapRef.current !== map) return;
       layersReady = true;
       window.clearTimeout(initWatchdog);
+      setLoadError(false);
 
       map.addSource(SOURCE_ID, {
         type: "geojson",
@@ -457,7 +458,7 @@ export default function TripMap({
       mapRef.current = map;
 
       const onError = (e) => {
-        if (cancelled) return;
+        if (cancelled || layersReady) return;
         const msg = String(e?.error?.message || e?.message || "");
         if (/style|sprite|glyph|tile/i.test(msg)) setLoadError(true);
       };
