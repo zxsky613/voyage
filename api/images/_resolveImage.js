@@ -164,9 +164,9 @@ function isBlockedHeroCacheEntry(url, kind) {
 
 function safeDecodeCacheSignal(value) {
   try {
-    return decodeURIComponent(String(value || ""));
+    return decodeURIComponent(String(value || "")).replace(/[_/.-]+/g, " ");
   } catch {
-    return String(value || "");
+    return String(value || "").replace(/[_/.-]+/g, " ");
   }
 }
 
