@@ -162,6 +162,42 @@ function isBlockedHeroCacheEntry(url, kind) {
   );
 }
 
+function safeDecodeCacheSignal(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
+  }
+}
+
+/**
+ * @param {ResolvedImage} entry
+ * @param {Awaited<ReturnType<typeof resolveEntity>>|null|undefined} entity
+ * @param {import('../../lib/images/types.js').ImageKind} kind
+ */
+export function heroCacheEntryPassesEntityGuards(entry, entity, kind) {
+  if (!entry?.url) return false;
+  if (kind !== "hero") return true;
+  if (isBlockedHeroCacheEntry(entry.url, kind)) return false;
+  if (!entity?.geoAnchor?.qid) return false;
+  if (entry.entityId && entity.qid && entry.entityId !== entity.qid) return false;
+
+  const cacheSignal = [
+    safeDecodeCacheSignal(entry.url),
+    safeDecodeCacheSignal(entry.attribution?.sourceUrl),
+  ].join(" ");
+  return passesEntityImageGuards(
+    {
+      url: entry.url,
+      source: entry.source,
+      heroSource: entry.heroSource,
+      categories: cacheSignal,
+    },
+    entity.geoAnchor,
+    kind
+  );
+}
+
 /**
  * Migration douce : réécrit les entrées cache héros (original ou 1600px → thumb 1280px standard).
  * @param {import('../../lib/images/types.js').ResolvedImage} entry
@@ -215,6 +251,9 @@ export async function resolveImage(params) {
     return { image: null, heroSource: "fallback", reason: "not_found", cache: cacheField };
   }
 
+  /** @type {ResolvedImage|null} */
+  let deferredHeroLabelCache = null;
+
   if (cacheReady) {
     const labelCached = await readCacheByLabel(labelNormalized, kind);
     if (labelCached.cache === "disabled") cacheField = "disabled";
@@ -223,7 +262,9 @@ export async function resolveImage(params) {
         labelNormalized,
         kind,
       });
-      if (!isBlockedHeroCacheEntry(cached.url, kind)) {
+      if (kind === "hero") {
+        deferredHeroLabelCache = cached;
+      } else if (!isBlockedHeroCacheEntry(cached.url, kind)) {
         return {
           image: { ...cached, heroSource: cached.heroSource || inferHeroSource({ source: cached.source }) },
           heroSource: cached.heroSource || inferHeroSource({ source: cached.source }),
@@ -267,6 +308,16 @@ export async function resolveImage(params) {
     );
   }
 
+  if (deferredHeroLabelCache?.url && heroCacheEntryPassesEntityGuards(deferredHeroLabelCache, entity, kind)) {
+    const heroSource =
+      deferredHeroLabelCache.heroSource || inferHeroSource({ source: deferredHeroLabelCache.source });
+    return {
+      image: { ...deferredHeroLabelCache, heroSource },
+      heroSource,
+      cache: "hit",
+    };
+  }
+
   if (entity?.qid && cacheReady && cacheField !== "disabled") {
     const byEntity = await readCacheByEntity(entity.qid, kind);
     if (byEntity.cache === "disabled") cacheField = "disabled";
@@ -276,7 +327,7 @@ export async function resolveImage(params) {
         kind,
         entityId: entity.qid,
       });
-      if (!isBlockedHeroCacheEntry(byEntityImage.url, kind)) {
+      if (heroCacheEntryPassesEntityGuards(byEntityImage, entity, kind)) {
         const heroSource = byEntityImage.heroSource || inferHeroSource({ source: byEntityImage.source });
         return {
           image: { ...byEntityImage, cached: true, heroSource },
