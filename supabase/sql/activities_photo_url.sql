@@ -9,4 +9,4 @@ COMMENT ON COLUMN public.activities.photo_url IS
   'URL image activité (TripAdvisor, Wikimedia, etc.) persistée à l''ajout au calendrier.';
 
 COMMENT ON COLUMN public.activities.photo_source IS
-  'Source photo : tripadvisor | foursquare | wikimedia | wikimedia_geo | placeholder.';
+  'Source photo : tripadvisor | foursquare | wikimedia | wikimedia_geo | placeholder | user (NULL si omis). Voir activityPhotoSourceContract.js.';

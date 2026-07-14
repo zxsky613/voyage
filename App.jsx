@@ -7173,8 +7173,9 @@ function tripDestinationDisplayName(trip) {
 /** Évite qu'un refetch juste après insertion écrase les activités (latence lecture / temps réel). */
 const ACTIVITY_INSERT_GRACE_MS = 90000;
 
-/** Colonne absente du cache schéma PostgREST (ex. PGRST204) — lit message, details et hint. */
-function parseMissingSchemaColumnName(err) {
+/** Colonnes jamais retirées du payload insert trips (RLS WITH CHECK owner_id). */
+const TRIPS_INSERT_PROTECTED_COLUMNS = new Set(["owner_id"]);
+
   const blob = [err?.message, err?.details, err?.hint].filter(Boolean).map(String).join("\n");
   const patterns = [
     /Could not find the '([^']+)' column/i,
@@ -16661,7 +16662,8 @@ export default function App() {
 
         if (lastError) throw lastError;
 
-        const visibleTrips = visibleTripsForSession(data, session);
+        // RLS (rls_trip_member_isolation.sql) filtre côté base ; normalisation seulement.
+        const visibleTrips = (data || []).map(normalizeTrip);
         setTrips(visibleTrips);
         setSelectedTripId((prev) => {
           const prevNorm = normTripId(prev);
@@ -16672,10 +16674,7 @@ export default function App() {
             return s && e && anchor >= s && anchor <= e;
           };
           if (!session) return "";
-          if (visibleTrips.length === 0) {
-            if (!data || data.length === 0) return "";
-            return prevNorm;
-          }
+          if (visibleTrips.length === 0) return "";
           if (prevNorm && visibleTrips.some((t) => normTripId(t?.id) === prevNorm)) {
             const cur = visibleTrips.find((t) => normTripId(t?.id) === prevNorm);
             if (cur && tripCoversAnchor(cur)) return prevNorm;
@@ -16969,14 +16968,19 @@ export default function App() {
     }
     createTripInFlightRef.current = true;
     try {
-      // Certains schémas ont owner_id NOT NULL.
-      // Avec signInAnonymously(), l'utilisateur est "authenticated" et a un id.
-      let ownerId = "";
-      try {
-        const { data: userData } = await supabase.auth.getUser();
-        ownerId = String(userData?.user?.id || "");
-      } catch (_e) {
-        ownerId = "";
+      const sessionOwnerId = String(session?.user?.id || "").trim();
+      let ownerId = sessionOwnerId;
+      if (!ownerId) {
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          ownerId = String(userData?.user?.id || "").trim();
+        } catch (_e) {
+          ownerId = "";
+        }
+      }
+      if (!ownerId) {
+        setNotice(t("modals.tripCreateError"));
+        return false;
       }
 
       let body = {
@@ -17004,6 +17008,7 @@ export default function App() {
       // If the DB schema cache is stale or columns are missing,
       // retry the insert while removing the missing column from payload.
       for (let attempt = 0; attempt < 6; attempt += 1) {
+        body.owner_id = ownerId;
         const { data: insertedRows, error } = await supabase.from("trips").insert(body).select("id");
         if (!error) {
           const newTripId = String(insertedRows?.[0]?.id || "").trim();
@@ -17106,7 +17111,7 @@ export default function App() {
             try {
               for (let i = 0; i < TRIPS_SELECT_ATTEMPTS.length; i += 1) {
                 const { data: d, error: selErr } = await supabase.from("trips").select(TRIPS_SELECT_ATTEMPTS[i]);
-                if (!selErr) { setTrips(visibleTripsForSession(d, session)); break; }
+                if (!selErr) { setTrips((d || []).map(normalizeTrip)); break; }
               }
               if (newTripId && itemsToInsert.length > 0) {
                 const actRows = await fetchActivitiesRowsForTrip(newTripId);
@@ -17118,10 +17123,21 @@ export default function App() {
         }
 
         const msg = String(error?.message || "");
+        if (
+          String(error?.code || "") === "42501" ||
+          /row-level security/i.test(msg)
+        ) {
+          setNotice(formatSupabaseClientError(error));
+          throw error;
+        }
         // Example: Could not find the 'end_date' column of 'trips' in the schema cache
         const m1 = msg.match(/Could not find the '([^']+)' column/i);
         if (m1?.[1] && Object.prototype.hasOwnProperty.call(body, m1[1])) {
           const missing = m1[1];
+          if (TRIPS_INSERT_PROTECTED_COLUMNS.has(missing)) {
+            setNotice(formatSupabaseClientError(error));
+            throw error;
+          }
           // eslint-disable-next-line no-unused-vars
           const { [missing]: _removed, ...rest } = body;
           body = rest;
@@ -17132,12 +17148,17 @@ export default function App() {
         const m2 = msg.match(/column "([^"]+)" does not exist/i);
         if (m2?.[1] && Object.prototype.hasOwnProperty.call(body, m2[1])) {
           const missing = m2[1];
+          if (TRIPS_INSERT_PROTECTED_COLUMNS.has(missing)) {
+            setNotice(formatSupabaseClientError(error));
+            throw error;
+          }
           // eslint-disable-next-line no-unused-vars
           const { [missing]: _removed, ...rest } = body;
           body = rest;
           continue;
         }
 
+        setNotice(formatSupabaseClientError(error));
         throw error;
       }
     } catch (e) {
