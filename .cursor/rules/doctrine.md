@@ -40,10 +40,8 @@ Référence complète : `docs/ARCHITECTURE.md`.
 ## Hors scope (backlog — pas maintenant)
 
 Gates invitation app (post-stores), SEO pré-rendu, offline tuiles, deep links — voir `docs/ARCHITECTURE.md` §5.
-
 ## RLS & schéma Supabase — leçons P0 (2026-07-14)
 
 1. **`.insert().select()` = INSERT + SELECT** — PostgREST ajoute un `RETURNING` ; PostgreSQL réapplique les policies **SELECT** sur la ligne insérée. Toute policy SELECT qui appelle un helper re-`SELECT` la table peut échouer **avant** que la ligne soit lisible → 42501 alors que le `WITH CHECK` INSERT est correct. **Fix** : court-circuiter sur les colonnes de la ligne (ex. `owner_id::text = auth.uid()::text`) **avant** le helper.
 2. **Après purge de policies** — vérifier ce qui **RESTE** (les policies attendues sont-elles présentes ?), pas seulement ce qui est **PARTI**. Une whitelist qui DROP sans recréer peut laisser une table sans policy INSERT.
 3. **CHECK sur valeur pipeline** — toute contrainte `CHECK` sur une colonne produite par la cascade doit avoir un **test de contrat** `pipeline ⊆ CHECK` (cf. `lib/planner/activityPhotoSourceContract.js` + `activityPhotoSourceContract.test.mjs` dans `npm test`). Sinon mismatch dormant jusqu’au premier flux qui persiste réellement.
-

@@ -44,9 +44,11 @@ const EMPTY_FC = { type: "FeatureCollection", features: [] };
  *   onSelectDay?: (dayIndex: number) => void,
  *   onViewTrip?: () => void,
  *   showUserLocation?: boolean,
- *   mode?: 'modal'|'trip',
+ *   mode?: 'modal'|'trip'|'planner',
  *   cityLabel?: string,
  *   className?: string,
+ *   fallbackCenter?: { latitude: number, longitude: number }|null,
+ *   suppressActivitySheet?: boolean,
  * }} props
  */
 export default function TripMap({
@@ -61,6 +63,8 @@ export default function TripMap({
   mode = "modal",
   cityLabel = "",
   className = "",
+  fallbackCenter = null,
+  suppressActivitySheet = false,
 }) {
   const { t } = useI18n();
   const containerRef = useRef(null);
@@ -151,6 +155,8 @@ export default function TripMap({
   selectedActivityIdRef.current = selectedActivityId;
   const effectiveViewRef = useRef(effectiveView);
   effectiveViewRef.current = effectiveView;
+  const suppressSheetRef = useRef(suppressActivitySheet);
+  suppressSheetRef.current = suppressActivitySheet;
 
   const applyBalloonIconLayout = useCallback((map, selId) => {
     if (!map?.getLayer(BALLOON_LAYER)) return;
@@ -201,11 +207,24 @@ export default function TripMap({
   // donc pas de re-fit quand le jour actif change au scroll de la liste.
   const fitTargets = effectiveView === "day" ? dayActivities : mappedActivities;
 
+  const mapPadding = mode === "planner" ? 120 : mode === "modal" ? 88 : 64;
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    fitMapToActivities(map, fitTargets, { padding: mode === "modal" ? 88 : 64 });
-  }, [mapReady, effectiveView, fitTargets, mode]);
+    if (fitTargets.length > 0) {
+      fitMapToActivities(map, fitTargets, { padding: mapPadding });
+      return;
+    }
+    const fb = fallbackCenter;
+    if (fb && Number.isFinite(Number(fb.latitude)) && Number.isFinite(Number(fb.longitude))) {
+      map.easeTo({
+        center: [Number(fb.longitude), Number(fb.latitude)],
+        zoom: Math.max(map.getZoom(), 11),
+        duration: 650,
+      });
+    }
+  }, [mapReady, effectiveView, fitTargets, mode, fallbackCenter, mapPadding]);
 
   useEffect(() => {
     if (effectiveView !== "day") setSheetActivity(null);
@@ -377,7 +396,9 @@ export default function TripMap({
         const id = String(f?.properties?.id || "").trim();
         if (!id) return;
         onSelectRef.current?.(id);
-        setSheetActivity(activityByIdRef.current.get(id) || null);
+        if (!suppressSheetRef.current) {
+          setSheetActivity(activityByIdRef.current.get(id) || null);
+        }
       };
 
       const activityLayers = useBalloons ? [BALLOON_LAYER] : [POINT_FALLBACK_LAYER];
@@ -412,13 +433,13 @@ export default function TripMap({
         });
         if (!hits.length) {
           onSelectRef.current?.(null);
-          setSheetActivity(null);
+          if (!suppressSheetRef.current) setSheetActivity(null);
         }
       });
 
       setMapReady(true);
       fitMapToActivities(map, fitTargets, {
-        padding: mode === "modal" ? 88 : 64,
+        padding: mapPadding,
         animate: false,
       });
       map.resize();
@@ -534,10 +555,13 @@ export default function TripMap({
     );
   };
 
+  const shellClass =
+    mode === "planner"
+      ? "relative h-full min-h-0 w-full overflow-hidden rounded-none bg-slate-100 ring-0"
+      : "relative min-h-[min(55vh,28rem)] w-full overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200/80";
+
   return (
-    <div
-      className={`relative min-h-[min(55vh,28rem)] w-full overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200/80 ${className}`.trim()}
-    >
+    <div className={`${shellClass} ${className}`.trim()}>
       {loadError ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-50/95 px-4 text-center text-sm text-slate-600">
           {t("map.loadError")}
@@ -588,14 +612,16 @@ export default function TripMap({
           {t("map.myLocation")}
         </button>
       ) : null}
-      <TripMapActivitySheet
-        activity={sheetActivity}
-        cityLabel={cityLabel}
-        onClose={() => {
-          setSheetActivity(null);
-          onSelectRef.current?.(null);
-        }}
-      />
+      {!suppressActivitySheet ? (
+        <TripMapActivitySheet
+          activity={sheetActivity}
+          cityLabel={cityLabel}
+          onClose={() => {
+            setSheetActivity(null);
+            onSelectRef.current?.(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
