@@ -172,6 +172,7 @@ import {
   plannerDayIndexForDate,
   addDaysToYmd,
 } from "./lib/planner/buildPlannerMapActivities.js";
+import { sortItineraryDayForDisplay } from "./lib/planner/itineraryDayOrder.js";
 import { usePlannerDestinationCenter } from "./lib/planner/usePlannerDestinationCenter.js";
 import { dayMarkerColor } from "./lib/map/tripMapHelpers.js";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
@@ -10985,8 +10986,9 @@ function ItineraryResultModal({
   const allMapActivities = useMemo(
     () =>
       days.flatMap((d, idx) => {
-        const bullets = normalizeItineraryDayBullets(d);
-        const metaList = getItineraryDayActivitiesMeta(d);
+        const sortedDay = sortItineraryDayForDisplay(d);
+        const bullets = normalizeItineraryDayBullets(sortedDay);
+        const metaList = getItineraryDayActivitiesMeta(sortedDay);
         const dayNum = Number(d?.day) || idx + 1;
         return buildItineraryDayMapActivities(idx, bullets, metaList, cityLabel, dayNum);
       }),
@@ -11298,8 +11300,9 @@ function ItineraryResultModal({
                 {days.map((d, idx) => {
                   const dayNum = Number(d?.day) || idx + 1;
                   const title = String(d?.title || "").trim() || `${t("destination.itineraryDayLabel")} ${dayNum}`;
-                  const bullets = normalizeItineraryDayBullets(d);
-                  const activityMetaList = getItineraryDayActivitiesMeta(d);
+                  const sortedDay = sortItineraryDayForDisplay(d);
+                  const bullets = normalizeItineraryDayBullets(sortedDay);
+                  const activityMetaList = getItineraryDayActivitiesMeta(sortedDay);
                   const cost = Number(d?.costEur) || 0;
                   const hasDayActivities = activityMetaList.length > 0 || bullets.length > 0;
                   const dayColor = dayMarkerColor(idx, activeDayIndex);
