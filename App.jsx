@@ -121,6 +121,7 @@ import {
   pickActivityDisplayPhotoUrl,
   pickResolvedActivityPhoto,
   isActivityPhotoPlaceholder,
+  isLikelyTripAdvisorPhotoUrl,
   shouldShowTripAdvisorAttribution,
   buildActivityPhotoFieldsForPersist,
 } from "./lib/planner/activityImageSource.js";
@@ -17422,9 +17423,14 @@ export default function App() {
               uiLang: language,
             });
             if (!photo || !/^https?:\/\//i.test(String(photo))) continue;
+            const photoSource = isLikelyTripAdvisorPhotoUrl(photo) ? "tripadvisor" : "wikimedia";
             await supabase
               .from("activities")
-              .update({ photo_url: String(photo), image_url: String(photo) })
+              .update({
+                photo_url: String(photo),
+                image_url: String(photo),
+                photo_source: photoSource,
+              })
               .eq("id", act.id);
           }
           const fresh2 = await fetchActivitiesRowsForTrip(tripId);
@@ -17777,9 +17783,14 @@ export default function App() {
                     uiLang: language,
                   });
                   if (!betterPhoto || !/^https?:\/\//i.test(String(betterPhoto))) return;
+                  const photoSource = isLikelyTripAdvisorPhotoUrl(betterPhoto) ? "tripadvisor" : "wikimedia";
                   await supabase
                     .from("activities")
-                    .update({ photo_url: String(betterPhoto), image_url: String(betterPhoto) })
+                    .update({
+                      photo_url: String(betterPhoto),
+                      image_url: String(betterPhoto),
+                      photo_source: photoSource,
+                    })
                     .eq("id", insertedId);
                   try {
                     const fresh2 = await fetchActivitiesRowsForTrip(tid);
