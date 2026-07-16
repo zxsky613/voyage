@@ -174,6 +174,14 @@ import {
   plannerDayIndexForDate,
   addDaysToYmd,
 } from "./lib/planner/buildPlannerMapActivities.js";
+import PlannerDayTimeline from "./lib/planner/PlannerDayTimeline.jsx";
+import {
+  buildPlannerActivityImageCacheKey,
+  clearItineraryBulletImageCacheEntry,
+  noteItineraryBulletImageCache,
+  readItineraryBulletImageCache,
+  scheduleItineraryBulletImageFetch,
+} from "./lib/planner/plannerActivityImageCache.js";
 import { sortItineraryDayForDisplay } from "./lib/planner/itineraryDayOrder.js";
 import { usePlannerDestinationCenter } from "./lib/planner/usePlannerDestinationCenter.js";
 import { dayMarkerColor } from "./lib/map/tripMapHelpers.js";
@@ -6162,7 +6170,7 @@ function PlannerDayActivityCard({
       loading="lazy"
       decoding="async"
       onError={() => {
-        delete itineraryBulletImageCache[cacheKey];
+        clearItineraryBulletImageCacheEntry(cacheKey);
         setImgBroken(true);
         setSrc("");
       }}
@@ -6389,31 +6397,8 @@ async function fetchFreshSuggestedActivityTitles(dest, language) {
   }
 }
 
-const itineraryBulletImageCache = Object.create(null);
-let itineraryBulletImageFetchChain = Promise.resolve();
-
-/** Ne jamais mémoriser un échec / URL vide — re-tentative au prochain affichage. */
-function readItineraryBulletImageCache(key) {
-  const u = String(itineraryBulletImageCache[key] || "").trim();
-  if (!/^https?:\/\//i.test(u)) {
-    if (itineraryBulletImageCache[key] != null) delete itineraryBulletImageCache[key];
-    return "";
-  }
-  return u;
-}
-
-function noteItineraryBulletImageCache(key, url) {
-  const u = String(url || "").trim();
-  if (!/^https?:\/\//i.test(u)) return;
-  itineraryBulletImageCache[key] = u;
-}
-
 function buildItineraryModalImageCacheKey(cityLabel, dayNum, bulletIndex, bulletText) {
   return `v5|${String(cityLabel || "").trim()}|${dayNum}|${bulletIndex}|${String(bulletText || "").trim()}`;
-}
-
-function buildPlannerActivityImageCacheKey(cityLabel, activityId, title) {
-  return `planner-v1|${String(cityLabel || "").trim()}|${String(activityId || "")}|${String(title || "").trim()}`;
 }
 
 /** Photo persistable à l'insert calendrier : TA → URL résolue modale → vide. */
@@ -6436,12 +6421,6 @@ const ACTIVITY_CATEGORY_ICON_MAP = {
   Bike,
   CalendarCheck,
 };
-
-function scheduleItineraryBulletImageFetch(task) {
-  const run = itineraryBulletImageFetchChain.then(() => task());
-  itineraryBulletImageFetchChain = run.catch(() => {});
-  return run;
-}
 
 function ItineraryBulletRow({
   bullet,
@@ -6629,7 +6608,7 @@ function ItineraryBulletRow({
       loading="lazy"
       decoding="async"
       onError={() => {
-        delete itineraryBulletImageCache[cacheKey];
+        clearItineraryBulletImageCacheEntry(cacheKey);
         if (imgRetryRef.current < 1) {
           imgRetryRef.current += 1;
           setImgBroken(false);
@@ -14946,7 +14925,28 @@ function PlannerView({
     </div>
   );
 
-  const renderDayActivityList = (showHeading = true) => (
+  const renderDayActivityList = (showHeading = true) => {
+    if (!isDesktopPlanner) {
+      return (
+        <PlannerDayTimeline
+          showHeading={showHeading}
+          selectedDate={selectedDate}
+          formatDate={formatDate}
+          activities={dayActivities}
+          plannerMapActivities={plannerMapActivities}
+          dayIndex={selectedDayIndex}
+          selectedDayIndex={selectedDayIndex}
+          cityLabel={tripCityLabel}
+          selectedActivityId={selectedMapActivityId}
+          onMapFocus={handleMapActivitySelect}
+          onPhotoResolved={onPhotoResolved}
+          resolveActivityPlaceImage={resolveActivityPlaceImage}
+          isMealOrRest={isItineraryMealOrRestBulletClient}
+        />
+      );
+    }
+
+    return (
     <>
       {showHeading ? (
         <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
@@ -14988,7 +14988,8 @@ function PlannerView({
         )}
       </div>
     </>
-  );
+    );
+  };
 
   const plannerMapNode = resolvedTrip ? (
     <LazyTripMap

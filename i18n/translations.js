@@ -639,6 +639,8 @@ export const translations = {
       reminderFallbackTitle: "Activité",
       currencyEur: "EUR",
       sheetDaySummary: "{{date}} · {{n}} activité(s)",
+      travelWalk: "~{{n}} min à pied",
+      travelTransit: "~{{n}} min en transport",
     },
     trips: {
       memories: "Souvenirs",
@@ -1287,6 +1289,8 @@ export const translations = {
       reminderFallbackTitle: "Activity",
       currencyEur: "EUR",
       sheetDaySummary: "{{date}} · {{n}} activity/activities",
+      travelWalk: "~{{n}} min walk",
+      travelTransit: "~{{n}} min transit",
     },
     trips: {
       memories: "Memories",
@@ -1932,6 +1936,8 @@ export const translations = {
       reminderFallbackTitle: "Aktivität",
       currencyEur: "EUR",
       sheetDaySummary: "{{date}} · {{n}} Aktivität(en)",
+      travelWalk: "~{{n}} Min. zu Fuß",
+      travelTransit: "~{{n}} Min. mit ÖPNV",
     },
     trips: {
       memories: "Erinnerungen",
@@ -2576,6 +2582,8 @@ export const translations = {
       reminderFallbackTitle: "Actividad",
       currencyEur: "EUR",
       sheetDaySummary: "{{date}} · {{n}} actividad(es)",
+      travelWalk: "~{{n}} min a pie",
+      travelTransit: "~{{n}} min en transporte",
     },
     trips: {
       memories: "Recuerdos",
@@ -3220,6 +3228,8 @@ export const translations = {
       reminderFallbackTitle: "Attività",
       currencyEur: "EUR",
       sheetDaySummary: "{{date}} · {{n}} attività",
+      travelWalk: "~{{n}} min a piedi",
+      travelTransit: "~{{n}} min in mezzo pubblico",
     },
     trips: {
       memories: "Ricordi",
@@ -3824,6 +3834,8 @@ export const translations = {
       reminderFallbackTitle: "活动",
       currencyEur: "欧元",
       sheetDaySummary: "{{date}} · {{n}} 个活动",
+      travelWalk: "步行约{{n}}分钟",
+      travelTransit: "公交约{{n}}分钟",
     },
     trips: {
       memories: "回忆",

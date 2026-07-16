@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Preview D2 — PlannerDayTimeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { orange: "#F16A2E", blue: "#142F5D" },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; }
+  </style>
+</head>
+<body class="p-4 sm:p-6">
+  <p class="mb-4 text-center text-xs uppercase tracking-widest text-slate-500">
+    Preview statique Étape 1 — branch feature/planner-day-timeline (non prod)
+  </p>
+  <div class="mx-auto max-w-md rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+    <h3 class="mb-3 text-xs font-normal uppercase tracking-[0.32em] text-slate-500">Jeudi 18 juillet 2026</h3>
+
+    <!-- Carte 1 -->
+    <div class="overflow-hidden rounded-xl bg-white ring-1 ring-slate-100">
+      <div class="flex gap-3 p-3">
+        <div class="relative h-[54px] w-[54px] shrink-0 overflow-hidden rounded-xl bg-cyan-50 ring-1 ring-slate-200/80">
+          <div class="flex h-full w-full items-center justify-center text-cyan-600 text-lg">🌊</div>
+          <span class="absolute -left-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#142F5D] px-1 text-[10px] font-bold text-white ring-2 ring-white">1</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-start justify-between gap-2">
+            <p class="line-clamp-2 flex-1 text-sm font-medium leading-snug text-slate-900">Plage de Matala</p>
+            <span class="shrink-0 text-xs font-semibold tabular-nums text-[#F16A2E]">09:00</span>
+          </div>
+          <p class="mt-0.5 text-[11px] text-slate-500">Matala, Crète</p>
+          <p class="mt-1.5"><span class="inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-[#142F5D] ring-1 ring-slate-200">Gratuit</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chip trajet -->
+    <div class="flex justify-center py-2">
+      <span class="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-1 text-[11px] font-medium text-orange-800 ring-1 ring-orange-100">
+        🚶 ~15 min à pied
+      </span>
+    </div>
+
+    <!-- Carte 2 -->
+    <div class="overflow-hidden rounded-xl bg-white ring-1 ring-slate-100">
+      <div class="flex gap-3 p-3">
+        <div class="relative h-[54px] w-[54px] shrink-0 overflow-hidden rounded-xl bg-stone-100 ring-1 ring-slate-200/80">
+          <img src="https://images.unsplash.com/photo-1569163139394-de4798aa62b6?w=120&h=120&fit=crop" alt="" class="h-full w-full object-cover" />
+          <span class="absolute -left-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#142F5D] px-1 text-[10px] font-bold text-white ring-2 ring-white">2</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-start justify-between gap-2">
+            <p class="line-clamp-2 flex-1 text-sm font-medium leading-snug text-slate-900">Palais de Knossos</p>
+            <span class="shrink-0 text-xs font-semibold tabular-nums text-[#F16A2E]">14:00</span>
+          </div>
+          <p class="mt-0.5 text-[11px] text-slate-500">Heraklion</p>
+          <p class="mt-1.5"><span class="inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-[#142F5D] ring-1 ring-slate-200">~15€</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chip transit -->
+    <div class="flex justify-center py-2">
+      <span class="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-1 text-[11px] font-medium text-orange-800 ring-1 ring-orange-100">
+        🚌 ~20 min en transport
+      </span>
+    </div>
+
+    <!-- Carte 3 -->
+    <div class="overflow-hidden rounded-xl bg-white ring-2 ring-[#F16A2E] shadow-md">
+      <div class="flex gap-3 p-3">
+        <div class="relative h-[54px] w-[54px] shrink-0 overflow-hidden rounded-xl bg-amber-50 ring-1 ring-slate-200/80">
+          <div class="flex h-full w-full items-center justify-center text-amber-600 text-lg">🍴</div>
+          <span class="absolute -left-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#142F5D] px-1 text-[10px] font-bold text-white ring-2 ring-white">3</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-start justify-between gap-2">
+            <p class="line-clamp-2 flex-1 text-sm font-medium leading-snug text-slate-900">Dîner taverne du port</p>
+            <span class="shrink-0 text-xs font-semibold tabular-nums text-[#F16A2E]">19:30</span>
+          </div>
+          <p class="mt-0.5 text-[11px] text-slate-500">Héraklion, vieux port</p>
+          <p class="mt-1.5"><span class="inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-[#142F5D] ring-1 ring-slate-200">~25€</span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="mx-auto mt-4 max-w-md text-center text-[11px] leading-relaxed text-slate-500">
+    Ouvrir ce fichier dans le navigateur pour valider le layout D2 avant merge.<br />
+    En prod React : icônes Lucide (Footprints/Bus), pastille couleur jour via dayMarkerColor.
+  </p>
+</body>
+</html>
