@@ -1,5 +1,6 @@
 import { handleCors, sendJson, parseBody } from "../_helpers.js";
 import { resolveImage } from "./_resolveImage.js";
+import { resolveWikimediaGeoPhoto } from "./_wikimediaGeoPhotos.js";
 
 const rateMap = new Map();
 const RATE_WINDOW_MS = 60_000;
@@ -41,6 +42,9 @@ export async function handler(req, res) {
   const label = String(body.label || "").trim();
   const context = String(body.context || "").trim();
   const uiLang = String(body.uiLang || body.language || "fr").trim();
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  const preferGeo = body.preferGeo === true || body.preferGeo === "true";
 
   if (!label && !context) {
     return sendJson(res, 400, { ok: false, error: "label ou context requis." });
@@ -48,6 +52,38 @@ export async function handler(req, res) {
 
   if (!["hero", "landmark", "activity"].includes(kind)) {
     return sendJson(res, 400, { ok: false, error: "kind invalide." });
+  }
+
+  if (
+    kind === "activity"
+    && preferGeo
+    && Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+  ) {
+    try {
+      const geo = await resolveWikimediaGeoPhoto({
+        latitude,
+        longitude,
+        placeName: label,
+        logContext: `resolve-api label="${label.slice(0, 40)}"`,
+      });
+      const geoUrl = String(geo.url || "").trim();
+      if (/^https?:\/\//i.test(geoUrl)) {
+        return sendJson(res, 200, {
+          ok: true,
+          url: geoUrl,
+          source: "wikidata-commons",
+          photoSource: "wikimedia_geo",
+          heroSource: "fallback",
+          cached: Boolean(geo.cached),
+          cache: geo.cached ? "hit" : "miss",
+        });
+      }
+    } catch (e) {
+      console.error(
+        `[images/resolve] geo failed label="${label.slice(0, 80)}" msg=${String(e?.message || e).slice(0, 120)}`
+      );
+    }
   }
 
   try {

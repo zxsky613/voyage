@@ -95,7 +95,7 @@ import { resolveUiString } from "./i18n/resolveUiString.js";
 import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale, resolveHeroLookupLabel } from "./i18n/cityDisplay.js";
 import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
-import { getResolvedImage, getResolvedImageUrl } from "./lib/getResolvedImage.js";
+import { getResolvedImage, getResolvedImageUrl, getResolvedGeoActivityImage } from "./lib/getResolvedImage.js";
 import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
 import { resolveImagePlaceholder, resolveDestinationHeroPlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
 import { toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
@@ -5743,7 +5743,7 @@ function getActivityPlaceholderStyle(activity) {
   return activityPlaceholderStyle(activity);
 }
 
-/** Résolution image activité / bullet — photo serveur → TripAdvisor → getResolvedImage. */
+/** Résolution image activité / bullet — photo serveur → TripAdvisor → geo (coords) → getResolvedImage. */
 async function resolveActivityPlaceImage({
   title,
   location,
@@ -5753,7 +5753,6 @@ async function resolveActivityPlaceImage({
   photos,
   activityMeta,
 }) {
-  if (isActivityPhotoPlaceholder(activityMeta)) return "";
   const serverPhoto = pickResolvedActivityPhoto(activityMeta || { photos, photoUrl: activityMeta?.photoUrl });
   if (serverPhoto) return serverPhoto;
 
@@ -5762,6 +5761,18 @@ async function resolveActivityPlaceImage({
 
   const cityLabel = String(location || tripTitle || "").trim();
   const { label, context } = buildActivityResolveParams(String(title || "").trim(), cityLabel, dayTitle);
+  const lat = Number(activityMeta?.latitude);
+  const lon = Number(activityMeta?.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && label) {
+    const geoHit = await getResolvedGeoActivityImage({
+      latitude: lat,
+      longitude: lon,
+      label,
+      uiLang,
+    });
+    if (geoHit?.url) return geoHit.url;
+  }
+
   if (!label) return "";
 
   if (isResolveActivityEnabled()) {
@@ -17416,14 +17427,19 @@ export default function App() {
           const freshActs = await fetchActivitiesRowsForTrip(tripId);
           for (const act of freshActs || []) {
             if (String(act?.photo_url || act?.image_url || "").trim()) continue;
+            const lat = Number(act?.latitude);
+            const lon = Number(act?.longitude);
             const photo = await resolveActivityPlaceImage({
               title: act?.title || act?.name,
               location: act?.location,
               tripTitle,
               uiLang: language,
+              activityMeta: act,
             });
             if (!photo || !/^https?:\/\//i.test(String(photo))) continue;
-            const photoSource = isLikelyTripAdvisorPhotoUrl(photo) ? "tripadvisor" : "wikimedia";
+            let photoSource = "wikimedia";
+            if (isLikelyTripAdvisorPhotoUrl(photo)) photoSource = "tripadvisor";
+            else if (Number.isFinite(lat) && Number.isFinite(lon)) photoSource = "wikimedia_geo";
             await supabase
               .from("activities")
               .update({

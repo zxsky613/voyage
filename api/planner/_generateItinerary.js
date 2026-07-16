@@ -30,6 +30,7 @@ import {
 import { coordsSourceForPlace, placeHasCoords } from "../../lib/planner/coordsSource.js";
 import { geocodeCoordlessPlaces } from "./_geocode.js";
 import { resolveActivityPhotosForPlaces } from "./_resolveActivityPhotos.js";
+import { topUpPlaceCatalogCoords } from "./_catalogCoordsTopUp.js";
 import { haversineKm } from "../../lib/planner/geoCluster.js";
 import { isTripAdvisorDisabled } from "./_tripadvisorClient.js";
 import { normalizePlaceCacheKey } from "./_enrichCache.js";
@@ -807,6 +808,33 @@ export async function handler(req, res) {
       }
     }
     timings.clusterMs = Date.now() - tCluster;
+
+    const tCatalogTopUp = Date.now();
+    const catalogTopUp = await topUpPlaceCatalogCoords(placeCatalog, {
+      destination,
+      country,
+      estimateMissingCoordsWithLlm,
+    });
+    placeCatalog.length = 0;
+    placeCatalog.push(...catalogTopUp.places);
+    for (const p of catalogTopUp.places) {
+      const id = String(p?.id || "").trim();
+      if (!id) continue;
+      const prev = registry.get(id);
+      if (prev) registry.set(id, { ...prev, ...p });
+    }
+    timings.catalogTopUpMs = Date.now() - tCatalogTopUp;
+
+    console.info("[planner/diag] catalog-coords-topup", {
+      catalogSize: placeCatalog.length,
+      coordlessBefore: catalogTopUp.coordlessBefore,
+      geocodeAttempted: catalogTopUp.geocodeStats?.attempted ?? 0,
+      geocodeSucceeded: catalogTopUp.geocodeStats?.succeeded ?? 0,
+      geocodeRequests: catalogTopUp.geocodeStats?.requests ?? 0,
+      llmEstimated: catalogTopUp.estimateStats?.estimated ?? 0,
+      stillWithoutCoordsAtPhoto: catalogTopUp.stillWithoutCoordsAtPhoto,
+      catalogTopUpMs: timings.catalogTopUpMs,
+    });
 
     const tPhotos = Date.now();
     const photoResolve = await resolveActivityPhotosForPlaces(placeCatalog, {
