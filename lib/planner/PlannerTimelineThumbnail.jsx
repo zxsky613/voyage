@@ -42,14 +42,7 @@ export default function PlannerTimelineThumbnail({
   const CategoryIcon = resolveActivityCategoryIcon(categoryThumb.iconKey);
 
   return (
-    <div className="relative h-[54px] w-[54px] shrink-0">
-      <span
-        className="absolute left-0 top-0 z-10 flex h-5 min-w-[1.25rem] -translate-x-1 -translate-y-1 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-white"
-        style={{ backgroundColor: markerColor }}
-        aria-hidden
-      >
-        {orderInDay}
-      </span>
+    <div className="relative h-[54px] w-[54px] shrink-0 overflow-visible">
       <div className="h-full w-full overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/80">
         {loading ? (
           <div className="h-full w-full animate-pulse bg-slate-200" aria-hidden />
@@ -71,6 +64,13 @@ export default function PlannerTimelineThumbnail({
           </div>
         )}
       </div>
+      <span
+        className="absolute -right-1.5 -top-1.5 z-20 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-white"
+        style={{ backgroundColor: markerColor }}
+        aria-hidden
+      >
+        {orderInDay}
+      </span>
     </div>
   );
 }
