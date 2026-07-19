@@ -174,7 +174,10 @@ import {
   plannerDayIndexForDate,
   addDaysToYmd,
 } from "./lib/planner/buildPlannerMapActivities.js";
-import { sortItineraryDayForDisplay } from "./lib/planner/itineraryDayOrder.js";
+import {
+  sortItineraryDayForDisplay,
+  sortItineraryDaysChronologically,
+} from "./lib/planner/itineraryDayOrder.js";
 import { usePlannerDestinationCenter } from "./lib/planner/usePlannerDestinationCenter.js";
 import { dayMarkerColor } from "./lib/map/tripMapHelpers.js";
 import { TripDateRangeField } from "./TripDateRangeField.jsx";
@@ -13011,7 +13014,8 @@ function DestinationGuideView({
 
   async function handleSwapItineraryActivity(dayIndex, bulletIndex) {
     if (!Array.isArray(generatedDayIdeas) || generatedDayIdeas.length === 0) return;
-    const day = generatedDayIdeas[dayIndex];
+    const orderedIdeas = sortItineraryDaysChronologically(generatedDayIdeas);
+    const day = orderedIdeas[dayIndex];
     if (!day) return;
     const bullets = getItineraryDayBulletsRaw(day);
     const current = bullets[bulletIndex];
@@ -13032,7 +13036,7 @@ function DestinationGuideView({
     }
     const period = parseItineraryBulletPeriod(current);
     const newBullet = formatItineraryActivityBullet(period, nextTitle, language);
-    persistGeneratedDayIdeas(updateItineraryDayBullet(generatedDayIdeas, dayIndex, bulletIndex, newBullet));
+    persistGeneratedDayIdeas(updateItineraryDayBullet(orderedIdeas, dayIndex, bulletIndex, newBullet));
   }
 
   const buildItineraryActivitySchedule = useCallback(
@@ -13054,7 +13058,7 @@ function DestinationGuideView({
       };
       const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
       const schedule = [];
-      const ideas = generatedDayIdeas;
+      const ideas = sortItineraryDaysChronologically(generatedDayIdeas);
       if (!Array.isArray(ideas) || ideas.length === 0) return schedule;
       for (const d of ideas) {
         const dayNum = Number(d?.day) || 1;
