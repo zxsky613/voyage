@@ -96,6 +96,7 @@ import { getAppDateLocale } from "./i18n/dateLocale.js";
 import { catalogCityHitsForLocalizedQuery, displayCityForLocale, resolveHeroLookupLabel } from "./i18n/cityDisplay.js";
 import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
 import { getResolvedImage, getResolvedImageUrl } from "./lib/getResolvedImage.js";
+import { canCurrentUserDeleteTrip } from "./lib/tripOwnership.js";
 import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
 import { resolveImagePlaceholder, resolveDestinationHeroPlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
 import { toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
@@ -14548,7 +14549,7 @@ function DestinationGuideView({
   );
 }
 
-function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip, onStartAiCreate }) {
+function AllTripsView({ trips, session, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip, onStartAiCreate }) {
   const { t } = useI18n();
   const sections = classifyTrips(trips);
   if (!trips?.length) {
@@ -14578,7 +14579,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   onOpen={onOpenTrip}
                   onShare={onShareTrip}
                   onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
+                  onDelete={canCurrentUserDeleteTrip(session, trip) ? onDeleteTrip : null}
                   isNow
                   muted={false}
                 />
@@ -14605,7 +14606,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   onOpen={onOpenTrip}
                   onShare={onShareTrip}
                   onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
+                  onDelete={canCurrentUserDeleteTrip(session, trip) ? onDeleteTrip : null}
                   isNow={false}
                   muted={false}
                 />
@@ -14632,7 +14633,7 @@ function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip
                   onOpen={onOpenTrip}
                   onShare={onShareTrip}
                   onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
+                  onDelete={canCurrentUserDeleteTrip(session, trip) ? onDeleteTrip : null}
                   isNow={false}
                   muted
                 />
@@ -18313,17 +18314,39 @@ export default function App() {
     }
   };
 
-  const deleteTrip = async (trip) => {
-    if (deletingTrip) return;
+  const deleteTrip = (trip) => {
+    if (deletingTrip || !canCurrentUserDeleteTrip(session, trip)) return;
     setTripToDelete(trip);
   };
 
   const confirmDeleteTrip = async () => {
     if (!tripToDelete || deletingTrip) return;
+    if (!canCurrentUserDeleteTrip(session, tripToDelete)) {
+      setTripToDelete(null);
+      return;
+    }
     const tid = tripToDelete.id;
     if (tid == null || tid === "") return;
     const idStr = String(tid);
+    const ownerId = String(session.user.id).trim();
     setDeletingTrip(true);
+
+    // Vérification serveur avant toute suppression enfant : les invités peuvent
+    // modifier le planning, mais seul le propriétaire peut supprimer le voyage.
+    try {
+      const { data: ownedTrip, error: ownershipError } = await supabase
+        .from("trips")
+        .select("id")
+        .eq("id", tid)
+        .eq("owner_id", ownerId)
+        .maybeSingle();
+      if (ownershipError) throw ownershipError;
+      if (!ownedTrip) throw new Error("Suppression du voyage non autorisée");
+    } catch (e) {
+      setDeletingTrip(false);
+      setNotice(String(e?.message || "Erreur suppression voyage"));
+      return;
+    }
 
     // Optimistic UI : fermer la modal et retirer le voyage immédiatement
     setTrips((prev) => (prev || []).filter((t) => String(t?.id) !== idStr));
@@ -18491,6 +18514,7 @@ export default function App() {
         {activeTab === "trips" ? (
           <AllTripsView
             trips={trips}
+            session={session}
             onOpenTrip={(trip) => {
               openPlannerToday(trip);
             }}
