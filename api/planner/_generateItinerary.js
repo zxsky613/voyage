@@ -810,14 +810,19 @@ export async function handler(req, res) {
     timings.clusterMs = Date.now() - tCluster;
 
     const tCatalogTopUp = Date.now();
+    const catalogSizeBeforeTopUp = placeCatalog.length;
     const catalogTopUp = await topUpPlaceCatalogCoords(placeCatalog, {
       destination,
       country,
       estimateMissingCoordsWithLlm,
     });
+    const toppedPlaces =
+      catalogTopUp.places === placeCatalog ? [...catalogTopUp.places] : catalogTopUp.places;
     placeCatalog.length = 0;
-    placeCatalog.push(...catalogTopUp.places);
-    for (const p of catalogTopUp.places) {
+    placeCatalog.push(...toppedPlaces);
+    const catalogSizeAfterSync = placeCatalog.length;
+    timings.placeCatalogSizeAtPhoto = catalogSizeAfterSync;
+    for (const p of toppedPlaces) {
       const id = String(p?.id || "").trim();
       if (!id) continue;
       const prev = registry.get(id);
@@ -825,8 +830,19 @@ export async function handler(req, res) {
     }
     timings.catalogTopUpMs = Date.now() - tCatalogTopUp;
 
+    if (catalogSizeAfterSync === 0 && funnel.clusteredParJour.some((n) => n > 0)) {
+      console.error("[planner/diag] catalog-wipe-alert", {
+        catalogSizeBeforeTopUp,
+        catalogSizeAfterSync,
+        clusteredParJour: funnel.clusteredParJour,
+        coordlessBefore: catalogTopUp.coordlessBefore,
+      });
+    }
+
     console.info("[planner/diag] catalog-coords-topup", {
       catalogSize: placeCatalog.length,
+      catalogSizeBeforeTopUp,
+      catalogSizeAfterSync,
       coordlessBefore: catalogTopUp.coordlessBefore,
       geocodeAttempted: catalogTopUp.geocodeStats?.attempted ?? 0,
       geocodeSucceeded: catalogTopUp.geocodeStats?.succeeded ?? 0,

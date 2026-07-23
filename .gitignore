@@ -14,3 +14,4 @@ scripts/_reports/
 scripts/tmp-*
 .cursor/settings.json
 public/videos/plage-hero.original.mp4
+.vercel

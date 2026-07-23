@@ -51,7 +51,7 @@ export async function topUpPlaceCatalogCoords(placeCatalog, options) {
 
   if (!catalog.length || !coordlessBefore) {
     return {
-      places: catalog,
+      places: [...catalog],
       geocodeStats: null,
       estimateStats: null,
       coordlessBefore,
