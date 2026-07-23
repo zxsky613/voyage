@@ -97,7 +97,12 @@ import { catalogCityHitsForLocalizedQuery, displayCityForLocale, resolveHeroLook
 import { getImagesApiPostUrl, isWikimediaImageUrl } from "./lib/imagesApi.js";
 import { getResolvedImage, getResolvedImageUrl, getResolvedGeoActivityImage } from "./lib/getResolvedImage.js";
 import { buildHeroResolveLabel } from "./lib/images/heroResolveLabel.js";
-import { resolveImagePlaceholder, resolveDestinationHeroPlaceholder, activityPlaceholderStyle } from "./lib/images/placeholder.js";
+import {
+  resolveImagePlaceholder,
+  resolveDestinationHeroFallbackBackground,
+  formatDestinationHeroSubtitle,
+  activityPlaceholderStyle,
+} from "./lib/images/placeholder.js";
 import { toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
 import {
   stripItineraryBulletTimePrefix,
@@ -13238,23 +13243,47 @@ function DestinationGuideView({
                   const heroSrc = destinationHeroSrc;
                   if (!heroSrc && !heroFetchSettled) {
                     return (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <span className="animate-pulse text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
+                      <div
+                        className="flex h-full w-full flex-col items-center justify-center gap-3"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div
+                          className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300/40 border-t-brand-blue/70"
+                          aria-hidden="true"
+                        />
+                        <span className="text-xs font-medium text-slate-400/80">{t("common.imageLoading")}</span>
                       </div>
                     );
                   }
                   if (!heroSrc || heroImageFailed) {
+                    const heroFallbackSeed = [displayGuide.city, displayGuide.adminRegion, displayGuide.country]
+                      .filter(Boolean)
+                      .join("|");
+                    const heroFallbackSubtitle = formatDestinationHeroSubtitle(
+                      displayGuide.adminRegion,
+                      displayGuide.country
+                    );
+                    const heroDisplayName = displayCityForLocale(String(displayGuide.city), language);
                     return (
                       <div
-                        className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center"
-                        style={{ background: resolveDestinationHeroPlaceholder(displayGuide.city) }}
+                        role="img"
+                        aria-label={t("common.heroNoPhoto", { destination: heroDisplayName })}
+                        className="relative flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden px-6 text-center"
+                        style={{ background: resolveDestinationHeroFallbackBackground(heroFallbackSeed) }}
                       >
-                        <span className="text-lg font-serif text-white/95 drop-shadow-sm">
-                          {displayCityForLocale(String(displayGuide.city), language)}
-                        </span>
-                        {(displayGuide.country || displayGuide.adminRegion) ? (
-                          <span className="text-xs font-medium text-white/75">
-                            {[displayGuide.adminRegion, displayGuide.country].filter(Boolean).join(", ")}
+                        <div
+                          className="pointer-events-none absolute inset-0 opacity-[0.12]"
+                          aria-hidden="true"
+                          style={{
+                            backgroundImage:
+                              "radial-gradient(circle at 50% 120%, rgba(255,255,255,0.18) 0%, transparent 55%)",
+                          }}
+                        />
+                        <span className="relative text-lg font-serif text-white/95 drop-shadow-sm">{heroDisplayName}</span>
+                        {heroFallbackSubtitle ? (
+                          <span className="relative text-xs font-medium tracking-wide text-white/75">
+                            {heroFallbackSubtitle}
                           </span>
                         ) : null}
                       </div>

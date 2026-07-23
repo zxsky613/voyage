@@ -22,7 +22,8 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const title = String(fileTitle || "").trim();
   if (!title) return null;
   const hero = options.kind === "hero";
-  if (hero && isLikelyOrbitalOrMapImagery("", title)) return null;
+  const allowOrbital = options.allowOrbitalForSoleP18 === true;
+  if (hero && !allowOrbital && isLikelyOrbitalOrMapImagery("", title)) return null;
 
   const filePage = title.startsWith("File:") ? title : `File:${title}`;
   const api =
@@ -39,12 +40,12 @@ export async function fetchCommonsFileCandidate(fileTitle, source = "wikidata-co
   const info = page?.imageinfo?.[0];
   const url = String(info?.thumburl || info?.url || "").trim();
   if (!url || isLikelyWikiBrandOrLogoImage(url, title)) return null;
-  if (hero && isLikelyOrbitalOrMapImagery(url, title)) return null;
+  if (hero && !allowOrbital && isLikelyOrbitalOrMapImagery(url, title)) return null;
   if (hero && isLikelyNonScenicHeroImagery(url, title)) return null;
 
   const meta = info?.extmetadata || {};
   const categoriesRaw = String(parseExtMetaValue(meta.Categories) || "").toLowerCase();
-  if (hero && isLikelyOrbitalOrMapImagery(url, title, categoriesRaw)) return null;
+  if (hero && !allowOrbital && isLikelyOrbitalOrMapImagery(url, title, categoriesRaw)) return null;
   if (hero && isLikelyNonScenicHeroImagery(url, title, categoriesRaw)) return null;
   const w = Number(info?.width || 0);
   const h = Number(info?.height || 0);
@@ -94,6 +95,24 @@ export async function fetchP18Candidates(filenames, options = {}) {
     list.map((f) => fetchCommonsFileCandidate(f, "wikidata-commons", options))
   );
   return results.filter(Boolean).sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+/**
+ * P18 hero : filtres standards, puis assouplissement orbital si seule P18 Wikidata.
+ * @param {string[]} filenames
+ * @param {{ kind?: import('../../lib/images/types.js').ImageKind, destinationTokens?: string[] }} [options]
+ */
+export async function fetchHeroP18Candidates(filenames, options = {}) {
+  const list = (Array.isArray(filenames) ? filenames : []).slice(0, 4).filter(Boolean);
+  const strict = await fetchP18Candidates(list, { ...options, kind: "hero" });
+  if (strict.length) return strict;
+  if (list.length !== 1) return [];
+  const relaxed = await fetchCommonsFileCandidate(list[0], "wikidata-commons", {
+    ...options,
+    kind: "hero",
+    allowOrbitalForSoleP18: true,
+  });
+  return relaxed ? [{ ...relaxed, heroSource: /** @type {const} */ ("p18") }] : [];
 }
 
 /**
