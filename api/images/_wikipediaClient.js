@@ -51,7 +51,7 @@ export async function fetchWikipediaPageCandidate(lang, title, options = {}) {
 
 /**
  * @param {{ lang: string, title: string }[]} sitelinks
- * @param {{ kind?: import('../../lib/images/types.js').ImageKind, uiLang?: string }} [options]
+ * @param {{ kind?: import('../../lib/images/types.js').ImageKind, uiLang?: string, sequentialFirst?: boolean }} [options]
  */
 export async function fetchWikipediaCandidates(sitelinks, options = {}) {
   const links = Array.isArray(sitelinks) ? sitelinks : [];
@@ -64,7 +64,9 @@ export async function fetchWikipediaCandidates(sitelinks, options = {}) {
     const link = byLang[l];
     if (!link) continue;
     const c = await fetchWikipediaPageCandidate(link.lang, link.title, options);
-    if (c) out.push(c);
+    if (!c) continue;
+    if (options.sequentialFirst) return [c];
+    out.push(c);
   }
   return out;
 }

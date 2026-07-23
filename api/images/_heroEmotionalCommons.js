@@ -9,7 +9,7 @@ import { commonsThumbUrl, parseExtMetaValue, wikiUserAgent } from "./_headCheck.
 import { fetchJsonWithRetry } from "./_fetchRetry.js";
 
 const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
-const HERO_GEO_RADIUS_M = 8000;
+export const HERO_GEO_RADIUS_M = 8000;
 const HERO_GEO_LIMIT = 28;
 
 /**
@@ -25,6 +25,40 @@ export function buildEmotionalCommonsCategoriesFromEntity(entity) {
     { name: `Views of ${p373}`, heroSource: /** @type {const} */ ("commons") },
     { name: `Landscapes of ${p373}`, heroSource: /** @type {const} */ ("commons") },
   ];
+}
+
+/**
+ * @param {{ commonsCategory?: string }} entity
+ * @returns {Array<{ name: string, heroSource: import('../../lib/images/types.js').HeroSource }>}
+ */
+export function buildHeroFeaturedQualitySteps(entity) {
+  const p373 = String(entity?.commonsCategory || "").trim();
+  if (!p373) return [];
+  return [
+    { name: `Featured pictures of ${p373}`, heroSource: /** @type {const} */ ("commons-featured") },
+    { name: `Quality images of ${p373}`, heroSource: /** @type {const} */ ("commons-quality") },
+  ];
+}
+
+/**
+ * @param {{ commonsCategory?: string }} entity
+ * @returns {Array<{ name: string, heroSource: import('../../lib/images/types.js').HeroSource }>}
+ */
+export function buildHeroViewsLandscapesSteps(entity) {
+  const p373 = String(entity?.commonsCategory || "").trim();
+  if (!p373) return [];
+  return [
+    { name: `Views of ${p373}`, heroSource: /** @type {const} */ ("commons") },
+    { name: `Landscapes of ${p373}`, heroSource: /** @type {const} */ ("commons") },
+  ];
+}
+
+/**
+ * @param {{ commonsCategory?: string }} entity
+ * @returns {Array<{ name: string, heroSource: import('../../lib/images/types.js').HeroSource }>}
+ */
+export function buildHeroSequentialCommonsSteps(entity) {
+  return [...buildHeroFeaturedQualitySteps(entity), ...buildHeroViewsLandscapesSteps(entity)];
 }
 
 /**
@@ -125,10 +159,37 @@ async function fetchGeoHeroCandidates(geoItems, options = {}) {
 }
 
 /**
- * Étape émotion — catégories P373 de l'entité + geosearch autour du P625.
- * @param {NonNullable<Awaited<ReturnType<import('./_entityResolver.js').resolveEntity>>>} entity
- * @param {string} searchLabel
+ * Une catégorie Commons P373 (étape séquentielle hero).
+ * @param {string} categoryName
+ * @param {import('../../lib/images/types.js').HeroSource} heroSource
  * @param {{ kind?: import('../../lib/images/types.js').ImageKind, uiLang?: string, destinationTokens?: string[] }} options
+ */
+export async function fetchHeroCommonsCategoryCandidates(categoryName, heroSource, options = {}) {
+  const heroOpts = { ...options, kind: /** @type {'hero'} */ ("hero") };
+  const batch = await fetchCommonsCategoryScenicCandidates(categoryName, {
+    ...heroOpts,
+    emotionalCategory: categoryName,
+    minHeroScore: 45,
+  });
+  return batch.map((c) => ({ ...c, heroSource }));
+}
+
+/**
+ * Geosearch Commons 8 km — dernier recours hero (P625 entité).
+ * @param {NonNullable<Awaited<ReturnType<import('./_entityResolver.js').resolveEntity>>>} entity
+ * @param {{ destinationTokens?: string[] }} [options]
+ */
+export async function fetchHeroGeosearchCandidates(entity, options = {}) {
+  const coords = entity?.coordinates;
+  if (!coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) {
+    return [];
+  }
+  const geoItems = await fetchGeoSearchFileTitles(coords.lat, coords.lon);
+  return fetchGeoHeroCandidates(geoItems, options);
+}
+
+/**
+ * @deprecated Cascade fusionnée — ne plus utiliser pour hero (conservé pour scripts legacy).
  */
 export async function fetchHeroEmotionalCandidates(entity, searchLabel, options = {}) {
   const heroOpts = { ...options, kind: /** @type {'hero'} */ ("hero") };
@@ -136,22 +197,11 @@ export async function fetchHeroEmotionalCandidates(entity, searchLabel, options 
   const merged = [];
 
   for (const cat of buildEmotionalCommonsCategoriesFromEntity(entity)) {
-    const batch = await fetchCommonsCategoryScenicCandidates(cat.name, {
-      ...heroOpts,
-      emotionalCategory: cat.name,
-      minHeroScore: 45,
-    });
-    for (const c of batch) {
-      merged.push({ ...c, heroSource: cat.heroSource });
-    }
+    const batch = await fetchHeroCommonsCategoryCandidates(cat.name, cat.heroSource, heroOpts);
+    merged.push(...batch);
   }
 
-  const coords = entity?.coordinates;
-  if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lon)) {
-    const geoItems = await fetchGeoSearchFileTitles(coords.lat, coords.lon);
-    const geo = await fetchGeoHeroCandidates(geoItems, heroOpts);
-    merged.push(...geo);
-  }
+  merged.push(...(await fetchHeroGeosearchCandidates(entity, heroOpts)));
 
   return merged.sort((a, b) => (b.score || 0) - (a.score || 0));
 }

@@ -1,6 +1,6 @@
 import { wikiUserAgent } from "./_headCheck.js";
 import { fetchJsonWithRetry, WikiApiThrottledError } from "./_fetchRetry.js";
-import { buildEntitySearchAttempts } from "../../lib/images/entitySearchPlan.js";
+import { buildEntitySearchAttempts, buildEntitySearchPhases } from "../../lib/images/entitySearchPlan.js";
 import { buildEntityGeoAnchor } from "../../lib/images/imageEntityGuard.js";
 
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
@@ -406,22 +406,25 @@ export async function resolveEntity(searchLabel, uiLang, kind, context = "") {
   const cityLabel = String(searchLabel || "").trim();
   const geoContext = String(context || "").trim();
   const contextTokens = parseContextTokens(geoContext);
-  const attempts = buildEntitySearchAttempts(cityLabel);
+  const phases = buildEntitySearchPhases(cityLabel, geoContext);
 
-  for (const { query, language } of attempts) {
-    const batch = await wbSearchEntities(query, language, 10);
-    if (!batch.length) continue;
+  for (const phaseLabel of phases) {
+    const attempts = buildEntitySearchAttempts(phaseLabel);
+    for (const { query, language } of attempts) {
+      const batch = await wbSearchEntities(query, language, 10);
+      if (!batch.length) continue;
 
-    /** @type {{ id: string, searchQuery: string }[]} */
-    const hits = batch
-      .map((hit) => ({
-        id: String(hit?.id || "").trim(),
-        searchQuery: query,
-      }))
-      .filter((h) => h.id);
+      /** @type {{ id: string, searchQuery: string }[]} */
+      const hits = batch
+        .map((hit) => ({
+          id: String(hit?.id || "").trim(),
+          searchQuery: query,
+        }))
+        .filter((h) => h.id);
 
-    const picked = await pickBestEntityFromHits(hits, cityLabel, geoContext, contextTokens, kind, lang);
-    if (picked) return picked;
+      const picked = await pickBestEntityFromHits(hits, cityLabel, geoContext, contextTokens, kind, lang);
+      if (picked) return picked;
+    }
   }
 
   return null;
