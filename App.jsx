@@ -211,6 +211,12 @@ import {
   filterExpensesForTrip,
 } from "./lib/budget/expenseSources.js";
 import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
+import {
+  appendInviteEmail,
+  diffNewlyAddedInviteEmails,
+  invitedEmailsFromParticipantList,
+  normalizeInviteEmail,
+} from "./lib/trip/inviteMembership.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -9360,7 +9366,7 @@ function EditTripModal({ open, onClose, trip, onSave }) {
 }
 
 // ── InviteEmailModal ──────────────────────────────────────────────────────────
-function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
+function InviteEmailModal({ open, onClose, trip, activities, inviterName, onPersistInviteEmail }) {
   useScrollLock(open);
   const { t } = useI18n();
   const [email, setEmail] = useState("");
@@ -9434,12 +9440,24 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
   };
 
   const handleSend = async () => {
-    const trimmed = email.trim();
-    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return;
+    const trimmed = normalizeInviteEmail(email) || String(email || "").trim().toLowerCase();
+    if (!trimmed || !isValidEmail(trimmed)) return;
     setState("sending");
     setLastApiError("");
     setCopyLinkState("");
     const programme = buildProgramme();
+    // Persist membership first — otherwise the invitee receives a link but RLS never grants trip access.
+    if (typeof onPersistInviteEmail === "function") {
+      const persisted = await onPersistInviteEmail(trip, trimmed);
+      if (!persisted?.ok) {
+        const fb = buildMailtoFallback(trimmed, programme);
+        setFallbackInviteUrl(fb.inviteUrl);
+        setManualMailto(fb.mailto);
+        setLastApiError(String(persisted?.error || t("modals.shareInviteEmailApiFailed")).trim());
+        setState("needs_manual");
+        return;
+      }
+    }
     const inv = await postTripInvitesToApi({
       to: [trimmed],
       tripTitle,
@@ -9605,7 +9623,7 @@ function InviteEmailModal({ open, onClose, trip, activities, inviterName }) {
 }
 
 // ── ShareModal ────────────────────────────────────────────────────────────────
-function ShareModal({ open, onClose, trip, activities, inviterName }) {
+function ShareModal({ open, onClose, trip, activities, inviterName, onPersistInviteEmail }) {
   useScrollLock(open);
   const { t } = useI18n();
   const [copyState, setCopyState] = useState("");
@@ -9769,6 +9787,7 @@ function ShareModal({ open, onClose, trip, activities, inviterName }) {
         trip={trip}
         activities={activities}
         inviterName={inviterName}
+        onPersistInviteEmail={onPersistInviteEmail}
       />
     </>
   );
@@ -18127,6 +18146,72 @@ export default function App() {
     void syncAllActivitiesBudgetForTrip(budgetDetailTrip, tripActs);
   }, [budgetDetailTrip?.id, tripExpensesTableReady, activities]);
 
+  /** Persist Share → invite-by-email into trips.invited_emails (no second Resend call). */
+  const persistShareInviteEmail = async (trip, email) => {
+    const tid = String(trip?.id || "").trim();
+    const mail = normalizeInviteEmail(email);
+    if (!tid || !mail) {
+      return { ok: false, error: "E-mail ou voyage invalide." };
+    }
+    if (isTripPastByEndDate(trip)) {
+      return { ok: false, error: t("modals.pastTripDatesHint") };
+    }
+    const current =
+      (tripsRef.current || []).find((row) => String(row?.id) === tid) || trip || {};
+    const { next, added } = appendInviteEmail(current?.invited_emails, mail);
+    if (!added) return { ok: true, already: true };
+
+    const participants = canonicalParticipants(
+      Array.isArray(current?.participants) ? current.participants : [],
+      next
+    );
+    let updateBody = { invited_emails: next, participants };
+    if (Array.isArray(current?.invited_joined_emails)) {
+      const invSet = new Set(next);
+      updateBody.invited_joined_emails = current.invited_joined_emails
+        .map((x) => String(x || "").trim().toLowerCase())
+        .filter((e) => invSet.has(e));
+    }
+
+    let saveErr = null;
+    for (let att = 0; att < 6; att += 1) {
+      const { error } = await supabase.from("trips").update(updateBody).eq("id", tid);
+      if (!error) {
+        saveErr = null;
+        break;
+      }
+      saveErr = error;
+      const missing = parseMissingSchemaColumnName(error);
+      if (missing && Object.prototype.hasOwnProperty.call(updateBody, missing)) {
+        const { [missing]: _r, ...rest } = updateBody;
+        updateBody = rest;
+        continue;
+      }
+      break;
+    }
+    if (saveErr) {
+      return { ok: false, error: String(saveErr?.message || "Erreur enregistrement invitation") };
+    }
+
+    const patchTrip = (row) =>
+      normalizeTrip({
+        ...row,
+        invited_emails: next,
+        participants,
+        ...(updateBody.invited_joined_emails !== undefined
+          ? { invited_joined_emails: updateBody.invited_joined_emails }
+          : {}),
+      });
+    setTrips((prev) =>
+      (prev || []).map((row) => (String(row?.id) === tid ? patchTrip(row) : row))
+    );
+    setShareTrip((row) => (row && String(row.id) === tid ? patchTrip(row) : row));
+    setEditingTrip((row) => (row && String(row.id) === tid ? patchTrip(row) : row));
+    setTricountTrip((row) => (row && String(row.id) === tid ? patchTrip(row) : row));
+    setBudgetDetailTrip((row) => (row && String(row.id) === tid ? patchTrip(row) : row));
+    return { ok: true, added: true };
+  };
+
   const saveParticipants = async (list) => {
     if (!tricountTrip) return;
     if (isTripPastByEndDate(tricountTrip)) {
@@ -18137,14 +18222,10 @@ export default function App() {
       const existingInvited = Array.isArray(tricountTrip?.invited_emails)
         ? tricountTrip.invited_emails.map((m) => String(m || "").trim().toLowerCase()).filter((m) => isValidEmail(m))
         : [];
-      const existingInvitedSet = new Set(existingInvited);
       const rawList = Array.isArray(list) ? list : [];
-      const newlyAddedInviteEmails = [...new Set(
-        rawList
-          .map((p) => String(p || "").trim().toLowerCase())
-          .filter((p) => isValidEmail(p) && !existingInvitedSet.has(p))
-      )];
-      const nextInvitedEmails = [...new Set([...existingInvited, ...newlyAddedInviteEmails])];
+      // Full replace from the modal list so removals revoke trip membership (not append-only).
+      const nextInvitedEmails = invitedEmailsFromParticipantList(rawList);
+      const newlyAddedInviteEmails = diffNewlyAddedInviteEmails(existingInvited, nextInvitedEmails);
 
       const participants = canonicalParticipants(
         list && list.length > 0 ? list : [],
@@ -18929,6 +19010,7 @@ export default function App() {
         trip={shareTrip}
         activities={(activities || []).filter((a) => String(a?.trip_id) === String(shareTrip?.id))}
         inviterName={getMenuGreetingName(session?.user) || ""}
+        onPersistInviteEmail={persistShareInviteEmail}
       />
       <TripParticipantsModal open={!!tricountTrip} onClose={() => setTricountTrip(null)} trip={tricountTrip} onSave={saveParticipants} />
       {budgetDetailTrip ? (
