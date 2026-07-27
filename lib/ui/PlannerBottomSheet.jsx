@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { measurePlannerSheetSnaps } from "./plannerSheetLayout.js";
 
 const SNAP_ORDER = ["collapsed", "mid", "full"];
 
 /**
  * Bottom sheet planning mobile — 3 crans (replié / mi-hauteur / plein).
+ * Drag limité à la poignée ; la liste scrolle indépendamment au cran médian.
  * @param {{
  *   snap?: 'collapsed'|'mid'|'full',
  *   onSnapChange?: (snap: 'collapsed'|'mid'|'full') => void,
@@ -20,19 +22,15 @@ export default function PlannerBottomSheet({
   className = "",
 }) {
   const dragRef = useRef({ startY: 0, startH: 0, dragging: false, lastY: 0, lastT: 0 });
+  const scrollRef = useRef(null);
   const [dragOffset, setDragOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
 
-  const measureSnaps = useCallback(() => {
-    const vh = typeof window !== "undefined" ? window.innerHeight : 844;
-    return {
-      collapsed: 72,
-      mid: Math.round(Math.min(vh * 0.48, 420)),
-      full: Math.round(Math.min(vh * 0.88, vh - 72)),
-    };
-  }, []);
+  const measureSnaps = useCallback(() => measurePlannerSheetSnaps(window.innerHeight), []);
 
-  const [snaps, setSnaps] = useState(measureSnaps);
+  const [snaps, setSnaps] = useState(() =>
+    typeof window !== "undefined" ? measurePlannerSheetSnaps(window.innerHeight) : measurePlannerSheetSnaps()
+  );
 
   useEffect(() => {
     const onResize = () => setSnaps(measureSnaps());
@@ -144,7 +142,11 @@ export default function PlannerBottomSheet({
         ) : null}
       </div>
       {snap !== "collapsed" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 sm:px-4 sm:pb-4">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain px-3 pb-3 sm:px-4 sm:pb-4"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
           {children}
         </div>
       ) : null}

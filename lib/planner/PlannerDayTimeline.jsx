@@ -61,7 +61,7 @@ export default function PlannerDayTimeline({
             return (
               <div
                 key={`leg-${row.beforeIndex}`}
-                className="flex justify-center py-2"
+                className="flex justify-center py-3"
                 aria-hidden
               >
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-orange-tint px-3 py-1 text-[11px] font-medium text-brand-orange-ink ring-1 ring-brand-orange-tint">
@@ -85,7 +85,7 @@ export default function PlannerDayTimeline({
           const locationLabel = location || cityLabel;
 
           return (
-            <div key={`act-${id}`} id={`planner-act-${id}`} className="py-1">
+            <div key={`act-${id}`} id={`planner-act-${id}`} className="py-2">
               <div
                 className={`overflow-hidden rounded-xl bg-white transition ${
                   mapSelected

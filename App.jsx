@@ -174,7 +174,7 @@ import {
 } from "./OnboardingTour.jsx";
 import LazyTripMap from "./lib/map/LazyTripMap.jsx";
 import TripMapActivitySheet from "./lib/map/TripMapActivitySheet.jsx";
-import PlannerBottomSheet from "./lib/ui/PlannerBottomSheet.jsx";
+import PlannerMobileSheetLayout from "./lib/ui/PlannerMobileSheetLayout.jsx";
 import {
   buildPlannerMapActivities,
   plannerDayIndexForDate,
@@ -14953,49 +14953,41 @@ function PlannerView({
       {!resolvedTrip ? (
         classicPlannerGrid
       ) : !isDesktopPlanner ? (
-        <div className="relative -mx-1 flex min-h-[calc(100dvh-var(--app-header-clearance,4rem)-14rem)] flex-col">
-          {sheetSnap !== "full" ? (
-            <div className="absolute inset-0 min-h-[240px]">{plannerMapNode}</div>
-          ) : null}
-          <PlannerBottomSheet
-            snap={sheetSnap}
-            onSnapChange={setSheetSnap}
-            collapsedSummary={t("planner.sheetDaySummary", {
-              date: formatDate(selectedDate),
-              n: dayActivities.length,
-            })}
-          >
-            {sheetMapActivityResolved ? (
-              <TripMapActivitySheet
-                embedded
-                activity={sheetMapActivityResolved}
-                cityLabel={tripCityLabel}
-                onClose={() => handleMapActivitySelect(null)}
-              />
-            ) : (
-              <div className="space-y-4">
-                {renderPlannerCalendar(sheetSnap === "mid")}
-                {sheetSnap === "mid" || sheetSnap === "full" ? renderDayActivityList(true) : null}
-              </div>
-            )}
-          </PlannerBottomSheet>
-          {sheetSnap === "collapsed" || sheetSnap === "mid" ? (
-            <button
-              type="button"
-              onClick={openAddActivityModal}
-              className={`pointer-events-auto absolute right-4 z-40 flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-white shadow-lg ${BRAND_BLUE_BTN_CLASS}`}
-              style={{
-                bottom:
-                  sheetSnap === "collapsed"
-                    ? "calc(72px + max(12px, env(safe-area-inset-bottom, 0px)))"
-                    : "calc(min(48vh, 420px) + max(12px, env(safe-area-inset-bottom, 0px)))",
-              }}
-              aria-label={t("planner.addActivity")}
-            >
-              <Plus size={18} strokeWidth={2.5} aria-hidden />
-            </button>
-          ) : null}
-        </div>
+        <PlannerMobileSheetLayout
+          sheetSnap={sheetSnap}
+          onSnapChange={setSheetSnap}
+          collapsedSummary={t("planner.sheetDaySummary", {
+            date: formatDate(selectedDate),
+            n: dayActivities.length,
+          })}
+          mapNode={plannerMapNode}
+          fab={
+            sheetSnap === "collapsed" || sheetSnap === "mid" ? (
+              <button
+                type="button"
+                onClick={openAddActivityModal}
+                className={`flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-white shadow-lg ${BRAND_BLUE_BTN_CLASS}`}
+                aria-label={t("planner.addActivity")}
+              >
+                <Plus size={18} strokeWidth={2.5} aria-hidden />
+              </button>
+            ) : null
+          }
+        >
+          {sheetMapActivityResolved ? (
+            <TripMapActivitySheet
+              embedded
+              activity={sheetMapActivityResolved}
+              cityLabel={tripCityLabel}
+              onClose={() => handleMapActivitySelect(null)}
+            />
+          ) : (
+            <div className="space-y-5 pb-1">
+              {renderPlannerCalendar(sheetSnap === "mid")}
+              {sheetSnap === "mid" || sheetSnap === "full" ? renderDayActivityList(true) : null}
+            </div>
+          )}
+        </PlannerMobileSheetLayout>
       ) : (
         <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
           <div className="min-w-0 space-y-4 lg:sticky lg:top-[var(--app-header-clearance,4rem)] lg:self-start">

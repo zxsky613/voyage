@@ -12,6 +12,10 @@ const isTripsCompactPreview =
   import.meta.env.DEV &&
   new URLSearchParams(window.location.search).get("preview") === "trips-compact";
 
+const isPlannerSheetPreview =
+  import.meta.env.DEV &&
+  new URLSearchParams(window.location.search).get("preview") === "planner-sheet";
+
 async function mount() {
   const root = ReactDOM.createRoot(document.getElementById("root"));
   if (isTripsCompactPreview) {
@@ -20,6 +24,17 @@ async function mount() {
       <React.StrictMode>
         <I18nProvider>
           <TripsCompactPreview />
+        </I18nProvider>
+      </React.StrictMode>
+    );
+    return;
+  }
+  if (isPlannerSheetPreview) {
+    const { default: PlannerSheetPreview } = await import("./lib/ui/PlannerSheetPreview.jsx");
+    root.render(
+      <React.StrictMode>
+        <I18nProvider>
+          <PlannerSheetPreview />
         </I18nProvider>
       </React.StrictMode>
     );
