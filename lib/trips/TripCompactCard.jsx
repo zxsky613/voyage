@@ -3,12 +3,12 @@ import { useI18n } from "../../i18n/I18nContext.jsx";
 import { UiLocalizedTripTitle } from "../../i18n/userContentTranslate.jsx";
 import { formatTripDate } from "./formatTripDate.js";
 import TripCardMenu from "./TripCardMenu.jsx";
+import TripHeroImage from "./TripHeroImage.jsx";
 
 /**
  * Carte voyage horizontale compacte (~100px).
  * @param {{
  *   trip: object,
- *   CityImage: React.ComponentType<{ title: string, frameClassName?: string }>,
  *   onOpen: (trip: object) => void,
  *   onShare?: (trip: object) => void,
  *   onEdit?: (trip: object) => void,
@@ -20,7 +20,6 @@ import TripCardMenu from "./TripCardMenu.jsx";
  */
 export default function TripCompactCard({
   trip,
-  CityImage,
   onOpen,
   onShare,
   onEdit,
@@ -54,7 +53,7 @@ export default function TripCompactCard({
             muted ? "grayscale" : ""
           } [&_img]:h-full [&_img]:w-full [&_img]:object-cover`}
         >
-          <CityImage title={trip.title} frameClassName="rounded-none" />
+          <TripHeroImage trip={trip} frameClassName="rounded-none" />
         </div>
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 px-3 py-2.5 pr-10">
           <h3 className="truncate font-display text-[0.92rem] font-medium uppercase tracking-[0.06em] text-slate-900">

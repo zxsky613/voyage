@@ -647,7 +647,7 @@ export const translations = {
       memories: "Souvenirs",
       badgeInProgress: "En cours",
       badgeUpcoming: "À venir",
-      badgePast: "Passés",
+      badgePast: "Passé",
       noUpcomingList: "Aucun voyage à venir.",
       noMemories: "Aucun souvenir.",
       nowSectionHint: "Voyages dont les dates incluent aujourd'hui.",

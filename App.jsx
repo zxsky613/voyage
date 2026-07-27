@@ -213,6 +213,7 @@ import {
 import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
 import AllTripsView from "./lib/trips/AllTripsView.jsx";
 import { classifyTrips } from "./lib/trips/classifyTrips.js";
+import { writeTripHeroCache, clearTripHeroCache } from "./lib/trips/tripHeroCache.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -14274,11 +14275,15 @@ function DestinationGuideView({
                   };
                 });
                 try {
+                  const heroUrl = String(
+                    displayGuide.landscapeImageUrl || displayGuide.imageUrl || ""
+                  ).trim();
                   const ok = await onCreateTrip({
                     title: String(displayGuide.city || ""),
                     destination: String(displayGuide.city || ""),
                     start_date: startDate,
                     end_date: endDate,
+                    hero_image_url: heroUrl,
                     selectedActivitiesWithSchedule,
                     selectedActivities: selectedActivitiesWithSchedule.map((r) => r.title),
                   });
@@ -17432,6 +17437,10 @@ export default function App() {
         const { data: insertedRows, error } = await supabase.from("trips").insert(body).select("id");
         if (!error) {
           const newTripId = String(insertedRows?.[0]?.id || "").trim();
+          const heroFromPayload = String(payload?.hero_image_url || "").trim();
+          if (newTripId && /^https?:\/\//i.test(heroFromPayload)) {
+            writeTripHeroCache(newTripId, heroFromPayload);
+          }
           const withSchedule = Array.isArray(payload?.selectedActivitiesWithSchedule)
             ? payload.selectedActivitiesWithSchedule
                 .map((row) => {
@@ -17513,7 +17522,11 @@ export default function App() {
           }
 
           {
-            const optimisticTrip = { ...body, id: newTripId };
+            const optimisticTrip = {
+              ...body,
+              id: newTripId,
+              ...(heroFromPayload ? { hero_image_url: heroFromPayload } : {}),
+            };
             setTrips((prev) => [...(prev || []), optimisticTrip]);
             const tripStart = toYMD(body.start_date, getTodayStr());
             if (newTripId) {
@@ -18268,6 +18281,7 @@ export default function App() {
     setBudgetDetailTrip((t) => (t && String(t.id) === idStr ? null : t));
     setTripToDelete(null);
     setDeletingTrip(false);
+    clearTripHeroCache(idStr);
 
     // Suppression serveur en arrière-plan (enfants en parallèle)
     try {
@@ -18424,7 +18438,6 @@ export default function App() {
         {activeTab === "trips" ? (
           <AllTripsView
             trips={trips}
-            CityImage={CityImage}
             EmptyInvite={AiEmptyInvite}
             onOpenTrip={(trip) => {
               openPlannerToday(trip);
