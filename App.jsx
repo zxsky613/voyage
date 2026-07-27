@@ -211,6 +211,10 @@ import {
   filterExpensesForTrip,
 } from "./lib/budget/expenseSources.js";
 import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
+import {
+  DELETE_ACCOUNT_RPC_REQUIRED_NOTICE,
+  runDeleteMyAccount,
+} from "./lib/account/deleteMyAccountFlow.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -17053,48 +17057,24 @@ export default function App() {
       const accessToken = String(session?.access_token || "");
       if (!userId || !accessToken) throw new Error("Session invalide.");
 
-      // 1) Delete user-owned trips data first.
-      try {
-        const { data: ownedTrips } = await supabase
-          .from("trips")
-          .select("id")
-          .eq("owner_id", userId);
-        const ids = (ownedTrips || []).map((t) => t.id).filter(Boolean);
-        if (ids.length > 0) {
-          try {
-            await supabase.from("activities").delete().in("trip_id", ids);
-          } catch (_e) {
-            // ignore child cleanup failure
+      // Fail closed: never wipe owned trips before Auth deletion succeeds.
+      // Atomic cleanup lives in public.delete_my_account (SECURITY DEFINER).
+      const result = await runDeleteMyAccount({
+        rpcDeleteAccount: async () => {
+          const { error: rpcErr } = await supabase.rpc("delete_my_account");
+          if (rpcErr) {
+            return {
+              ok: false,
+              error: String(rpcErr.message || DELETE_ACCOUNT_RPC_REQUIRED_NOTICE),
+            };
           }
-          await supabase.from("trips").delete().in("id", ids);
-        }
-      } catch (_e) {
-        // If schema differs, continue with auth deletion attempt.
-      }
+          return { ok: true };
+        },
+      });
 
-      // 2) Try deleting auth user through RPC (recommended pattern).
-      let authDeleted = false;
-      try {
-        const { error: rpcErr } = await supabase.rpc("delete_my_account");
-        if (!rpcErr) authDeleted = true;
-      } catch (_e) {
-        // continue fallback
-      }
-
-      // 3) Fallback: direct Auth endpoint delete.
-      if (!authDeleted) {
-        try {
-          const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-            method: "DELETE",
-            headers: {
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${accessToken}`,
-            },
-          });
-          authDeleted = !!resp.ok;
-        } catch (_e) {
-          authDeleted = false;
-        }
+      if (!result.authDeleted) {
+        setNotice(String(result.error || DELETE_ACCOUNT_RPC_REQUIRED_NOTICE));
+        return;
       }
 
       await supabase.auth.signOut();
@@ -17109,18 +17089,12 @@ export default function App() {
       }
       setActiveTab("trips");
       setAccountOpen(false);
-      if (authDeleted) {
-        setNotice("");
-      } else {
-        setNotice(
-          "Compte deconnecte et donnees voyage nettoyees. Pour suppression definitive Auth, active la fonction SQL delete_my_account."
-        );
-      }
+      setNotice("");
     } catch (e) {
       setNotice(
         String(
           e?.message ||
-            "Suppression de compte non disponible. Active-la via backend/Edge Function."
+            DELETE_ACCOUNT_RPC_REQUIRED_NOTICE
         )
       );
     } finally {
