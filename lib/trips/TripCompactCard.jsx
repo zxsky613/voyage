@@ -40,8 +40,8 @@ export default function TripCompactCard({
 
   return (
     <article
-      className={`group relative flex h-[104px] min-h-[100px] w-full items-stretch overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-100/80 transition hover:-translate-y-px hover:shadow-md ${
-        muted ? "opacity-75 grayscale-[0.35]" : ""
+      className={`group relative flex h-[104px] min-h-[100px] w-full max-w-full items-stretch overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-100/80 transition hover:-translate-y-px hover:shadow-md ${
+        muted ? "opacity-90" : ""
       }`}
     >
       <button
@@ -49,7 +49,11 @@ export default function TripCompactCard({
         onClick={() => onOpen(trip)}
         className="flex min-w-0 flex-1 items-stretch text-left"
       >
-        <div className="relative h-[104px] w-[100px] shrink-0 overflow-hidden [&_img]:h-full [&_img]:w-full [&_img]:object-cover">
+        <div
+          className={`relative h-[104px] w-[96px] shrink-0 overflow-hidden sm:w-[100px] ${
+            muted ? "grayscale" : ""
+          } [&_img]:h-full [&_img]:w-full [&_img]:object-cover`}
+        >
           <CityImage title={trip.title} frameClassName="rounded-none" />
         </div>
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 px-3 py-2.5 pr-10">

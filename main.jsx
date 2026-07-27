@@ -8,12 +8,32 @@ import { resetScrollLockOnBoot } from "./lib/ui/resetScrollLock.js";
 
 resetScrollLockOnBoot();
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <I18nProvider>
-        <App />
-      </I18nProvider>
-    </ErrorBoundary>
-  </React.StrictMode>
-);
+const isTripsCompactPreview =
+  import.meta.env.DEV &&
+  new URLSearchParams(window.location.search).get("preview") === "trips-compact";
+
+async function mount() {
+  const root = ReactDOM.createRoot(document.getElementById("root"));
+  if (isTripsCompactPreview) {
+    const { default: TripsCompactPreview } = await import("./lib/trips/TripsCompactPreview.jsx");
+    root.render(
+      <React.StrictMode>
+        <I18nProvider>
+          <TripsCompactPreview />
+        </I18nProvider>
+      </React.StrictMode>
+    );
+    return;
+  }
+  root.render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <I18nProvider>
+          <App />
+        </I18nProvider>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}
+
+void mount();

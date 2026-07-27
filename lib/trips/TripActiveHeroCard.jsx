@@ -26,8 +26,8 @@ export default function TripActiveHeroCard({
   const { t } = useI18n();
 
   return (
-    <article className="group w-full min-w-0">
-      <div className="relative aspect-[16/10] w-full min-w-0 overflow-hidden rounded-[2rem] shadow-2xl ring-1 ring-slate-200/40 sm:aspect-[2/1]">
+    <article className="group w-full min-w-0 max-w-full">
+      <div className="relative aspect-[4/3] max-h-[min(52vw,240px)] w-full min-w-0 overflow-hidden rounded-[2rem] shadow-2xl ring-1 ring-slate-200/40 sm:aspect-[16/10] sm:max-h-none">
         <button type="button" onClick={() => onOpen(trip)} className="block h-full w-full text-left">
           <div className="h-full w-full overflow-hidden rounded-[2rem] [&_img]:transition-transform [&_img]:duration-500 [&_img]:ease-out group-hover:[&_img]:scale-[1.03]">
             <CityImage title={trip.title} frameClassName="rounded-[2rem]" />

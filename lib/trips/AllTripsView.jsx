@@ -50,7 +50,7 @@ export default function AllTripsView({
   const otherInProgress = sections.now?.slice(1) || [];
 
   return (
-    <section className="space-y-6">
+    <section className="mx-auto w-full max-w-[480px] space-y-5 px-0 sm:space-y-6">
       <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
         <div className="mb-3 flex items-center justify-between pl-1">
           <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-emerald-700">
