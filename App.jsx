@@ -211,6 +211,8 @@ import {
   filterExpensesForTrip,
 } from "./lib/budget/expenseSources.js";
 import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
+import AllTripsView from "./lib/trips/AllTripsView.jsx";
+import { classifyTrips } from "./lib/trips/classifyTrips.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -7474,36 +7476,6 @@ async function fileToAvatarDataUrl(file) {
   return compressed;
 }
 
-function classifyTrips(list) {
-  const now = [];
-  const upcoming = [];
-  const memories = [];
-  const sortByChronology = (a, b) => {
-    const aStart = toYMD(a?.start_date, "9999-12-31");
-    const bStart = toYMD(b?.start_date, "9999-12-31");
-    if (aStart !== bStart) return aStart.localeCompare(bStart);
-
-    const aEnd = toYMD(a?.end_date, "9999-12-31");
-    const bEnd = toYMD(b?.end_date, "9999-12-31");
-    if (aEnd !== bEnd) return aEnd.localeCompare(bEnd);
-
-    return String(a?.title || "").localeCompare(String(b?.title || ""));
-  };
-
-  (list || []).forEach((trip) => {
-    const start = toYMD(trip?.start_date, "");
-    const end = toYMD(trip?.end_date, "");
-    const today = getTodayStr();
-    if (start && end && start <= today && end >= today) now.push(trip);
-    else if (start && start > today) upcoming.push(trip);
-    else memories.push(trip);
-  });
-  now.sort(sortByChronology);
-  upcoming.sort(sortByChronology);
-  memories.sort(sortByChronology);
-  return { now, upcoming, memories };
-}
-
 async function resolveStableCityImageForCard(canonicalCity) {
   const c = String(canonicalCity || "").trim();
   if (!c) return "";
@@ -14568,102 +14540,6 @@ function DestinationGuideView({
   );
 }
 
-function AllTripsView({ trips, onOpenTrip, onShareTrip, onEditTrip, onDeleteTrip, onStartAiCreate }) {
-  const { t } = useI18n();
-  const sections = classifyTrips(trips);
-  if (!trips?.length) {
-    return (
-      <section>
-        <AiEmptyInvite variant="trips" onCta={onStartAiCreate} />
-      </section>
-    );
-  }
-  return (
-    <section className="space-y-8">
-      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
-        <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-emerald-700">
-            {t("home.now")}
-          </h2>
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-emerald-700">
-            {t("trips.badgeInProgress")}
-          </span>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {sections.now && sections.now.length > 0
-            ? sections.now.map((trip) => (
-                <TripCard
-                  key={String(trip.id)}
-                  trip={trip}
-                  onOpen={onOpenTrip}
-                  onShare={onShareTrip}
-                  onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
-                  isNow
-                  muted={false}
-                />
-              ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("home.noCurrentTrip")}</p>}
-        </div>
-      </div>
-
-      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
-        <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-brand-blue-deep">
-            {t("home.upcoming")}
-          </h2>
-          <span className="rounded-full bg-brand-blue-tint px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-brand-blue-deep">
-            {t("trips.badgeUpcoming")}
-          </span>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {sections.upcoming && sections.upcoming.length > 0
-            ? sections.upcoming.map((trip) => (
-                <TripCard
-                  key={String(trip.id)}
-                  trip={trip}
-                  onOpen={onOpenTrip}
-                  onShare={onShareTrip}
-                  onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
-                  isNow={false}
-                  muted={false}
-                />
-              ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("trips.noUpcomingList")}</p>}
-        </div>
-      </div>
-
-      <div className="rounded-[2rem] bg-white/92 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.07)]">
-        <div className="mb-2.5 flex items-center justify-between pl-3">
-          <h2 className="font-display text-xs font-normal uppercase tracking-[0.32em] text-slate-600">
-            {t("trips.memories")}
-          </h2>
-          <span className="rounded-full bg-slate-200 px-3 py-1 text-[10px] font-normal uppercase tracking-[0.18em] text-slate-600">
-            {t("trips.badgePast")}
-          </span>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {sections.memories && sections.memories.length > 0
-            ? sections.memories.map((trip) => (
-                <TripCard
-                  key={String(trip.id)}
-                  trip={trip}
-                  onOpen={onOpenTrip}
-                  onShare={onShareTrip}
-                  onEdit={onEditTrip}
-                  onDelete={onDeleteTrip}
-                  isNow={false}
-                  muted
-                />
-              ))
-            : <p className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">{t("trips.noMemories")}</p>}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function PlannerView({
   selectedDate,
   setSelectedDate,
@@ -18548,6 +18424,8 @@ export default function App() {
         {activeTab === "trips" ? (
           <AllTripsView
             trips={trips}
+            CityImage={CityImage}
+            EmptyInvite={AiEmptyInvite}
             onOpenTrip={(trip) => {
               openPlannerToday(trip);
             }}
