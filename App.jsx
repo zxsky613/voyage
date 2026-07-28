@@ -180,7 +180,11 @@ import {
   plannerDayIndexForDate,
   addDaysToYmd,
 } from "./lib/planner/buildPlannerMapActivities.js";
+import { buildPlannerTripDayGroups } from "./lib/planner/buildPlannerTripDayGroups.js";
 import PlannerDayTimeline from "./lib/planner/PlannerDayTimeline.jsx";
+import PlannerDayOverviewList from "./lib/planner/PlannerDayOverviewList.jsx";
+import PlannerTimelineScopeToggle from "./lib/planner/PlannerTimelineScopeToggle.jsx";
+import PlannerMobileSheetContent from "./lib/planner/PlannerMobileSheetContent.jsx";
 import {
   buildPlannerActivityImageCacheKey,
   clearItineraryBulletImageCacheEntry,
@@ -14672,7 +14676,8 @@ function PlannerView({
     });
   };
 
-  const [mapView, setMapView] = useState("day");
+  const [timelineScope, setTimelineScope] = useState("trip");
+  const mapView = timelineScope === "trip" ? "trip" : "day";
   const [selectedMapActivityId, setSelectedMapActivityId] = useState("");
   const [sheetSnap, setSheetSnap] = useState("mid");
   const [sheetMapActivity, setSheetMapActivity] = useState(null);
@@ -14704,6 +14709,21 @@ function PlannerView({
     [resolvedTrip, selectedDateKey]
   );
 
+  const tripDayGroups = useMemo(
+    () =>
+      resolvedTrip
+        ? buildPlannerTripDayGroups({
+            activities,
+            tripId: selectedTripIdSafe,
+            tripStartYmd: resolvedTrip.start_date,
+            tripEndYmd: resolvedTrip.end_date,
+            cityLabel: tripCityLabel,
+          })
+        : [],
+    [activities, selectedTripIdSafe, resolvedTrip, tripCityLabel]
+  );
+
+
   const destinationCenter = usePlannerDestinationCenter(tripCityLabel, Boolean(resolvedTrip), language);
 
   const sheetMapActivityResolved = useMemo(() => {
@@ -14719,13 +14739,34 @@ function PlannerView({
       if (value) {
         const act = plannerMapActivities.find((a) => String(a.id) === value) || null;
         setSheetMapActivity(act);
-        setMapView("day");
+        if (act && resolvedTrip) {
+          const ymd = addDaysToYmd(resolvedTrip.start_date, act.dayIndex);
+          if (onSelectDate) onSelectDate(ymd);
+          else setSelectedDate(ymd);
+          setTimelineScope("day");
+        }
         setSheetSnap((prev) => (prev === "collapsed" ? "mid" : prev));
       } else {
         setSheetMapActivity(null);
       }
     },
-    [plannerMapActivities]
+    [plannerMapActivities, resolvedTrip, onSelectDate, setSelectedDate]
+  );
+
+  const handleOverviewDaySelect = useCallback(
+    (dayIndex, dateKey) => {
+      const ymd =
+        String(dateKey || "").trim()
+        || (resolvedTrip ? addDaysToYmd(resolvedTrip.start_date, dayIndex) : "");
+      if (ymd) {
+        if (onSelectDate) onSelectDate(ymd);
+        else setSelectedDate(ymd);
+      }
+      setTimelineScope("day");
+      setSelectedMapActivityId("");
+      setSheetMapActivity(null);
+    },
+    [resolvedTrip, onSelectDate, setSelectedDate]
   );
 
   const handleMapSelectDay = useCallback(
@@ -14734,7 +14775,7 @@ function PlannerView({
       const ymd = addDaysToYmd(resolvedTrip.start_date, dayIndex);
       if (onSelectDate) onSelectDate(ymd);
       else setSelectedDate(ymd);
-      setMapView("day");
+      setTimelineScope("day");
       setSelectedMapActivityId("");
       setSheetMapActivity(null);
     },
@@ -14742,16 +14783,22 @@ function PlannerView({
   );
 
   const handleViewWholeTrip = useCallback(() => {
-    setMapView("trip");
+    setTimelineScope("trip");
     setSelectedMapActivityId("");
     setSheetMapActivity(null);
   }, []);
 
   useEffect(() => {
-    setMapView("day");
+    setTimelineScope("trip");
     setSelectedMapActivityId("");
     setSheetMapActivity(null);
-  }, [selectedDateKey, selectedTripIdSafe]);
+  }, [selectedTripIdSafe]);
+
+  useEffect(() => {
+    if (timelineScope !== "day") return;
+    setSelectedMapActivityId("");
+    setSheetMapActivity(null);
+  }, [selectedDateKey, timelineScope]);
 
   useEffect(() => {
     if (!selectedMapActivityId || sheetSnap === "collapsed" || isDesktopPlanner) return undefined;
@@ -14817,6 +14864,7 @@ function PlannerView({
               onClick={() => {
                 if (onSelectDate) onSelectDate(dateStr);
                 else setSelectedDate(dateStr);
+                setTimelineScope("day");
               }}
               className={`relative rounded-lg border text-xs transition-all duration-150 sm:rounded-xl sm:text-sm ${compact ? "h-9" : "h-10 sm:h-12"} ${dayClass}`}
               style={selected ? { backgroundColor: ACCENT } : undefined}
@@ -14848,6 +14896,21 @@ function PlannerView({
   );
 
   const renderDayActivityList = (showHeading = true) => {
+    if (timelineScope === "trip" && resolvedTrip) {
+      return (
+        <PlannerDayOverviewList
+          activities={activities}
+          tripId={selectedTripIdSafe}
+          tripStartYmd={resolvedTrip.start_date}
+          tripEndYmd={resolvedTrip.end_date}
+          cityLabel={tripCityLabel}
+          formatDate={formatDate}
+          selectedDayIndex={selectedDayIndex}
+          onSelectDay={handleOverviewDaySelect}
+        />
+      );
+    }
+
     if (!isDesktopPlanner) {
       return (
         <PlannerDayTimeline
@@ -14930,6 +14993,18 @@ function PlannerView({
     />
   ) : null;
 
+  const plannerMobileAddButton =
+    sheetSnap !== "full" ? (
+      <button
+        type="button"
+        onClick={openAddActivityModal}
+        className={`flex h-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-white shadow-md ${BRAND_BLUE_BTN_CLASS}`}
+        aria-label={t("planner.addActivity")}
+      >
+        <Plus size={18} strokeWidth={2.5} aria-hidden />
+      </button>
+    ) : null;
+
   const classicPlannerGrid = (
     <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)] lg:items-start">
       <div className="order-1 min-w-0 lg:order-1 lg:justify-self-start lg:w-full">{renderPlannerCalendar(false)}</div>
@@ -14956,23 +15031,16 @@ function PlannerView({
         <PlannerMobileSheetLayout
           sheetSnap={sheetSnap}
           onSnapChange={setSheetSnap}
-          collapsedSummary={t("planner.sheetDaySummary", {
-            date: formatDate(selectedDate),
-            n: dayActivities.length,
-          })}
-          mapNode={plannerMapNode}
-          fab={
-            sheetSnap === "collapsed" || sheetSnap === "mid" ? (
-              <button
-                type="button"
-                onClick={openAddActivityModal}
-                className={`flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-white shadow-lg ${BRAND_BLUE_BTN_CLASS}`}
-                aria-label={t("planner.addActivity")}
-              >
-                <Plus size={18} strokeWidth={2.5} aria-hidden />
-              </button>
-            ) : null
+          collapsedSummary={
+            timelineScope === "trip"
+              ? t("planner.sheetOverviewSummary", { days: tripDayGroups.length })
+              : t("planner.sheetDaySummary", {
+                  date: formatDate(selectedDate),
+                  n: dayActivities.length,
+                })
           }
+          mapNode={plannerMapNode}
+          headerAction={plannerMobileAddButton}
         >
           {sheetMapActivityResolved ? (
             <TripMapActivitySheet
@@ -14982,10 +15050,38 @@ function PlannerView({
               onClose={() => handleMapActivitySelect(null)}
             />
           ) : (
-            <div className="space-y-5 pb-1">
-              {renderPlannerCalendar(sheetSnap === "mid")}
-              {sheetSnap === "mid" || sheetSnap === "full" ? renderDayActivityList(true) : null}
-            </div>
+            <PlannerMobileSheetContent
+              timelineScope={timelineScope}
+              onTimelineScopeChange={setTimelineScope}
+              sheetSnap={sheetSnap}
+              headerAction={plannerMobileAddButton}
+              showCalendar={timelineScope === "day" && sheetSnap === "mid"}
+              renderCalendar={() => renderPlannerCalendar(true)}
+              onSelectOverviewDay={handleOverviewDaySelect}
+              overviewProps={{
+                activities,
+                tripId: selectedTripIdSafe,
+                tripStartYmd: resolvedTrip.start_date,
+                tripEndYmd: resolvedTrip.end_date,
+                cityLabel: tripCityLabel,
+                formatDate,
+                selectedDayIndex,
+              }}
+              dayProps={{
+                selectedDate,
+                formatDate,
+                activities: dayActivities,
+                plannerMapActivities,
+                dayIndex: selectedDayIndex,
+                selectedDayIndex,
+                cityLabel: tripCityLabel,
+                selectedActivityId: selectedMapActivityId,
+                onMapFocus: handleMapActivitySelect,
+                onPhotoResolved,
+                resolveActivityPlaceImage,
+                isMealOrRest: isItineraryMealOrRestBulletClient,
+              }}
+            />
           )}
         </PlannerMobileSheetLayout>
       ) : (
@@ -14997,13 +15093,36 @@ function PlannerView({
             </div>
           </div>
           <div className="min-w-0 px-0 py-1 sm:px-1">
+            {timelineScope === "day" ? (
+              <button
+                type="button"
+                onClick={() => setTimelineScope("trip")}
+                className="mb-4 inline-flex min-h-[40px] items-center gap-2 rounded-xl px-2 py-2 text-sm font-medium text-brand-blue-deep transition hover:bg-slate-50"
+              >
+                ← {t("planner.backToOverview")}
+              </button>
+            ) : null}
+            <PlannerTimelineScopeToggle
+              scope={timelineScope}
+              onScopeChange={setTimelineScope}
+              className="mb-4"
+            />
             <button
               onClick={openAddActivityModal}
               className={`mb-4 rounded-2xl px-4 py-2.5 text-sm text-white ${BRAND_BLUE_BTN_CLASS}`}
             >
               {t("planner.addActivity")}
             </button>
-            {renderDayActivityList(true)}
+            {timelineScope === "day" ? (
+              <>
+                <h3 className="mb-3 break-all text-xs font-normal uppercase tracking-[0.32em] text-slate-500">
+                  {formatDate(selectedDate)}
+                </h3>
+                {renderDayActivityList(false)}
+              </>
+            ) : (
+              renderDayActivityList(false)
+            )}
           </div>
         </div>
       )}

@@ -4,40 +4,46 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useI18n } from "../../i18n/I18nContext.jsx";
 import TripMapActivitySheet from "./TripMapActivitySheet.jsx";
 import TripMapDayLegend from "./TripMapDayLegend.jsx";
-import { registerActivityBalloonImages, ACTIVITY_BALLOON_ORANGE } from "./activityBalloonMarker.js";
+import { registerActivityBalloonImages, registerDayPinImages, ACTIVITY_BALLOON_ORANGE } from "./activityBalloonMarker.js";
 import {
   activitiesToPointGeoJSON,
+  activitiesToOverviewPointGeoJSON,
   activitiesToRouteGeoJSON,
   computeDayCentroids,
   dayCentroidsToPointGeoJSON,
-  dayCentroidsToRouteGeoJSON,
+  dayMarkerColor,
   BRAND_BLUE,
   fitMapToActivities,
+  fitMapToTripDayLayout,
   getMapStyleUrl,
 } from "./tripMapHelpers.js";
+import { buildDayMarkerSpiderLayout } from "./dayMarkerSpiderfy.js";
 
 const SOURCE_ID = "trip-activities";
 const DAY_SOURCE_ID = "trip-days";
+const DAY_SPIDER_SOURCE_ID = "trip-day-spider-lines";
 const ROUTE_SOURCE_ID = "trip-route";
 const CLUSTER_LAYER = "trip-clusters";
 const CLUSTER_COUNT_LAYER = "trip-cluster-count";
 const BALLOON_LAYER = "trip-activity-balloon";
 const POINT_FALLBACK_LAYER = "trip-unclustered-point";
-const DAY_LAYER = "trip-day-markers";
-const DAY_LABEL_LAYER = "trip-day-labels";
+const OVERVIEW_LABEL_LAYER = "trip-overview-activity-label";
+const DAY_PIN_LAYER = "trip-day-pins";
+const DAY_SPIDER_LAYER = "trip-day-spider-lines";
 const ROUTE_LAYER = "trip-route-line";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
 /**
  * Carte d'itinéraire à deux niveaux :
- * - view="trip" : un marqueur numéroté par jour (centroïde) + ligne chronologique jour 1 → N
- * - view="day"  : marqueurs des activités du jour sélectionné (sheet au clic)
+ * - view="trip"     : un marqueur numéroté par jour (centroïde) + ligne chronologique jour 1 → N
+ * - view="overview" : tous les marqueurs activité, couleur par jour (planning « tout le voyage »)
+ * - view="day"        : marqueurs des activités du jour sélectionné (sheet au clic)
  * Un jour sélectionné sans coordonnée retombe sur le cadrage voyage (+ note).
  *
  * @param {{
  *   activities: Array<object>,
- *   view?: 'trip'|'day',
+ *   view?: 'trip'|'overview'|'day',
  *   selectedDayIndex: number,
  *   selectedActivityId?: string,
  *   onSelectActivity: (id: string|null) => void,
@@ -87,9 +93,15 @@ export default function TripMap({
     [mappedActivities, selectedDayIndex]
   );
 
-  const requestedDayView = view !== "trip";
+  const requestedDayView = view === "day";
+  const requestedOverviewView = view === "overview";
   // Jour demandé sans aucune coordonnée → on reste au cadrage voyage (note affichée).
-  const effectiveView = requestedDayView && dayActivities.length > 0 ? "day" : "trip";
+  const effectiveView =
+    requestedDayView && dayActivities.length > 0
+      ? "day"
+      : requestedOverviewView
+        ? "overview"
+        : "trip";
 
   const missingCount = useMemo(() => {
     const scope = requestedDayView
@@ -101,6 +113,10 @@ export default function TripMap({
   }, [activities, requestedDayView, selectedDayIndex]);
 
   const dayCentroids = useMemo(() => computeDayCentroids(mappedActivities), [mappedActivities]);
+  const dayCentroidsRef = useRef(dayCentroids);
+  dayCentroidsRef.current = dayCentroids;
+  const selectedDayIndexRef = useRef(selectedDayIndex);
+  selectedDayIndexRef.current = selectedDayIndex;
 
   const legendDays = useMemo(() => {
     const byIdx = new Map();
@@ -117,11 +133,15 @@ export default function TripMap({
     return [...byIdx.values()].sort((a, b) => a.dayIndex - b.dayIndex);
   }, [activities]);
 
-  const activityPointsData = useMemo(
-    () =>
-      effectiveView === "day" ? activitiesToPointGeoJSON(dayActivities, selectedDayIndex) : EMPTY_FC,
-    [effectiveView, dayActivities, selectedDayIndex]
-  );
+  const activityPointsData = useMemo(() => {
+    if (effectiveView === "day") {
+      return activitiesToPointGeoJSON(dayActivities, selectedDayIndex);
+    }
+    if (effectiveView === "overview") {
+      return activitiesToOverviewPointGeoJSON(mappedActivities, selectedDayIndex);
+    }
+    return EMPTY_FC;
+  }, [effectiveView, dayActivities, mappedActivities, selectedDayIndex]);
 
   const dayMarkersData = useMemo(
     () =>
@@ -133,17 +153,20 @@ export default function TripMap({
     () =>
       effectiveView === "day"
         ? activitiesToRouteGeoJSON(mappedActivities, selectedDayIndex)
-        : dayCentroidsToRouteGeoJSON(dayCentroids, selectedDayIndex),
-    [effectiveView, mappedActivities, dayCentroids, selectedDayIndex]
+        : EMPTY_FC,
+    [effectiveView, mappedActivities, selectedDayIndex]
   );
+
+  const tripOverviewFitPendingRef = useRef(false);
 
   const activityById = useMemo(() => {
     const m = new Map();
-    for (const a of dayActivities) {
+    const scope = effectiveView === "day" ? dayActivities : mappedActivities;
+    for (const a of scope) {
       m.set(String(a.id), a);
     }
     return m;
-  }, [dayActivities]);
+  }, [effectiveView, dayActivities, mappedActivities]);
 
   const activityByIdRef = useRef(activityById);
   activityByIdRef.current = activityById;
@@ -164,8 +187,19 @@ export default function TripMap({
     map.setLayoutProperty(BALLOON_LAYER, "icon-image", [
       "case",
       ["==", ["get", "id"], sid],
-      ["concat", "activity-balloon-", ["get", "label"], "-sel"],
-      ["concat", "activity-balloon-", ["get", "label"]],
+      ["get", "iconSel"],
+      ["get", "icon"],
+    ]);
+  }, []);
+
+  const applyDayPinIconLayout = useCallback((map, selDayIdx) => {
+    if (!map?.getLayer(DAY_PIN_LAYER)) return;
+    const sel = Number(selDayIdx) || 0;
+    map.setLayoutProperty(DAY_PIN_LAYER, "icon-image", [
+      "case",
+      ["==", ["get", "dayIndex"], sel],
+      ["get", "iconSel"],
+      ["get", "icon"],
     ]);
   }, []);
 
@@ -176,18 +210,112 @@ export default function TripMap({
       map.setPaintProperty(ROUTE_LAYER, "line-opacity", 0.7);
     } else {
       map.setPaintProperty(ROUTE_LAYER, "line-dasharray", [1, 0]);
-      map.setPaintProperty(ROUTE_LAYER, "line-opacity", 0.55);
+      map.setPaintProperty(ROUTE_LAYER, "line-opacity", viewMode === "overview" ? 0.45 : 0.55);
     }
   }, []);
+
+  const applyViewLayerVisibility = useCallback((map, viewMode, selId) => {
+    if (!map) return;
+    const sid = String(selId || "__none__");
+    const isDay = viewMode === "day";
+    const isOverview = viewMode === "overview";
+    const isTrip = viewMode === "trip";
+    const showActivities = isDay || isOverview;
+    const plannerMode = mode === "planner";
+
+    const setVis = (layerId, visible) => {
+      if (!map.getLayer(layerId)) return;
+      map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+    };
+
+    setVis(CLUSTER_LAYER, showActivities && !plannerMode);
+    setVis(CLUSTER_COUNT_LAYER, showActivities && !plannerMode);
+    setVis(BALLOON_LAYER, isDay);
+    setVis(POINT_FALLBACK_LAYER, isOverview || (isDay && !map.getLayer(BALLOON_LAYER)));
+    setVis(OVERVIEW_LABEL_LAYER, isOverview);
+    setVis(DAY_PIN_LAYER, isTrip);
+    setVis(DAY_SPIDER_LAYER, isTrip);
+    setVis(ROUTE_LAYER, isDay);
+
+    if (map.getLayer(POINT_FALLBACK_LAYER)) {
+      if (isOverview) {
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-color", ["get", "color"]);
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-radius", [
+          "case",
+          ["==", ["get", "id"], sid],
+          17,
+          13,
+        ]);
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-stroke-width", [
+          "case",
+          ["==", ["get", "id"], sid],
+          3,
+          2,
+        ]);
+      } else if (isDay) {
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-color", ACTIVITY_BALLOON_ORANGE);
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-radius", 14);
+        map.setPaintProperty(POINT_FALLBACK_LAYER, "circle-stroke-width", 2);
+      }
+    }
+  }, [mode]);
+
+  const updateDayMarkerLayout = useCallback((opts = {}) => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return null;
+    const daySrc = map.getSource(DAY_SOURCE_ID);
+    const spiderSrc = map.getSource(DAY_SPIDER_SOURCE_ID);
+    if (!daySrc) return null;
+
+    if (effectiveViewRef.current !== "trip") {
+      daySrc.setData(dayMarkersData);
+      spiderSrc?.setData(EMPTY_FC);
+      return null;
+    }
+
+    const centroids = dayCentroidsRef.current;
+    if (!centroids.length) {
+      daySrc.setData(EMPTY_FC);
+      spiderSrc?.setData(EMPTY_FC);
+      return null;
+    }
+
+    const layout = buildDayMarkerSpiderLayout(
+      centroids,
+      selectedDayIndexRef.current,
+      (lon, lat) => map.project([lon, lat]),
+      (x, y) => map.unproject([x, y])
+    );
+    daySrc.setData(layout.markers);
+    spiderSrc?.setData(layout.leaderLines);
+
+    if (opts.fitOverview && tripOverviewFitPendingRef.current) {
+      if (layout.spiderfied) {
+        fitMapToTripDayLayout(map, layout, centroids, { padding: 40, animate: false });
+      } else {
+        fitMapToActivities(map, centroids, { padding: 40, uniformPadding: true, animate: false });
+      }
+      tripOverviewFitPendingRef.current = false;
+    }
+
+    return layout;
+  }, [mapReady, dayMarkersData]);
 
   const syncSources = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.getSource(SOURCE_ID)?.setData(activityPointsData);
-    map.getSource(DAY_SOURCE_ID)?.setData(dayMarkersData);
+    if (effectiveView === "trip") {
+      updateDayMarkerLayout();
+    } else {
+      map.getSource(DAY_SOURCE_ID)?.setData(dayMarkersData);
+      map.getSource(DAY_SPIDER_SOURCE_ID)?.setData(EMPTY_FC);
+    }
     map.getSource(ROUTE_SOURCE_ID)?.setData(routeData);
     applyRouteStyle(map, effectiveView);
     applyBalloonIconLayout(map, selectedActivityId);
+    applyDayPinIconLayout(map, selectedDayIndex);
+    applyViewLayerVisibility(map, effectiveView, selectedActivityId);
   }, [
     mapReady,
     activityPointsData,
@@ -195,25 +323,98 @@ export default function TripMap({
     routeData,
     effectiveView,
     selectedActivityId,
+    selectedDayIndex,
     applyRouteStyle,
     applyBalloonIconLayout,
+    applyDayPinIconLayout,
+    applyViewLayerVisibility,
+    updateDayMarkerLayout,
   ]);
 
   useEffect(() => {
     syncSources();
   }, [syncSources]);
 
-  // En vue voyage, fitTargets = toutes les activités mappées : identité stable,
-  // donc pas de re-fit quand le jour actif change au scroll de la liste.
-  const fitTargets = effectiveView === "day" ? dayActivities : mappedActivities;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveView !== "trip") return undefined;
+    const specs = dayCentroids.map((c) => ({
+      dayIndex: c.dayIndex,
+      dayNum: c.dayNum ?? c.dayIndex + 1,
+      color: dayMarkerColor(c.dayIndex, selectedDayIndex),
+    }));
+    let cancelled = false;
+    void registerDayPinImages(map, specs, selectedDayIndex).then((ok) => {
+      if (cancelled || !ok) return;
+      applyDayPinIconLayout(map, selectedDayIndex);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mapReady, effectiveView, dayCentroids, selectedDayIndex, applyDayPinIconLayout]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    applyDayPinIconLayout(map, selectedDayIndex);
+  }, [selectedDayIndex, mapReady, applyDayPinIconLayout]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveView !== "trip") return undefined;
+
+    const onLayout = () => updateDayMarkerLayout();
+    const onResize = () => {
+      tripOverviewFitPendingRef.current = true;
+      updateDayMarkerLayout({ fitOverview: true });
+    };
+    map.on("moveend", onLayout);
+    map.on("zoomend", onLayout);
+    map.on("resize", onResize);
+    onLayout();
+
+    return () => {
+      map.off("moveend", onLayout);
+      map.off("zoomend", onLayout);
+      map.off("resize", onResize);
+    };
+  }, [mapReady, effectiveView, updateDayMarkerLayout, dayCentroids]);
+
+  useEffect(() => {
+    if (!mapReady || effectiveView !== "trip") return;
+    const map = mapRef.current;
+    if (!map) return;
+    tripOverviewFitPendingRef.current = true;
+    map.resize();
+    const timer = window.setTimeout(() => {
+      updateDayMarkerLayout({ fitOverview: true });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [mapReady, effectiveView, dayCentroids, updateDayMarkerLayout]);
+
+  const fitTargets =
+    effectiveView === "overview"
+      ? mappedActivities
+      : [];
 
   const mapPadding = mode === "planner" ? 120 : mode === "modal" ? 88 : 64;
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (!map || !mapReady || effectiveView !== "day") return;
+    if (!dayActivities.length) return;
+    fitMapToActivities(map, dayActivities, {
+      padding: 40,
+      uniformPadding: true,
+      animate: false,
+    });
+  }, [mapReady, effectiveView, selectedDayIndex, dayActivities]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveView !== "overview") return;
     if (fitTargets.length > 0) {
-      fitMapToActivities(map, fitTargets, { padding: mapPadding });
+      fitMapToActivities(map, fitTargets, { padding: mapPadding, animate: false });
       return;
     }
     const fb = fallbackCenter;
@@ -224,15 +425,15 @@ export default function TripMap({
         duration: 650,
       });
     }
-  }, [mapReady, effectiveView, fitTargets, mode, fallbackCenter, mapPadding]);
+  }, [mapReady, effectiveView, fitTargets, fallbackCenter, mapPadding]);
 
   useEffect(() => {
-    if (effectiveView !== "day") setSheetActivity(null);
+    if (effectiveView !== "day" && effectiveView !== "overview") setSheetActivity(null);
   }, [effectiveView]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || effectiveView !== "day") return;
+    if (!map || !mapReady || (effectiveView !== "day" && effectiveView !== "overview")) return;
     const sel = String(selectedActivityId || "").trim();
     if (!sel) {
       setSheetActivity(null);
@@ -268,7 +469,7 @@ export default function TripMap({
       map.addSource(SOURCE_ID, {
         type: "geojson",
         data: activityPointsData,
-        cluster: true,
+        cluster: mode !== "planner",
         clusterMaxZoom: 14,
         clusterRadius: 50,
       });
@@ -276,6 +477,11 @@ export default function TripMap({
       map.addSource(DAY_SOURCE_ID, {
         type: "geojson",
         data: dayMarkersData,
+      });
+
+      map.addSource(DAY_SPIDER_SOURCE_ID, {
+        type: "geojson",
+        data: EMPTY_FC,
       });
 
       map.addSource(ROUTE_SOURCE_ID, {
@@ -353,32 +559,47 @@ export default function TripMap({
         });
       }
 
-      applyRouteStyle(map, effectiveViewRef.current);
-
       map.addLayer({
-        id: DAY_LAYER,
-        type: "circle",
-        source: DAY_SOURCE_ID,
-        paint: {
-          "circle-color": ["get", "color"],
-          "circle-radius": 16,
-          "circle-stroke-width": 2.5,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-
-      map.addLayer({
-        id: DAY_LABEL_LAYER,
+        id: OVERVIEW_LABEL_LAYER,
         type: "symbol",
-        source: DAY_SOURCE_ID,
+        source: SOURCE_ID,
+        filter: ["!", ["has", "point_count"]],
         layout: {
           "text-field": ["get", "label"],
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 13,
+          "text-size": 11,
           "text-allow-overlap": true,
         },
         paint: { "text-color": "#ffffff" },
       });
+
+      applyRouteStyle(map, effectiveViewRef.current);
+      applyViewLayerVisibility(map, effectiveViewRef.current, selectedActivityIdRef.current);
+
+      map.addLayer({
+        id: DAY_SPIDER_LAYER,
+        type: "line",
+        source: DAY_SPIDER_SOURCE_ID,
+        paint: {
+          "line-color": ["coalesce", ["get", "color"], BRAND_BLUE],
+          "line-width": 2.5,
+          "line-opacity": 0.88,
+        },
+      });
+
+      map.addLayer({
+        id: DAY_PIN_LAYER,
+        type: "symbol",
+        source: DAY_SOURCE_ID,
+        layout: {
+          "icon-image": "day-pin-0-1",
+          "icon-size": 1,
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
+      applyDayPinIconLayout(map, selectedDayIndexRef.current);
 
       map.on("click", CLUSTER_LAYER, (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_LAYER] });
@@ -405,6 +626,9 @@ export default function TripMap({
       for (const layer of activityLayers) {
         map.on("click", layer, onPointClick);
       }
+      if (map.getLayer(OVERVIEW_LABEL_LAYER)) {
+        map.on("click", OVERVIEW_LABEL_LAYER, onPointClick);
+      }
 
       const onDayClick = (e) => {
         const f = e.features?.[0];
@@ -413,8 +637,7 @@ export default function TripMap({
         onSelectDayRef.current?.(dayIdx);
       };
 
-      map.on("click", DAY_LAYER, onDayClick);
-      map.on("click", DAY_LABEL_LAYER, onDayClick);
+      map.on("click", DAY_PIN_LAYER, onDayClick);
 
       const setPointer = () => {
         map.getCanvas().style.cursor = "pointer";
@@ -422,14 +645,19 @@ export default function TripMap({
       const clearPointer = () => {
         map.getCanvas().style.cursor = "";
       };
-      for (const layer of [CLUSTER_LAYER, ...activityLayers, DAY_LAYER]) {
+      for (const layer of [CLUSTER_LAYER, ...activityLayers, OVERVIEW_LABEL_LAYER, DAY_PIN_LAYER]) {
         map.on("mouseenter", layer, setPointer);
         map.on("mouseleave", layer, clearPointer);
       }
 
       map.on("click", (e) => {
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: [...activityLayers, CLUSTER_LAYER, DAY_LAYER, DAY_LABEL_LAYER],
+          layers: [
+            ...activityLayers,
+            OVERVIEW_LABEL_LAYER,
+            CLUSTER_LAYER,
+            DAY_PIN_LAYER,
+          ],
         });
         if (!hits.length) {
           onSelectRef.current?.(null);
@@ -438,10 +666,12 @@ export default function TripMap({
       });
 
       setMapReady(true);
-      fitMapToActivities(map, fitTargets, {
-        padding: mapPadding,
-        animate: false,
-      });
+      if (effectiveViewRef.current !== "trip" && fitTargets.length > 0) {
+        fitMapToActivities(map, fitTargets, {
+          padding: mapPadding,
+          animate: false,
+        });
+      }
       map.resize();
     };
 
@@ -450,7 +680,17 @@ export default function TripMap({
       layerSetupStarted = true;
       void (async () => {
         const balloonsOk = await registerActivityBalloonImages(map, { timeoutMs: 3500 });
-        finishMapInit(balloonsOk);
+        await registerDayPinImages(
+          map,
+          dayCentroidsRef.current.map((c) => ({
+            dayIndex: c.dayIndex,
+            dayNum: c.dayNum ?? c.dayIndex + 1,
+            color: dayMarkerColor(c.dayIndex, selectedDayIndexRef.current),
+          })),
+          selectedDayIndexRef.current,
+          { timeoutMs: 3500 }
+        );
+        finishMapInit(mode === "planner" || balloonsOk);
       })();
     };
 
@@ -476,6 +716,9 @@ export default function TripMap({
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
       mapRef.current = map;
+      if (typeof window !== "undefined" && /preview=planner-sheet/.test(window.location.search)) {
+        window.__tripMap = map;
+      }
 
       const onError = (e) => {
         if (cancelled) return;
@@ -492,7 +735,7 @@ export default function TripMap({
       initWatchdog = window.setTimeout(() => {
         if (cancelled || layersReady || !map) return;
         if (map.loaded() || map.isStyleLoaded()) {
-          finishMapInit(false);
+          finishMapInit(mode === "planner");
           return;
         }
         setLoadError(true);
@@ -561,7 +804,10 @@ export default function TripMap({
       : "relative min-h-[min(55vh,28rem)] w-full overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200/80";
 
   return (
-    <div className={`${shellClass} ${className}`.trim()}>
+    <div
+      className={`${shellClass} ${className}`.trim()}
+      data-effective-map-view={effectiveView}
+    >
       {loadError ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-50/95 px-4 text-center text-sm text-slate-600">
           {t("map.loadError")}
@@ -574,7 +820,11 @@ export default function TripMap({
       ) : null}
       <div
         ref={containerRef}
-        className="absolute inset-0 h-full w-full min-h-[min(55vh,28rem)]"
+        className={
+          mode === "planner"
+            ? "absolute inset-0 h-full w-full min-h-0"
+            : "absolute inset-0 h-full w-full min-h-[min(55vh,28rem)]"
+        }
         aria-hidden={loadError}
       />
       <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5 sm:inset-x-3">

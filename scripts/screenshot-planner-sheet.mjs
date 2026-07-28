@@ -1,5 +1,5 @@
 /**
- * Capture mobile planner sheet preview (mid + full = carte réduite, jamais démontée).
+ * Capture marqueurs épingle — vue d'ensemble (Marseille / Crète) + vue jour.
  * Usage: npm run dev, then node scripts/screenshot-planner-sheet.mjs
  */
 import { chromium } from "playwright";
@@ -17,14 +17,35 @@ await mkdir(outDir, { recursive: true });
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 
-for (const snap of ["mid", "full"]) {
-  await page.goto(`${base}&snap=${snap}`, { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForTimeout(2500);
-  const outFile = path.join(outDir, `planner-sheet-${snap}-mobile.png`);
+/** @param {string} scenario @param {'trip'|'day'} scope @param {string} outName */
+async function capture(scenario, scope, outName) {
+  const url = `${base}&scenario=${scenario}&scope=${scope}&snap=mid`;
+  await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
+  await page.waitForSelector(`[data-preview-scope="${scope}"]`, { timeout: 15000 });
+  await page.waitForSelector(`[data-effective-map-view="${scope === "trip" ? "trip" : "day"}"]`, {
+    timeout: 15000,
+  });
+  await page.waitForSelector(".maplibregl-canvas", { timeout: 15000 });
+  await page.waitForFunction(
+    () => {
+      /** @type {any} */
+      const map = window.__tripMap;
+      if (!map?.hasImage) return false;
+      if (scope === "day") return map.hasImage("activity-balloon-1");
+      return map.hasImage("day-pin-0-1");
+    },
+    undefined,
+    { timeout: 20000 }
+  ).catch(() => {});
+  await page.waitForTimeout(1500);
+
+  const outFile = path.join(outDir, outName);
   await page.screenshot({ path: outFile, fullPage: false });
   console.log("OK →", outFile);
-  const mapVisible = await page.locator(".maplibregl-canvas").count();
-  console.log(`  snap=${snap} map canvas count=${mapVisible}`);
 }
+
+await capture("marseille", "trip", "planner-overview-marseille-mobile.png");
+await capture("crete", "trip", "planner-overview-crete-mobile.png");
+await capture("marseille", "day", "planner-day-marseille-mobile.png");
 
 await browser.close();

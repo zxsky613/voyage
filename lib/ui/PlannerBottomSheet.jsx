@@ -10,6 +10,7 @@ const SNAP_ORDER = ["collapsed", "mid", "full"];
  *   snap?: 'collapsed'|'mid'|'full',
  *   onSnapChange?: (snap: 'collapsed'|'mid'|'full') => void,
  *   collapsedSummary?: React.ReactNode,
+ *   headerAction?: React.ReactNode,
  *   children?: React.ReactNode,
  *   className?: string,
  * }} props
@@ -18,6 +19,7 @@ export default function PlannerBottomSheet({
   snap = "mid",
   onSnapChange,
   collapsedSummary = null,
+  headerAction = null,
   children = null,
   className = "",
 }) {
@@ -138,7 +140,10 @@ export default function PlannerBottomSheet({
       >
         <div className="mb-2 h-1 w-10 rounded-full bg-slate-300" aria-hidden />
         {snap === "collapsed" ? (
-          <div className="w-full min-w-0 text-center text-sm text-slate-700">{collapsedSummary}</div>
+          <div className="flex w-full min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1 text-center text-sm text-slate-700">{collapsedSummary}</div>
+            {headerAction ? <div className="shrink-0">{headerAction}</div> : null}
+          </div>
         ) : null}
       </div>
       {snap !== "collapsed" ? (

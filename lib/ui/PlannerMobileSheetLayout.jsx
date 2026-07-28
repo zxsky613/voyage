@@ -11,7 +11,7 @@ import { usePlannerSheetLayout } from "./usePlannerSheetLayout.js";
  *   collapsedSummary: React.ReactNode,
  *   mapNode: React.ReactNode,
  *   children: React.ReactNode,
- *   fab?: React.ReactNode,
+ *   headerAction?: React.ReactNode,
  *   className?: string,
  * }} props
  */
@@ -21,10 +21,10 @@ export default function PlannerMobileSheetLayout({
   collapsedSummary,
   mapNode,
   children,
-  fab = null,
+  headerAction = null,
   className = "",
 }) {
-  const { containerRef, mapHeightPx, sheetHeightPx } = usePlannerSheetLayout(sheetSnap);
+  const { containerRef, mapHeightPx } = usePlannerSheetLayout(sheetSnap);
   const reduceMotion =
     typeof window !== "undefined"
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -43,19 +43,14 @@ export default function PlannerMobileSheetLayout({
       >
         {mapNode}
       </div>
-      <PlannerBottomSheet snap={sheetSnap} onSnapChange={onSnapChange} collapsedSummary={collapsedSummary}>
+      <PlannerBottomSheet
+        snap={sheetSnap}
+        onSnapChange={onSnapChange}
+        collapsedSummary={collapsedSummary}
+        headerAction={sheetSnap === "collapsed" ? headerAction : null}
+      >
         {children}
       </PlannerBottomSheet>
-      {fab ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 z-40"
-          style={{
-            bottom: `calc(${sheetHeightPx}px + max(12px, env(safe-area-inset-bottom, 0px)))`,
-          }}
-        >
-          <div className="pointer-events-auto flex justify-end pr-4">{fab}</div>
-        </div>
-      ) : null}
     </div>
   );
 }
