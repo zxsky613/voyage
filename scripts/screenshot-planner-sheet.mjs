@@ -32,7 +32,7 @@ async function capture(scenario, scope, outName) {
       const map = window.__tripMap;
       if (!map?.hasImage) return false;
       if (scope === "day") return map.hasImage("activity-balloon-1");
-      return map.hasImage("day-dot-0-1");
+      return map.hasImage("day-drop-0-1");
     },
     undefined,
     { timeout: 20000 }

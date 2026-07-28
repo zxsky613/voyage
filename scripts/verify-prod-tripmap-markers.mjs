@@ -35,7 +35,7 @@ const tripMapJs = await fetchText(`${BASE}${chunkPaths[0]}`);
 const combined = mainJs + tripMapJs;
 
 assert(/F16A2E|#f16a2e/i.test(combined), "couleur orange ballon absente");
-assert(/activity-balloon|registerActivityBalloon|registerDayPin|day-dot/i.test(combined), "marqueurs jour absents");
+assert(/activity-balloon|registerActivityBalloon|registerDayPin|day-drop/i.test(combined), "marqueurs jour absents");
 assert(/encodePhotoUrl|imgBroken|ActivityMapThumbnail|onError/i.test(combined), "fix vignette sheet absent");
 
 const { ACTIVITY_BALLOON_ORANGE, buildActivityBalloonSvg } = await import("../lib/map/activityBalloonMarker.js");

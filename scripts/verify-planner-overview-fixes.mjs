@@ -19,7 +19,7 @@ async function waitMapReady(page, scope) {
   });
   await page.waitForSelector(".maplibregl-canvas", { timeout: 20000 });
   await page.waitForFunction(
-    () => window.__tripMap?.hasImage?.("day-dot-0-1"),
+    () => window.__tripMap?.hasImage?.("day-drop-0-1"),
     undefined,
     { timeout: 20000 }
   ).catch(() => {});
@@ -57,9 +57,9 @@ async function mapLayerState(page) {
       routeFeatures: routeSrc?.features?.length ?? 0,
       dayMarkers: daySrc?.features?.length ?? 0,
       spiderLayer: Boolean(map.getLayer("trip-day-spider-lines")),
-      anchorCenter:
+      anchorBottom:
         map.getLayer("trip-day-pins")
-        && map.getLayoutProperty("trip-day-pins", "icon-anchor") === "center",
+        && map.getLayoutProperty("trip-day-pins", "icon-anchor") === "bottom",
       zoom: map.getZoom(),
     };
   });
@@ -128,7 +128,7 @@ async function verifyScenario(browser, scenario) {
     dayMarkers: before?.dayMarkers ?? 0,
     routeHidden: before && !before.routeVisible && before.routeFeatures === 0,
     noSpiderLayer: before && !before.spiderLayer,
-    anchorCenter: before?.anchorCenter ?? false,
+    anchorBottom: before?.anchorBottom ?? false,
     geoStable,
     plusOutsideMap: plusInSheet > 0 && plusOnMap === 0,
     coordsBefore,
@@ -145,7 +145,7 @@ console.log("\n=== Vue d'ensemble — pastilles stables ===\n");
 for (const r of [marseille, crete]) {
   console.log(`--- ${r.scenario} ---`);
   console.log(`  Marqueurs-jour: ${r.dayMarkers} (attendu: 3)`);
-  console.log(`  Ancrage center (pas tige): ${r.anchorCenter ? "OK" : "FAIL"}`);
+  console.log(`  Ancrage bottom (pointe sur centroïde): ${r.anchorBottom ? "OK" : "FAIL"}`);
   console.log(`  Coords geo stables au zoom: ${r.geoStable ? "OK" : "FAIL"}`);
   console.log(`  Pas de couche spider: ${r.noSpiderLayer ? "OK" : "FAIL"}`);
   console.log(`  Route inter-jours masquée: ${r.routeHidden ? "OK" : "FAIL"}`);
@@ -163,8 +163,8 @@ const pass =
   && crete.geoStable
   && marseille.noSpiderLayer
   && crete.noSpiderLayer
-  && marseille.anchorCenter
-  && crete.anchorCenter
+  && marseille.anchorBottom
+  && crete.anchorBottom
   && marseille.routeHidden
   && crete.routeHidden
   && marseille.plusOutsideMap

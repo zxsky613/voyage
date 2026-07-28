@@ -32,7 +32,7 @@ const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
 /**
  * Carte d'itinéraire à deux niveaux :
- * - view="trip"     : pastille ronde numérotée par jour (centroïde), sans spiderfy
+ * - view="trip"     : goutte orange numérotée par jour (pointe sur centroïde), sans spiderfy
  * - view="overview" : tous les marqueurs activité, couleur par jour (planning « tout le voyage »)
  * - view="day"        : marqueurs des activités du jour sélectionné (sheet au clic)
  * Un jour sélectionné sans coordonnée retombe sur le cadrage voyage (+ note).
@@ -530,9 +530,9 @@ export default function TripMap({
         type: "symbol",
         source: DAY_SOURCE_ID,
         layout: {
-          "icon-image": "day-dot-0-1",
+          "icon-image": "day-drop-0-1",
           "icon-size": 1,
-          "icon-anchor": "center",
+          "icon-anchor": "bottom",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },
