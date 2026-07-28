@@ -172,6 +172,7 @@ export default function PlannerSheetPreview() {
               cityLabel={scenario.cityLabel}
               fallbackCenter={scenario.fallbackCenter}
               suppressActivitySheet
+              sheetSnap={sheetSnap}
               className="h-full min-h-0"
             />
           }

@@ -10,6 +10,7 @@ import {
   activitiesToOverviewPointGeoJSON,
   activitiesToRouteGeoJSON,
   computeDayCentroids,
+  computeDayViewFitPadding,
   dayCentroidsToPointGeoJSON,
   dayMarkerColor,
   BRAND_BLUE,
@@ -51,6 +52,7 @@ const EMPTY_FC = { type: "FeatureCollection", features: [] };
  *   className?: string,
  *   fallbackCenter?: { latitude: number, longitude: number }|null,
  *   suppressActivitySheet?: boolean,
+ *   sheetSnap?: 'collapsed'|'mid'|'full',
  * }} props
  */
 export default function TripMap({
@@ -67,6 +69,7 @@ export default function TripMap({
   className = "",
   fallbackCenter = null,
   suppressActivitySheet = false,
+  sheetSnap = "mid",
 }) {
   const { t } = useI18n();
   const containerRef = useRef(null);
@@ -75,6 +78,17 @@ export default function TripMap({
   const [mapReady, setMapReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [sheetActivity, setSheetActivity] = useState(null);
+  const [mapContainerHeightPx, setMapContainerHeightPx] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const update = () => setMapContainerHeightPx(el.clientHeight || 0);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const mappedActivities = useMemo(
     () =>
@@ -113,6 +127,8 @@ export default function TripMap({
   dayCentroidsRef.current = dayCentroids;
   const selectedDayIndexRef = useRef(selectedDayIndex);
   selectedDayIndexRef.current = selectedDayIndex;
+  const dayActivitiesRef = useRef(dayActivities);
+  dayActivitiesRef.current = dayActivities;
 
   const legendDays = useMemo(() => {
     const byIdx = new Map();
@@ -128,6 +144,20 @@ export default function TripMap({
     }
     return [...byIdx.values()].sort((a, b) => a.dayIndex - b.dayIndex);
   }, [activities]);
+
+  const dayFitPadding = useMemo(
+    () =>
+      computeDayViewFitPadding({
+        mode,
+        sheetSnap,
+        viewportHeight: typeof window !== "undefined" ? window.innerHeight : 844,
+        mapHeightPx: mapContainerHeightPx,
+        showTopOverlay: Boolean(onViewTrip && requestedDayView) || legendDays.length > 0,
+      }),
+    [mode, sheetSnap, mapContainerHeightPx, onViewTrip, requestedDayView, legendDays.length]
+  );
+  const dayFitPaddingRef = useRef(dayFitPadding);
+  dayFitPaddingRef.current = dayFitPadding;
 
   const activityPointsData = useMemo(() => {
     if (effectiveView === "day") {
@@ -266,6 +296,17 @@ export default function TripMap({
     }
   }, [mapReady]);
 
+  const fitDayView = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveViewRef.current !== "day") return;
+    const acts = dayActivitiesRef.current;
+    if (!acts.length) return;
+    fitMapToActivities(map, acts, {
+      paddingInsets: dayFitPaddingRef.current,
+      animate: false,
+    });
+  }, [mapReady]);
+
   const syncSources = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -354,15 +395,31 @@ export default function TripMap({
   const mapPadding = mode === "planner" ? 120 : mode === "modal" ? 88 : 64;
 
   useEffect(() => {
+    if (!mapReady || effectiveView !== "day") return;
+    fitDayView();
+  }, [mapReady, effectiveView, selectedDayIndex, dayActivities, dayFitPadding, fitDayView]);
+
+  useEffect(() => {
+    if (!mapReady || effectiveView !== "day" || !mapContainerHeightPx) return;
+    fitDayView();
+  }, [mapReady, effectiveView, mapContainerHeightPx, fitDayView]);
+
+  useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || effectiveView !== "day") return;
-    if (!dayActivities.length) return;
-    fitMapToActivities(map, dayActivities, {
-      padding: 40,
-      uniformPadding: true,
-      animate: false,
-    });
-  }, [mapReady, effectiveView, selectedDayIndex, dayActivities]);
+    if (!map || !mapReady || effectiveView !== "day") return undefined;
+    const onResize = () => fitDayView();
+    map.on("resize", onResize);
+    return () => map.off("resize", onResize);
+  }, [mapReady, effectiveView, fitDayView]);
+
+  useEffect(() => {
+    if (!mapReady || effectiveView !== "day") return;
+    const map = mapRef.current;
+    if (!map) return;
+    map.resize();
+    const timer = window.setTimeout(fitDayView, 80);
+    return () => window.clearTimeout(timer);
+  }, [mapReady, effectiveView, sheetSnap, fitDayView]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -604,13 +661,26 @@ export default function TripMap({
       });
 
       setMapReady(true);
-      if (effectiveViewRef.current !== "trip" && fitTargets.length > 0) {
+      if (effectiveViewRef.current === "day" && dayActivitiesRef.current.length) {
+        fitMapToActivities(map, dayActivitiesRef.current, {
+          paddingInsets: dayFitPaddingRef.current,
+          animate: false,
+        });
+      } else if (effectiveViewRef.current !== "trip" && fitTargets.length > 0) {
         fitMapToActivities(map, fitTargets, {
           padding: mapPadding,
           animate: false,
         });
       }
       map.resize();
+      window.setTimeout(() => {
+        if (cancelled || !map || effectiveViewRef.current !== "day") return;
+        if (!dayActivitiesRef.current.length) return;
+        fitMapToActivities(map, dayActivitiesRef.current, {
+          paddingInsets: dayFitPaddingRef.current,
+          animate: false,
+        });
+      }, 80);
     };
 
     const beginLayerSetup = () => {

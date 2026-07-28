@@ -14989,6 +14989,7 @@ function PlannerView({
       cityLabel={tripCityLabel}
       fallbackCenter={destinationCenter}
       suppressActivitySheet={!isDesktopPlanner}
+      sheetSnap={sheetSnap}
       className="h-full min-h-0"
     />
   ) : null;
