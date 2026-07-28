@@ -14,14 +14,11 @@ import {
   dayMarkerColor,
   BRAND_BLUE,
   fitMapToActivities,
-  fitMapToTripDayLayout,
   getMapStyleUrl,
 } from "./tripMapHelpers.js";
-import { buildDayMarkerSpiderLayout } from "./dayMarkerSpiderfy.js";
 
 const SOURCE_ID = "trip-activities";
 const DAY_SOURCE_ID = "trip-days";
-const DAY_SPIDER_SOURCE_ID = "trip-day-spider-lines";
 const ROUTE_SOURCE_ID = "trip-route";
 const CLUSTER_LAYER = "trip-clusters";
 const CLUSTER_COUNT_LAYER = "trip-cluster-count";
@@ -29,14 +26,13 @@ const BALLOON_LAYER = "trip-activity-balloon";
 const POINT_FALLBACK_LAYER = "trip-unclustered-point";
 const OVERVIEW_LABEL_LAYER = "trip-overview-activity-label";
 const DAY_PIN_LAYER = "trip-day-pins";
-const DAY_SPIDER_LAYER = "trip-day-spider-lines";
 const ROUTE_LAYER = "trip-route-line";
 
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
 /**
  * Carte d'itinéraire à deux niveaux :
- * - view="trip"     : un marqueur numéroté par jour (centroïde) + ligne chronologique jour 1 → N
+ * - view="trip"     : pastille ronde numérotée par jour (centroïde), sans spiderfy
  * - view="overview" : tous les marqueurs activité, couleur par jour (planning « tout le voyage »)
  * - view="day"        : marqueurs des activités du jour sélectionné (sheet au clic)
  * Un jour sélectionné sans coordonnée retombe sur le cadrage voyage (+ note).
@@ -234,7 +230,6 @@ export default function TripMap({
     setVis(POINT_FALLBACK_LAYER, isOverview || (isDay && !map.getLayer(BALLOON_LAYER)));
     setVis(OVERVIEW_LABEL_LAYER, isOverview);
     setVis(DAY_PIN_LAYER, isTrip);
-    setVis(DAY_SPIDER_LAYER, isTrip);
     setVis(ROUTE_LAYER, isDay);
 
     if (map.getLayer(POINT_FALLBACK_LAYER)) {
@@ -260,57 +255,22 @@ export default function TripMap({
     }
   }, [mode]);
 
-  const updateDayMarkerLayout = useCallback((opts = {}) => {
+  const fitTripOverview = useCallback((opts = {}) => {
     const map = mapRef.current;
-    if (!map || !mapReady) return null;
-    const daySrc = map.getSource(DAY_SOURCE_ID);
-    const spiderSrc = map.getSource(DAY_SPIDER_SOURCE_ID);
-    if (!daySrc) return null;
-
-    if (effectiveViewRef.current !== "trip") {
-      daySrc.setData(dayMarkersData);
-      spiderSrc?.setData(EMPTY_FC);
-      return null;
-    }
-
+    if (!map || !mapReady || effectiveViewRef.current !== "trip") return;
     const centroids = dayCentroidsRef.current;
-    if (!centroids.length) {
-      daySrc.setData(EMPTY_FC);
-      spiderSrc?.setData(EMPTY_FC);
-      return null;
-    }
-
-    const layout = buildDayMarkerSpiderLayout(
-      centroids,
-      selectedDayIndexRef.current,
-      (lon, lat) => map.project([lon, lat]),
-      (x, y) => map.unproject([x, y])
-    );
-    daySrc.setData(layout.markers);
-    spiderSrc?.setData(layout.leaderLines);
-
+    if (!centroids.length) return;
     if (opts.fitOverview && tripOverviewFitPendingRef.current) {
-      if (layout.spiderfied) {
-        fitMapToTripDayLayout(map, layout, centroids, { padding: 40, animate: false });
-      } else {
-        fitMapToActivities(map, centroids, { padding: 40, uniformPadding: true, animate: false });
-      }
+      fitMapToActivities(map, centroids, { padding: 40, uniformPadding: true, animate: false });
       tripOverviewFitPendingRef.current = false;
     }
-
-    return layout;
-  }, [mapReady, dayMarkersData]);
+  }, [mapReady]);
 
   const syncSources = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.getSource(SOURCE_ID)?.setData(activityPointsData);
-    if (effectiveView === "trip") {
-      updateDayMarkerLayout();
-    } else {
-      map.getSource(DAY_SOURCE_ID)?.setData(dayMarkersData);
-      map.getSource(DAY_SPIDER_SOURCE_ID)?.setData(EMPTY_FC);
-    }
+    map.getSource(DAY_SOURCE_ID)?.setData(dayMarkersData);
     map.getSource(ROUTE_SOURCE_ID)?.setData(routeData);
     applyRouteStyle(map, effectiveView);
     applyBalloonIconLayout(map, selectedActivityId);
@@ -328,7 +288,7 @@ export default function TripMap({
     applyBalloonIconLayout,
     applyDayPinIconLayout,
     applyViewLayerVisibility,
-    updateDayMarkerLayout,
+    fitTripOverview,
   ]);
 
   useEffect(() => {
@@ -363,22 +323,16 @@ export default function TripMap({
     const map = mapRef.current;
     if (!map || !mapReady || effectiveView !== "trip") return undefined;
 
-    const onLayout = () => updateDayMarkerLayout();
     const onResize = () => {
       tripOverviewFitPendingRef.current = true;
-      updateDayMarkerLayout({ fitOverview: true });
+      fitTripOverview({ fitOverview: true });
     };
-    map.on("moveend", onLayout);
-    map.on("zoomend", onLayout);
     map.on("resize", onResize);
-    onLayout();
 
     return () => {
-      map.off("moveend", onLayout);
-      map.off("zoomend", onLayout);
       map.off("resize", onResize);
     };
-  }, [mapReady, effectiveView, updateDayMarkerLayout, dayCentroids]);
+  }, [mapReady, effectiveView, fitTripOverview]);
 
   useEffect(() => {
     if (!mapReady || effectiveView !== "trip") return;
@@ -387,10 +341,10 @@ export default function TripMap({
     tripOverviewFitPendingRef.current = true;
     map.resize();
     const timer = window.setTimeout(() => {
-      updateDayMarkerLayout({ fitOverview: true });
+      fitTripOverview({ fitOverview: true });
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [mapReady, effectiveView, dayCentroids, updateDayMarkerLayout]);
+  }, [mapReady, effectiveView, dayCentroids, fitTripOverview]);
 
   const fitTargets =
     effectiveView === "overview"
@@ -477,11 +431,6 @@ export default function TripMap({
       map.addSource(DAY_SOURCE_ID, {
         type: "geojson",
         data: dayMarkersData,
-      });
-
-      map.addSource(DAY_SPIDER_SOURCE_ID, {
-        type: "geojson",
-        data: EMPTY_FC,
       });
 
       map.addSource(ROUTE_SOURCE_ID, {
@@ -577,24 +526,13 @@ export default function TripMap({
       applyViewLayerVisibility(map, effectiveViewRef.current, selectedActivityIdRef.current);
 
       map.addLayer({
-        id: DAY_SPIDER_LAYER,
-        type: "line",
-        source: DAY_SPIDER_SOURCE_ID,
-        paint: {
-          "line-color": ["coalesce", ["get", "color"], BRAND_BLUE],
-          "line-width": 2.5,
-          "line-opacity": 0.88,
-        },
-      });
-
-      map.addLayer({
         id: DAY_PIN_LAYER,
         type: "symbol",
         source: DAY_SOURCE_ID,
         layout: {
-          "icon-image": "day-pin-0-1",
+          "icon-image": "day-dot-0-1",
           "icon-size": 1,
-          "icon-anchor": "bottom",
+          "icon-anchor": "center",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },

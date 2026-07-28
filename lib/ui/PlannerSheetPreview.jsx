@@ -60,7 +60,7 @@ const PREVIEW_SCENARIOS = {
   },
 };
 
-/** Preview dev — vue d'ensemble + spiderfy jours (?scenario=marseille|crete|cassis). */
+/** Preview dev — vue d'ensemble marqueurs-jour (?scenario=marseille|crete|cassis). */
 export default function PlannerSheetPreview() {
   const { t } = useI18n();
   const params = new URLSearchParams(window.location.search);

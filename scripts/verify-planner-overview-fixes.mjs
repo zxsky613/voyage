@@ -1,5 +1,5 @@
 /**
- * Vérifie les 3 fixes vue d'ensemble (marqueurs, pas de route inter-jours, + hors carte).
+ * Vérifie vue d'ensemble : pastilles-jour stables, pas de route inter-jours, + hors carte.
  * Usage: npm run dev, node scripts/verify-planner-overview-fixes.mjs
  */
 import { chromium } from "playwright";
@@ -19,11 +19,25 @@ async function waitMapReady(page, scope) {
   });
   await page.waitForSelector(".maplibregl-canvas", { timeout: 20000 });
   await page.waitForFunction(
-    () => window.__tripMap?.hasImage?.("day-pin-0-1"),
+    () => window.__tripMap?.hasImage?.("day-dot-0-1"),
     undefined,
     { timeout: 20000 }
   ).catch(() => {});
   await page.waitForTimeout(1500);
+}
+
+/** @param {import('playwright').Page} page */
+async function dayMarkerCoords(page) {
+  return page.evaluate(() => {
+    const src = window.__tripMap?.getSource?.("trip-days")?.serialize?.()?.data;
+    return (src?.features || [])
+      .map((f) => ({
+        label: f.properties?.label,
+        lon: f.geometry?.coordinates?.[0],
+        lat: f.geometry?.coordinates?.[1],
+      }))
+      .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  });
 }
 
 /** @param {import('playwright').Page} page */
@@ -32,16 +46,20 @@ async function mapLayerState(page) {
     /** @type {any} */
     const map = window.__tripMap;
     if (!map?.getLayer) return null;
-    const vis = (id) => map.getLayoutProperty(id, "visibility") !== "none";
+    const vis = (id) => {
+      if (!map.getLayer(id)) return false;
+      return map.getLayoutProperty(id, "visibility") !== "none";
+    };
     const routeSrc = map.getSource("trip-route")?.serialize?.()?.data;
-    const spiderSrc = map.getSource("trip-day-spider-lines")?.serialize?.()?.data;
     const daySrc = map.getSource("trip-days")?.serialize?.()?.data;
     return {
       routeVisible: vis("trip-route-line"),
-      spiderVisible: vis("trip-day-spider-lines"),
       routeFeatures: routeSrc?.features?.length ?? 0,
-      spiderFeatures: spiderSrc?.features?.length ?? 0,
       dayMarkers: daySrc?.features?.length ?? 0,
+      spiderLayer: Boolean(map.getLayer("trip-day-spider-lines")),
+      anchorCenter:
+        map.getLayer("trip-day-pins")
+        && map.getLayoutProperty("trip-day-pins", "icon-anchor") === "center",
       zoom: map.getZoom(),
     };
   });
@@ -54,19 +72,21 @@ async function verifyScenario(browser, scenario) {
   await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
   await waitMapReady(page, "trip");
 
+  const coordsBefore = await dayMarkerCoords(page);
   const before = await mapLayerState(page);
   await page.screenshot({
     path: path.join(outDir, `planner-overview-${scenario}-verify.png`),
     fullPage: false,
   });
 
-  // Zoom via API (overlay UI bloque les clics Playwright sur les contrôles)
   await page.evaluate(() => {
     /** @type {any} */
     const map = window.__tripMap;
-    if (map?.zoomIn) map.zoomIn({ duration: 300 });
+    if (map?.zoomIn) map.zoomIn({ duration: 0 });
+    if (map?.zoomIn) map.zoomIn({ duration: 0 });
   });
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(500);
+  const coordsZoomIn = await dayMarkerCoords(page);
   const zoomIn = await mapLayerState(page);
   await page.screenshot({
     path: path.join(outDir, `planner-overview-${scenario}-zoom-in.png`),
@@ -77,14 +97,13 @@ async function verifyScenario(browser, scenario) {
     /** @type {any} */
     const map = window.__tripMap;
     if (map?.zoomOut) {
-      map.zoomOut({ duration: 300 });
-      setTimeout(() => map.zoomOut({ duration: 300 }), 350);
+      map.zoomOut({ duration: 0 });
+      map.zoomOut({ duration: 0 });
     }
   });
-  await page.waitForTimeout(900);
-  const zoomOut = await mapLayerState(page);
+  await page.waitForTimeout(500);
+  const coordsZoomOut = await dayMarkerCoords(page);
 
-  // + button outside map (in sheet header, not inside map canvas)
   const plusInSheet = await page.locator('[aria-label="Ajouter"], [aria-label*="ctivit"]').count();
   const plusOnMap = await page.evaluate(() => {
     const canvas = document.querySelector(".maplibregl-canvas");
@@ -100,19 +119,20 @@ async function verifyScenario(browser, scenario) {
 
   await page.close();
 
-  const checks = {
+  const geoStable =
+    JSON.stringify(coordsBefore) === JSON.stringify(coordsZoomIn)
+    && JSON.stringify(coordsBefore) === JSON.stringify(coordsZoomOut);
+
+  return {
     scenario,
     dayMarkers: before?.dayMarkers ?? 0,
     routeHidden: before && !before.routeVisible && before.routeFeatures === 0,
-    routeStableOnZoom:
-      zoomIn && zoomOut && !zoomIn.routeVisible && !zoomOut.routeVisible && zoomIn.routeFeatures === 0,
+    noSpiderLayer: before && !before.spiderLayer,
+    anchorCenter: before?.anchorCenter ?? false,
+    geoStable,
     plusOutsideMap: plusInSheet > 0 && plusOnMap === 0,
-    spiderLines: before?.spiderFeatures ?? 0,
-    zoomInSpider: zoomIn?.spiderFeatures ?? 0,
-    zoomOutSpider: zoomOut?.spiderFeatures ?? 0,
+    coordsBefore,
   };
-
-  return checks;
 }
 
 const browser = await chromium.launch();
@@ -120,28 +140,35 @@ const marseille = await verifyScenario(browser, "marseille");
 const crete = await verifyScenario(browser, "crete");
 await browser.close();
 
-console.log("\n=== Vue d'ensemble — vérification fixes ===\n");
+console.log("\n=== Vue d'ensemble — pastilles stables ===\n");
 
 for (const r of [marseille, crete]) {
   console.log(`--- ${r.scenario} ---`);
-  console.log(`  Marqueurs-jour visibles (features): ${r.dayMarkers} (attendu: 3)`);
+  console.log(`  Marqueurs-jour: ${r.dayMarkers} (attendu: 3)`);
+  console.log(`  Ancrage center (pas tige): ${r.anchorCenter ? "OK" : "FAIL"}`);
+  console.log(`  Coords geo stables au zoom: ${r.geoStable ? "OK" : "FAIL"}`);
+  console.log(`  Pas de couche spider: ${r.noSpiderLayer ? "OK" : "FAIL"}`);
   console.log(`  Route inter-jours masquée: ${r.routeHidden ? "OK" : "FAIL"}`);
-  console.log(`  Route stable au zoom: ${r.routeStableOnZoom ? "OK" : "FAIL"}`);
   console.log(`  Bouton + hors carte: ${r.plusOutsideMap ? "OK" : "FAIL"}`);
-  console.log(`  Traits spider (leader, pas route): ${r.spiderLines} → zoom ${r.zoomInSpider}/${r.zoomOutSpider}`);
+  if (r.coordsBefore?.length) {
+    console.log(`  Centroïdes: ${r.coordsBefore.map((c) => `${c.label}=[${c.lon?.toFixed(4)},${c.lat?.toFixed(4)}]`).join(" ")}`);
+  }
   console.log("");
 }
 
 const pass =
   marseille.dayMarkers >= 3
   && crete.dayMarkers >= 3
+  && marseille.geoStable
+  && crete.geoStable
+  && marseille.noSpiderLayer
+  && crete.noSpiderLayer
+  && marseille.anchorCenter
+  && crete.anchorCenter
   && marseille.routeHidden
   && crete.routeHidden
-  && marseille.routeStableOnZoom
-  && crete.routeStableOnZoom
   && marseille.plusOutsideMap
   && crete.plusOutsideMap;
 
-console.log(pass ? "PASS — tous les critères OK" : "FAIL — voir détails ci-dessus");
-console.log("\nCaptures: assets/planner-overview-{marseille,crete}-verify.png\n");
+console.log(pass ? "PASS" : "FAIL");
 process.exit(pass ? 0 : 1);
