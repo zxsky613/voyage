@@ -17,6 +17,8 @@ import {
   BRAND_BLUE,
   fitMapToActivities,
   getMapStyleUrl,
+  MAP_DAY_FLY_DURATION_MS,
+  mapDayFlyEasing,
   TRIP_OVERVIEW_MAX_ZOOM,
 } from "./tripMapHelpers.js";
 
@@ -131,6 +133,10 @@ export default function TripMap({
   selectedDayIndexRef.current = selectedDayIndex;
   const dayActivitiesRef = useRef(dayActivities);
   dayActivitiesRef.current = dayActivities;
+  const mapViewTransitionRef = useRef({
+    prevEffectiveView: null,
+    prevDayIndex: selectedDayIndex,
+  });
 
   const legendDays = useMemo(() => {
     const byIdx = new Map();
@@ -418,9 +424,41 @@ export default function TripMap({
   const mapPadding = mode === "planner" ? 120 : mode === "modal" ? 88 : 64;
 
   useEffect(() => {
-    if (!mapReady || effectiveView !== "day") return;
-    fitDayView();
-  }, [mapReady, effectiveView, selectedDayIndex, dayActivities, dayFitPadding, fitDayView]);
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const transition = mapViewTransitionRef.current;
+
+    if (effectiveView !== "day") {
+      transition.prevEffectiveView = effectiveView;
+      transition.prevDayIndex = selectedDayIndex;
+      return;
+    }
+
+    if (!dayActivities.length) {
+      transition.prevEffectiveView = effectiveView;
+      transition.prevDayIndex = selectedDayIndex;
+      return;
+    }
+
+    const enteredFromTrip = transition.prevEffectiveView === "trip";
+    const enteredFromOverview = transition.prevEffectiveView === "overview";
+    const dayChanged =
+      transition.prevEffectiveView === "day" && transition.prevDayIndex !== selectedDayIndex;
+    const isInitialMount = transition.prevEffectiveView === null;
+    const shouldAnimate =
+      !isInitialMount && (enteredFromTrip || enteredFromOverview || dayChanged);
+
+    fitMapToActivities(map, dayActivities, {
+      paddingInsets: dayFitPaddingRef.current,
+      animate: shouldAnimate,
+      duration: MAP_DAY_FLY_DURATION_MS,
+      easing: mapDayFlyEasing,
+    });
+
+    transition.prevEffectiveView = "day";
+    transition.prevDayIndex = selectedDayIndex;
+  }, [mapReady, effectiveView, selectedDayIndex, dayActivities, dayFitPadding]);
 
   useEffect(() => {
     if (!mapReady || effectiveView !== "day" || !mapContainerHeightPx) return;
