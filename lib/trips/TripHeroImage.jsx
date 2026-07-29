@@ -29,7 +29,6 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
   const label = buildHeroResolveLabel(String(trip?.destination || trip?.title || "").trim());
   const fallbackBg = resolveDestinationHeroFallbackBackground(tripId || label);
   const imgRef = useRef(null);
-  const resolveStartedRef = useRef("");
 
   const [url, setUrl] = useState(() => {
     const inline = readInlineTripHeroUrl(trip);
@@ -51,7 +50,6 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
     if (inline) {
       setUrl(inline);
       if (tripId) writeTripHeroCache(tripId, inline);
-      resolveStartedRef.current = tripId;
       return undefined;
     }
 
@@ -59,7 +57,6 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
       const own = readTripHeroCache(tripId);
       if (own) {
         setUrl(own);
-        resolveStartedRef.current = tripId;
         void persistTripHeroUrl(tripId, own).then((ok) => {
           if (ok) notifyHeroPersisted(tripId, own);
         });
@@ -67,13 +64,10 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
       }
     }
 
-    if (!isResolveHeroEnabled() || !label || !tripId) {
+    if (!isResolveHeroEnabled() || !label) {
       setUrl("");
       return undefined;
     }
-
-    if (resolveStartedRef.current === tripId) return undefined;
-    resolveStartedRef.current = tripId;
 
     let cancelled = false;
     (async () => {
@@ -87,18 +81,19 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
       const next = String(hit?.url || "").trim();
       if (next) {
         setUrl(next);
-        writeTripHeroCache(tripId, next);
-        const persisted = await persistTripHeroUrl(tripId, next);
-        if (persisted) notifyHeroPersisted(tripId, next);
+        if (tripId) {
+          writeTripHeroCache(tripId, next);
+          const persisted = await persistTripHeroUrl(tripId, next);
+          if (persisted) notifyHeroPersisted(tripId, next);
+        }
       } else {
         setUrl("");
-        resolveStartedRef.current = "";
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [tripId, label, trip?.hero_image_url, trip?.heroImageUrl, trip?.hero_url]);
+  }, [tripId, label, language, trip?.hero_image_url, trip?.heroImageUrl, trip?.hero_url]);
 
   useLayoutEffect(() => {
     setImgLoaded(false);

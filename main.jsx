@@ -16,6 +16,10 @@ const isPlannerSheetPreview =
   import.meta.env.DEV &&
   new URLSearchParams(window.location.search).get("preview") === "planner-sheet";
 
+const isTripHeroResolvePreview =
+  import.meta.env.DEV &&
+  new URLSearchParams(window.location.search).get("preview") === "trip-hero-resolve";
+
 async function mount() {
   const root = ReactDOM.createRoot(document.getElementById("root"));
   if (isTripsCompactPreview) {
@@ -24,6 +28,17 @@ async function mount() {
       <React.StrictMode>
         <I18nProvider>
           <TripsCompactPreview />
+        </I18nProvider>
+      </React.StrictMode>
+    );
+    return;
+  }
+  if (isTripHeroResolvePreview) {
+    const { default: TripHeroResolvePreview } = await import("./lib/trips/TripHeroResolvePreview.jsx");
+    root.render(
+      <React.StrictMode>
+        <I18nProvider>
+          <TripHeroResolvePreview />
         </I18nProvider>
       </React.StrictMode>
     );
