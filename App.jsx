@@ -17946,7 +17946,13 @@ export default function App() {
   const deleteActivity = async (activity) => {
     if (!activity?.id) return;
     try {
-      const linked = findExpenseForActivity(tripExpensesRef.current, activity.id);
+      const actTitle = String(activity?.title || activity?.name || "").trim();
+      const lineTitle = t("budget.importLineTitle", { activity: actTitle || "Activité" });
+      const linked = findExpenseForActivity(tripExpensesRef.current, activity.id, {
+        tripId: activity?.trip_id,
+        lineTitle,
+        activityTitle: actTitle,
+      });
       if (linked?.id) await deleteGroupExpense(linked);
       const { error } = await supabase.from("activities").delete().eq("id", activity.id);
       if (error) throw error;
@@ -17992,6 +17998,16 @@ export default function App() {
       }
       if (error) {
         const msg = String(error?.message || "");
+        const code = String(error?.code || "");
+        // Unique (trip_id, source_type, source_id) — course auto-sync : traiter comme succès.
+        if (
+          code === "23505" ||
+          /duplicate key|unique constraint|trip_expenses_source_uidx/i.test(msg)
+        ) {
+          setTripExpensesRetryNonce((n) => n + 1);
+          setNotice("");
+          return true;
+        }
         if (isTripExpensesSchemaMissingError(error)) {
           setTripExpensesTableReady(false);
           return false;
@@ -18066,17 +18082,22 @@ export default function App() {
 
   const tripExpensesRef = useRef(tripExpenses);
   tripExpensesRef.current = tripExpenses;
+  const budgetAutoSyncInFlightRef = useRef(false);
 
   const syncActivityBudgetExpense = async (activity) => {
     if (!tripExpensesTableReady || !activity?.id) return;
-    const existing = findExpenseForActivity(tripExpensesRef.current, activity.id);
+    const actTitle = String(activity?.title || activity?.name || "Activité").trim();
+    const lineTitle = t("budget.importLineTitle", { activity: actTitle || "Activité" });
+    const existing = findExpenseForActivity(tripExpensesRef.current, activity.id, {
+      tripId: activity?.trip_id,
+      lineTitle,
+      activityTitle: actTitle,
+    });
     const cost = Number(activity?.cost) || 0;
     if (cost <= 0) {
       if (existing?.id) await deleteGroupExpense(existing);
       return;
     }
-    const actTitle = String(activity?.title || activity?.name || "Activité").trim();
-    const lineTitle = t("budget.importLineTitle", { activity: actTitle || "Activité" });
     const payload = buildActivityExpensePayload({ ...activity, cost }, lineTitle);
     if (!payload) return;
     if (existing?.id) {
@@ -18118,15 +18139,29 @@ export default function App() {
 
   useEffect(() => {
     if (!budgetDetailTrip?.id || !tripExpensesTableReady) return;
+    if (budgetAutoSyncInFlightRef.current) return;
     const tid = String(budgetDetailTrip.id);
     const tripActs = (activities || []).filter((a) => String(a?.trip_id) === tid);
     const needsSync = tripActs.some((a) => {
       if (Number(a?.cost) <= 0) return false;
-      return !findExpenseForActivity(tripExpensesRef.current, a.id);
+      const actTitle = String(a?.title || a?.name || "").trim();
+      const lineTitle = t("budget.importLineTitle", { activity: actTitle || "Activité" });
+      return !findExpenseForActivity(tripExpensesRef.current, a.id, {
+        tripId: tid,
+        lineTitle,
+        activityTitle: actTitle,
+      });
     });
     if (!needsSync) return;
-    void syncAllActivitiesBudgetForTrip(budgetDetailTrip, tripActs);
-  }, [budgetDetailTrip?.id, tripExpensesTableReady, activities]);
+    budgetAutoSyncInFlightRef.current = true;
+    void (async () => {
+      try {
+        await syncAllActivitiesBudgetForTrip(budgetDetailTrip, tripActs);
+      } finally {
+        budgetAutoSyncInFlightRef.current = false;
+      }
+    })();
+  }, [budgetDetailTrip?.id, tripExpensesTableReady, activities, t]);
 
   const saveParticipants = async (list) => {
     if (!tricountTrip) return;
