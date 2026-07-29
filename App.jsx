@@ -218,6 +218,7 @@ import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/b
 import AllTripsView from "./lib/trips/AllTripsView.jsx";
 import { classifyTrips } from "./lib/trips/classifyTrips.js";
 import { writeTripHeroCache, clearTripHeroCache } from "./lib/trips/tripHeroCache.js";
+import { persistTripHeroUrl } from "./lib/trips/persistTripHeroUrl.js";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -2001,7 +2002,8 @@ function AiEmptyInvite({ variant, onCta }) {
 /** Chargement `trips` : inclure owner_id / invited_emails pour que userCanSeeTrip filtre (base Supabase partagée). */
 const TRIPS_SELECT_ATTEMPTS = [
   "*",
-  "id,title,name,destination,start_date,end_date,fixed_url,participants,owner_id,invited_emails,invited_joined_emails",
+  "id,title,name,destination,start_date,end_date,fixed_url,hero_image_url,participants,owner_id,invited_emails,invited_joined_emails",
+  "id,title,start_date,end_date,hero_image_url,owner_id,invited_emails,invited_joined_emails",
   "id,title,start_date,end_date,owner_id,invited_emails,invited_joined_emails",
   "id,title,start_date,end_date,owner_id,invited_emails",
   "id,title,start_date,end_date,owner_id",
@@ -7177,6 +7179,7 @@ function normalizeTrip(trip) {
     invited_emails: invites,
     invited_joined_emails,
     fixed_url: String(trip?.fixed_url || ""),
+    hero_image_url: String(trip?.hero_image_url || trip?.heroImageUrl || trip?.hero_url || "").trim() || undefined,
   };
 }
 
@@ -17224,6 +17227,21 @@ export default function App() {
   }, [session, authLoading]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    /** @param {CustomEvent<{ tripId?: string, url?: string }>} ev */
+    const onHeroPersisted = (ev) => {
+      const tripId = String(ev?.detail?.tripId || "").trim();
+      const url = String(ev?.detail?.url || "").trim();
+      if (!tripId || !/^https?:\/\//i.test(url)) return;
+      setTrips((prev) =>
+        (prev || []).map((t) => (normTripId(t?.id) === tripId ? { ...t, hero_image_url: url } : t))
+      );
+    };
+    window.addEventListener("trip-hero-persisted", onHeroPersisted);
+    return () => window.removeEventListener("trip-hero-persisted", onHeroPersisted);
+  }, []);
+
+  useEffect(() => {
     const myGen = ++loadActivitiesGenRef.current;
     const loadActivities = async () => {
       try {
@@ -17541,6 +17559,10 @@ export default function App() {
         fixed_url: String(payload.fixed_url || ""),
         owner_id: ownerId,
       };
+      const heroFromPayload = String(payload?.hero_image_url || "").trim();
+      if (/^https?:\/\//i.test(heroFromPayload)) {
+        body.hero_image_url = heroFromPayload;
+      }
 
       // If the DB schema cache is stale or columns are missing,
       // retry the insert while removing the missing column from payload.
@@ -17549,9 +17571,9 @@ export default function App() {
         const { data: insertedRows, error } = await supabase.from("trips").insert(body).select("id");
         if (!error) {
           const newTripId = String(insertedRows?.[0]?.id || "").trim();
-          const heroFromPayload = String(payload?.hero_image_url || "").trim();
           if (newTripId && /^https?:\/\//i.test(heroFromPayload)) {
             writeTripHeroCache(newTripId, heroFromPayload);
+            void persistTripHeroUrl(newTripId, heroFromPayload);
           }
           const withSchedule = Array.isArray(payload?.selectedActivitiesWithSchedule)
             ? payload.selectedActivitiesWithSchedule
