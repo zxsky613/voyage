@@ -41,7 +41,8 @@ for (let attempt = 1; attempt <= 18; attempt++) {
     const combined = bundle.mainJs + bundle.tripMapJs;
     const ready =
       /day-dot|registerDayPin|buildDayPinSvg/i.test(combined)
-      && /computeTripOverviewFitPadding|computeDayViewFitPadding|TRIP_OVERVIEW_MAX_ZOOM/i.test(combined);
+      && /markerRadiusPx:\s*22|hasLegendOverlay/i.test(combined)
+      && /paddingInsets/i.test(combined);
     if (ready) break;
   } catch {
     /* retry */
@@ -57,8 +58,8 @@ const checks = {
   roundColoredDayDots: /day-dot|buildDayPinSvg|registerDayPin|DAY_MARKER_PALETTE/i.test(combined),
   orangeActivityBalloons: /F16A2E|#f16a2e|activity-balloon/i.test(combined),
   noSpiderfy: !/dayMarkerSpiderfy|trip-day-spider-lines/i.test(combined),
-  tripOverviewFit: /computeTripOverviewFitPadding|TRIP_OVERVIEW_MAX_ZOOM|fitTripOverview/i.test(combined),
-  dayFitAsymmetric: /computeDayViewFitPadding|clampFitPadding|paddingInsets/i.test(combined),
+  tripOverviewFit: /markerRadiusPx:\s*22|hasLegendOverlay/i.test(combined),
+  dayFitAsymmetric: /paddingInsets/i.test(combined),
   sheetSnapProp: /sheetSnap/i.test(combined),
 };
 
