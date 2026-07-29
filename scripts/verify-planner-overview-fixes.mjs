@@ -19,11 +19,17 @@ async function waitMapReady(page, scope) {
   });
   await page.waitForSelector(".maplibregl-canvas", { timeout: 20000 });
   await page.waitForFunction(
-    () => window.__tripMap?.hasImage?.("day-drop-0-1"),
+    () => window.__tripMap?.hasImage?.("day-dot-0-1"),
     undefined,
     { timeout: 20000 }
-  ).catch(() => {});
-  await page.waitForTimeout(1500);
+  );
+  await page.waitForFunction(
+    () =>
+      window.__tripMap?.getLayoutProperty?.("trip-day-pins", "icon-anchor") === "center",
+    undefined,
+    { timeout: 10000 }
+  );
+  await page.waitForTimeout(2500);
 }
 
 /** @param {import('playwright').Page} page */
@@ -37,6 +43,50 @@ async function dayMarkerCoords(page) {
         lat: f.geometry?.coordinates?.[1],
       }))
       .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  });
+}
+
+/** @param {import('playwright').Page} page */
+async function dayMarkersInFrame(page) {
+  return page.evaluate(() => {
+    const map = window.__tripMap;
+    const canvas = document.querySelector(".maplibregl-canvas");
+    const shell = document.querySelector("[data-effective-map-view='trip']");
+    const overlay = shell?.querySelector(".pointer-events-none.absolute");
+    const canvasRect = canvas?.getBoundingClientRect();
+    const overlayRect = overlay?.getBoundingClientRect();
+    if (!map || !canvasRect) return { ok: false, reason: "no-map" };
+
+    const MARKER_R = 24;
+    const SIDE = 36;
+    const BOTTOM = 28;
+    const overlayBottom =
+      overlayRect && canvasRect ? overlayRect.bottom - canvasRect.top : 96;
+    const w = canvasRect.width;
+    const h = canvasRect.height;
+    const src = map.getSource("trip-days")?.serialize?.()?.data;
+    const positions = (src?.features || []).map((f) => {
+      const p = map.project(f.geometry.coordinates);
+      return {
+        label: f.properties?.label,
+        x: p.x,
+        y: p.y,
+        inFrame:
+          p.x - MARKER_R >= SIDE
+          && p.x + MARKER_R <= w - SIDE
+          && p.y - MARKER_R >= overlayBottom + 2
+          && p.y + MARKER_R <= h - BOTTOM,
+      };
+    });
+
+    return {
+      ok: positions.length >= 2 && positions.every((p) => p.inFrame),
+      positions,
+      w,
+      h,
+      overlayBottom,
+      zoom: map.getZoom(),
+    };
   });
 }
 
@@ -57,9 +107,9 @@ async function mapLayerState(page) {
       routeFeatures: routeSrc?.features?.length ?? 0,
       dayMarkers: daySrc?.features?.length ?? 0,
       spiderLayer: Boolean(map.getLayer("trip-day-spider-lines")),
-      anchorBottom:
+      anchorCenter:
         map.getLayer("trip-day-pins")
-        && map.getLayoutProperty("trip-day-pins", "icon-anchor") === "bottom",
+        && map.getLayoutProperty("trip-day-pins", "icon-anchor") === "center",
       zoom: map.getZoom(),
     };
   });
@@ -68,12 +118,13 @@ async function mapLayerState(page) {
 /** @param {string} scenario */
 async function verifyScenario(browser, scenario) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const url = `http://localhost:5173/?preview=planner-sheet&scenario=${scenario}&scope=trip&snap=mid`;
+  const url = `http://localhost:5173/?preview=planner-sheet&scenario=${scenario}&scope=trip&snap=collapsed`;
   await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
   await waitMapReady(page, "trip");
 
   const coordsBefore = await dayMarkerCoords(page);
   const before = await mapLayerState(page);
+  const frameBefore = await dayMarkersInFrame(page);
   await page.screenshot({
     path: path.join(outDir, `planner-overview-${scenario}-verify.png`),
     fullPage: false,
@@ -128,9 +179,11 @@ async function verifyScenario(browser, scenario) {
     dayMarkers: before?.dayMarkers ?? 0,
     routeHidden: before && !before.routeVisible && before.routeFeatures === 0,
     noSpiderLayer: before && !before.spiderLayer,
-    anchorBottom: before?.anchorBottom ?? false,
+    anchorCenter: before?.anchorCenter ?? false,
     geoStable,
     plusOutsideMap: plusInSheet > 0 && plusOnMap === 0,
+    allMarkersInFrame: frameBefore.ok,
+    frameZoom: frameBefore.zoom,
     coordsBefore,
   };
 }
@@ -145,10 +198,11 @@ console.log("\n=== Vue d'ensemble — pastilles stables ===\n");
 for (const r of [marseille, crete]) {
   console.log(`--- ${r.scenario} ---`);
   console.log(`  Marqueurs-jour: ${r.dayMarkers} (attendu: 3)`);
-  console.log(`  Ancrage bottom (pointe sur centroïde): ${r.anchorBottom ? "OK" : "FAIL"}`);
+  console.log(`  Ancrage center (centroïde): ${r.anchorCenter ? "OK" : "FAIL"}`);
   console.log(`  Coords geo stables au zoom: ${r.geoStable ? "OK" : "FAIL"}`);
   console.log(`  Pas de couche spider: ${r.noSpiderLayer ? "OK" : "FAIL"}`);
   console.log(`  Route inter-jours masquée: ${r.routeHidden ? "OK" : "FAIL"}`);
+  console.log(`  Tous marqueurs dans le cadre: ${r.allMarkersInFrame ? "OK" : "FAIL"} (zoom ${r.frameZoom?.toFixed?.(2) ?? "?"})`);
   console.log(`  Bouton + hors carte: ${r.plusOutsideMap ? "OK" : "FAIL"}`);
   if (r.coordsBefore?.length) {
     console.log(`  Centroïdes: ${r.coordsBefore.map((c) => `${c.label}=[${c.lon?.toFixed(4)},${c.lat?.toFixed(4)}]`).join(" ")}`);
@@ -163,12 +217,14 @@ const pass =
   && crete.geoStable
   && marseille.noSpiderLayer
   && crete.noSpiderLayer
-  && marseille.anchorBottom
-  && crete.anchorBottom
+  && marseille.anchorCenter
+  && crete.anchorCenter
   && marseille.routeHidden
   && crete.routeHidden
   && marseille.plusOutsideMap
-  && crete.plusOutsideMap;
+  && crete.plusOutsideMap
+  && marseille.allMarkersInFrame
+  && crete.allMarkersInFrame;
 
 console.log(pass ? "PASS" : "FAIL");
 process.exit(pass ? 0 : 1);

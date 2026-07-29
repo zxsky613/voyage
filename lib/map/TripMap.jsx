@@ -11,11 +11,13 @@ import {
   activitiesToRouteGeoJSON,
   computeDayCentroids,
   computeDayViewFitPadding,
+  computeTripOverviewFitPadding,
   dayCentroidsToPointGeoJSON,
   dayMarkerColor,
   BRAND_BLUE,
   fitMapToActivities,
   getMapStyleUrl,
+  TRIP_OVERVIEW_MAX_ZOOM,
 } from "./tripMapHelpers.js";
 
 const SOURCE_ID = "trip-activities";
@@ -159,6 +161,20 @@ export default function TripMap({
   const dayFitPaddingRef = useRef(dayFitPadding);
   dayFitPaddingRef.current = dayFitPadding;
 
+  const tripOverviewFitPadding = useMemo(
+    () =>
+      computeTripOverviewFitPadding({
+        mode,
+        sheetSnap,
+        viewportHeight: typeof window !== "undefined" ? window.innerHeight : 844,
+        mapHeightPx: mapContainerHeightPx,
+        hasLegendOverlay: legendDays.length > 0,
+      }),
+    [mode, sheetSnap, mapContainerHeightPx, legendDays.length]
+  );
+  const tripOverviewFitPaddingRef = useRef(tripOverviewFitPadding);
+  tripOverviewFitPaddingRef.current = tripOverviewFitPadding;
+
   const activityPointsData = useMemo(() => {
     if (effectiveView === "day") {
       return activitiesToPointGeoJSON(dayActivities, selectedDayIndex);
@@ -183,8 +199,6 @@ export default function TripMap({
     [effectiveView, mappedActivities, selectedDayIndex]
   );
 
-  const tripOverviewFitPendingRef = useRef(false);
-
   const activityById = useMemo(() => {
     const m = new Map();
     const scope = effectiveView === "day" ? dayActivities : mappedActivities;
@@ -193,6 +207,33 @@ export default function TripMap({
     }
     return m;
   }, [effectiveView, dayActivities, mappedActivities]);
+
+  const fitTripOverview = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveViewRef.current !== "trip") return;
+    const centroids = dayCentroidsRef.current;
+    if (!centroids.length) return;
+    const containerH = Math.max(1, map.getContainer()?.clientHeight || 1);
+    const maxZoom =
+      containerH < 180 ? 10 : containerH < 280 ? 12 : TRIP_OVERVIEW_MAX_ZOOM;
+    fitMapToActivities(map, centroids, {
+      paddingInsets: tripOverviewFitPaddingRef.current,
+      maxZoom,
+      markerRadiusPx: 22,
+      animate: false,
+    });
+  }, [mapReady]);
+
+  const fitDayView = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || effectiveViewRef.current !== "day") return;
+    const acts = dayActivitiesRef.current;
+    if (!acts.length) return;
+    fitMapToActivities(map, acts, {
+      paddingInsets: dayFitPaddingRef.current,
+      animate: false,
+    });
+  }, [mapReady]);
 
   const activityByIdRef = useRef(activityById);
   activityByIdRef.current = activityById;
@@ -285,28 +326,6 @@ export default function TripMap({
     }
   }, [mode]);
 
-  const fitTripOverview = useCallback((opts = {}) => {
-    const map = mapRef.current;
-    if (!map || !mapReady || effectiveViewRef.current !== "trip") return;
-    const centroids = dayCentroidsRef.current;
-    if (!centroids.length) return;
-    if (opts.fitOverview && tripOverviewFitPendingRef.current) {
-      fitMapToActivities(map, centroids, { padding: 40, uniformPadding: true, animate: false });
-      tripOverviewFitPendingRef.current = false;
-    }
-  }, [mapReady]);
-
-  const fitDayView = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady || effectiveViewRef.current !== "day") return;
-    const acts = dayActivitiesRef.current;
-    if (!acts.length) return;
-    fitMapToActivities(map, acts, {
-      paddingInsets: dayFitPaddingRef.current,
-      animate: false,
-    });
-  }, [mapReady]);
-
   const syncSources = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -361,13 +380,20 @@ export default function TripMap({
   }, [selectedDayIndex, mapReady, applyDayPinIconLayout]);
 
   useEffect(() => {
+    if (!mapReady || effectiveView !== "trip") return;
+    fitTripOverview();
+  }, [mapReady, effectiveView, dayCentroids, tripOverviewFitPadding, fitTripOverview]);
+
+  useEffect(() => {
+    if (!mapReady || effectiveView !== "trip" || !mapContainerHeightPx) return;
+    fitTripOverview();
+  }, [mapReady, effectiveView, mapContainerHeightPx, fitTripOverview]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || effectiveView !== "trip") return undefined;
 
-    const onResize = () => {
-      tripOverviewFitPendingRef.current = true;
-      fitTripOverview({ fitOverview: true });
-    };
+    const onResize = () => fitTripOverview();
     map.on("resize", onResize);
 
     return () => {
@@ -379,13 +405,10 @@ export default function TripMap({
     if (!mapReady || effectiveView !== "trip") return;
     const map = mapRef.current;
     if (!map) return;
-    tripOverviewFitPendingRef.current = true;
     map.resize();
-    const timer = window.setTimeout(() => {
-      fitTripOverview({ fitOverview: true });
-    }, 80);
+    const timer = window.setTimeout(fitTripOverview, 80);
     return () => window.clearTimeout(timer);
-  }, [mapReady, effectiveView, dayCentroids, fitTripOverview]);
+  }, [mapReady, effectiveView, sheetSnap, fitTripOverview]);
 
   const fitTargets =
     effectiveView === "overview"
@@ -587,9 +610,9 @@ export default function TripMap({
         type: "symbol",
         source: DAY_SOURCE_ID,
         layout: {
-          "icon-image": "day-drop-0-1",
+          "icon-image": "day-dot-0-1",
           "icon-size": 1,
-          "icon-anchor": "bottom",
+          "icon-anchor": "center",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },
@@ -661,7 +684,17 @@ export default function TripMap({
       });
 
       setMapReady(true);
-      if (effectiveViewRef.current === "day" && dayActivitiesRef.current.length) {
+      if (effectiveViewRef.current === "trip" && dayCentroidsRef.current.length) {
+        const containerH = Math.max(1, map.getContainer()?.clientHeight || 1);
+        const maxZoom =
+          containerH < 180 ? 10 : containerH < 280 ? 12 : TRIP_OVERVIEW_MAX_ZOOM;
+        fitMapToActivities(map, dayCentroidsRef.current, {
+          paddingInsets: tripOverviewFitPaddingRef.current,
+          maxZoom,
+          markerRadiusPx: 22,
+          animate: false,
+        });
+      } else if (effectiveViewRef.current === "day" && dayActivitiesRef.current.length) {
         fitMapToActivities(map, dayActivitiesRef.current, {
           paddingInsets: dayFitPaddingRef.current,
           animate: false,
@@ -674,12 +707,23 @@ export default function TripMap({
       }
       map.resize();
       window.setTimeout(() => {
-        if (cancelled || !map || effectiveViewRef.current !== "day") return;
-        if (!dayActivitiesRef.current.length) return;
-        fitMapToActivities(map, dayActivitiesRef.current, {
-          paddingInsets: dayFitPaddingRef.current,
-          animate: false,
-        });
+        if (cancelled || !map) return;
+        if (effectiveViewRef.current === "trip" && dayCentroidsRef.current.length) {
+          const containerH = Math.max(1, map.getContainer()?.clientHeight || 1);
+          const maxZoom =
+            containerH < 180 ? 10 : containerH < 280 ? 12 : TRIP_OVERVIEW_MAX_ZOOM;
+          fitMapToActivities(map, dayCentroidsRef.current, {
+            paddingInsets: tripOverviewFitPaddingRef.current,
+            maxZoom,
+            markerRadiusPx: 22,
+            animate: false,
+          });
+        } else if (effectiveViewRef.current === "day" && dayActivitiesRef.current.length) {
+          fitMapToActivities(map, dayActivitiesRef.current, {
+            paddingInsets: dayFitPaddingRef.current,
+            animate: false,
+          });
+        }
       }, 80);
     };
 
