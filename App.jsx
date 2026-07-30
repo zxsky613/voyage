@@ -12307,7 +12307,8 @@ function DestinationGuideView({
     setDestinationHighlights([]);
     setDestinationHighlightsLoading(false);
     destinationHighlightsKeyRef.current = "";
-    const y = new Date().toISOString().slice(0, 10);
+    // Local calendar day — never toISOString().slice(0,10) (UTC midnight boundary shifts "today").
+    const y = getTodayStr();
     setProgramStartDate(y);
     setProgramEndDate(y);
     // Supprimer sessionStorage si la destination a changé
