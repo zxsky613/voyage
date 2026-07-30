@@ -13020,18 +13020,13 @@ function DestinationGuideView({
       };
       const stripPrefix = (bullet) =>
         String(bullet || "").replace(/^[^:：]+[:：]\s*/, "").trim() || String(bullet || "").trim();
-      const addDaysToDate = (ymd, n) => {
-        const d = new Date(`${ymd}T12:00:00`);
-        d.setDate(d.getDate() + n);
-        return d.toISOString().slice(0, 10);
-      };
       const SLOT_DEFAULTS = ["09:00", "14:00", "19:00"];
       const schedule = [];
       const ideas = generatedDayIdeas;
       if (!Array.isArray(ideas) || ideas.length === 0) return schedule;
       for (const d of ideas) {
         const dayNum = Number(d?.day) || 1;
-        const actDate = addDaysToDate(rangeStart, dayNum - 1);
+        const actDate = addDaysToYmd(rangeStart, dayNum - 1);
         const dayTitle = String(d?.title || "");
         const city = String(displayGuide?.city || "");
         const activityMetaList = getItineraryDayActivitiesMeta(d);
