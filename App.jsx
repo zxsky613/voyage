@@ -764,6 +764,17 @@ async function postTripInvitesToApi({ to, tripTitle, startYmd, endYmd, fixedUrl,
     : [];
   if (emails.length === 0) return { ok: true, skipped: true };
 
+  let accessToken = "";
+  try {
+    const { data } = await supabase.auth.getSession();
+    accessToken = String(data?.session?.access_token || "").trim();
+  } catch {
+    accessToken = "";
+  }
+  if (!accessToken) {
+    return { ok: false, error: NOTICE_INVITE_EMAIL_FAILED };
+  }
+
   const payload = {
     to: emails,
     invite_base_url: typeof window !== "undefined" ? window.location.origin : "",
@@ -785,7 +796,10 @@ async function postTripInvitesToApi({ to, tripTitle, startYmd, endYmd, fixedUrl,
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify(payload),
       });
       const canRetry404 = r.status === 404 && i < urlsToTry.length - 1;

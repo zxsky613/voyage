@@ -16,6 +16,7 @@ import path from "node:path";
 import { loadEnv } from "vite";
 import { pickPlacesListAfterScriptFilter, sanitizeMustSeePlaces } from "./placeGuards.js";
 import { sendTripInvitesWithResend } from "./invite-send-core.js";
+import { requireInviteSender } from "./api/inviteRequestAuth.js";
 import { buildItineraryEnrichmentBlock, dedupeItineraryDayIdeas, buildProperNamesScriptConsistencyRule, tipsContainForbiddenNonLatinScript, suggestionsBundleContainsForbiddenNonLatinScript, buildTipsRewriteRetryInstruction } from "./api/_helpers.js";
 import { fetchLandmarkNamesFromOverpass } from "./api/osm/_overpassLandmarks.js";
 import { readDestinationHighlightsCacheStale } from "./lib/planner/highlightsListCache.js";
@@ -530,13 +531,28 @@ function attachGeminiMiddleware(middlewares, mode, envDir) {
     if (pathname === "/api/send-invite") {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       if (req.method === "OPTIONS") {
         res.statusCode = 200;
         res.end();
         return;
       }
       if (req.method === "POST") {
+        const supabaseUrl =
+          readServerKey(envDir, "VITE_SUPABASE_URL") || readServerKey(envDir, "SUPABASE_URL");
+        if (supabaseUrl) process.env.VITE_SUPABASE_URL = supabaseUrl;
+        const anonKey =
+          readServerKey(envDir, "VITE_SUPABASE_ANON_KEY") ||
+          readServerKey(envDir, "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY") ||
+          readServerKey(envDir, "SUPABASE_ANON_KEY");
+        if (anonKey) process.env.VITE_SUPABASE_ANON_KEY = anonKey;
+
+        const auth = await requireInviteSender(req);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { error: auth.error });
+          return;
+        }
+
         const apiKey = readServerKey(envDir, "RESEND_API_KEY");
         const fromAddress = readServerKey(envDir, "RESEND_FROM");
         if (!apiKey) {
