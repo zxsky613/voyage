@@ -3,6 +3,86 @@
  */
 
 const DEFAULT_FROM = "Justtrip <onboarding@resend.dev>";
+/** Cap hard to limit Resend cost abuse even for authenticated callers. */
+export const MAX_INVITE_RECIPIENTS = 20;
+const DEFAULT_PUBLIC_ORIGIN = "https://www.justtrip.fr";
+
+const BUILTIN_ALLOWED_ORIGINS = [
+  "https://www.justtrip.fr",
+  "https://justtrip.fr",
+  "https://voyage-planner.vercel.app",
+];
+
+/**
+ * @param {string} value
+ * @returns {string} origin without trailing slash, or ""
+ */
+export function normalizeOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function envAllowedOrigins() {
+  const fromList = String(process.env.INVITE_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((x) => normalizeOrigin(x))
+    .filter(Boolean);
+  const fromPublic = normalizeOrigin(process.env.INVITE_PUBLIC_ORIGIN || "");
+  const fromViteInvite = normalizeOrigin(process.env.VITE_INVITE_API_BASE_URL || "");
+  return [...fromList, fromPublic, fromViteInvite].filter(Boolean);
+}
+
+/**
+ * @param {string} origin
+ * @returns {boolean}
+ */
+export function isAllowedInviteOrigin(origin) {
+  const o = normalizeOrigin(origin);
+  if (!o) return false;
+  try {
+    const u = new URL(o);
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+  } catch {
+    return false;
+  }
+  const allowed = new Set([...BUILTIN_ALLOWED_ORIGINS, ...envAllowedOrigins()].map((x) => normalizeOrigin(x)));
+  return allowed.has(o);
+}
+
+/**
+ * Never embed attacker-controlled invite links in outbound mail.
+ * @param {string} [candidate]
+ * @returns {string} safe origin (no trailing slash)
+ */
+export function resolveSafeInviteBaseUrl(candidate) {
+  const normalized = normalizeOrigin(candidate);
+  if (normalized && isAllowedInviteOrigin(normalized)) return normalized;
+  const fallback = normalizeOrigin(process.env.INVITE_PUBLIC_ORIGIN || DEFAULT_PUBLIC_ORIGIN) || DEFAULT_PUBLIC_ORIGIN;
+  return isAllowedInviteOrigin(fallback) ? fallback : DEFAULT_PUBLIC_ORIGIN;
+}
+
+/**
+ * @param {string} [candidate]
+ * @returns {string} allowlisted absolute URL or ""
+ */
+export function resolveSafeTripLink(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if (!isAllowedInviteOrigin(`${u.protocol}//${u.host}`)) return "";
+    return u.toString();
+  } catch {
+    return "";
+  }
+}
 
 /**
  * @param {object} opts
@@ -20,7 +100,7 @@ export async function sendTripInvitesWithResend(opts) {
   const toRaw = Array.isArray(opts?.to) ? opts.to : [];
   const recipients = [...new Set(toRaw.map((x) => String(x || "").trim()).filter(Boolean))];
   const trip = opts?.trip && typeof opts.trip === "object" ? opts.trip : {};
-  const inviteBaseUrl = String(opts?.inviteBaseUrl || "").trim().replace(/\/+$/, "");
+  const inviteBaseUrl = resolveSafeInviteBaseUrl(opts?.inviteBaseUrl);
   const programmeText = String(opts?.programmeText || "").trim();
 
   if (!apiKey) {
@@ -34,11 +114,18 @@ export async function sendTripInvitesWithResend(opts) {
   if (recipients.length === 0) {
     return { ok: false, status: 400, error: "Aucun destinataire valide." };
   }
+  if (recipients.length > MAX_INVITE_RECIPIENTS) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Trop de destinataires (max ${MAX_INVITE_RECIPIENTS}).`,
+    };
+  }
 
   const title = String(trip?.title || "Voyage");
   const startDate = String(trip?.startDate || "");
   const endDate = String(trip?.endDate || "");
-  const link = String(trip?.link || "").trim();
+  const link = resolveSafeTripLink(trip?.link);
   const subject = `Invitation voyage: ${title}`;
   const sendResults = [];
 

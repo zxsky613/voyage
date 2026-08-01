@@ -1,9 +1,14 @@
 import { sendTripInvitesWithResend } from "../invite-send-core.js";
+import { requireInviteSender } from "./inviteRequestAuth.js";
 
-export default async function handler(req, res) {
+function setInviteCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+export default async function handler(req, res) {
+  setInviteCors(res);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
@@ -12,6 +17,12 @@ export default async function handler(req, res) {
 
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const auth = await requireInviteSender(req);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
     return;
   }
 
