@@ -217,8 +217,9 @@ import {
 import { buildActivityExpensePayload, buildLodgingExpensePayload } from "./lib/budget/expensePayloads.js";
 import AllTripsView from "./lib/trips/AllTripsView.jsx";
 import { classifyTrips } from "./lib/trips/classifyTrips.js";
-import { writeTripHeroCache, clearTripHeroCache } from "./lib/trips/tripHeroCache.js";
-import { persistTripHeroUrl } from "./lib/trips/persistTripHeroUrl.js";
+import { clearTripHeroCache } from "./lib/trips/tripHeroCache.js";
+import { applyCreateTripHeroCandidate } from "./lib/trips/applyCreateTripHeroCandidate.js";
+import TripLiquidGlassShell from "./lib/trips/TripLiquidGlassShell.jsx";
 
 /** Si true : seuls les abonnés Premium (metadata) ou le bypass créateur peuvent générer un programme ; les autres voient une modale au clic. Côté serveur : GEMINI_ITINERARY_PREMIUM_ONLY + GEMINI_CREATOR_ITINERARY. */
 const VITE_ITINERARY_PREMIUM_ONLY =
@@ -7759,63 +7760,6 @@ function CityImage({ title, frameClassName = "rounded-[3rem]" }) {
   );
 }
 
-/** Fond photo ville + flou très léger / verre (budget, chat, bandeau calendrier). */
-function TripLiquidGlassShell({
-  imageTitle,
-  active = false,
-  /** `high` : texte blanc lisible sur photos très claires (ex. cartes onglet Budget). */
-  contrast = "standard",
-  className = "",
-  children,
-}) {
-  const high = contrast === "high";
-  return (
-    <div className={`relative isolate overflow-hidden ${className}`.trim()}>
-      {/* Photo : coins carrés, le parent arrondi + overflow-hidden évite le halo gris (CityImage ne doit pas forcer rounded-[3rem] ici). */}
-      <div
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        style={{
-          filter: high
-            ? active
-              ? "blur(0.7px) saturate(1.12) brightness(0.78)"
-              : "blur(0.5px) saturate(1.1) brightness(0.82)"
-            : active
-              ? "blur(0.7px) saturate(1.28) brightness(0.93)"
-              : "blur(0.5px) saturate(1.22) brightness(0.95)",
-        }}
-      >
-        <CityImage title={String(imageTitle || "voyage")} frameClassName="rounded-none" />
-      </div>
-
-      {/* Voile : côté texte (gauche) plus dense en mode high pour le contraste */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: high
-            ? active
-              ? "linear-gradient(118deg, rgba(2,6,23,0.78) 0%, rgba(2,6,23,0.52) 46%, rgba(2,6,23,0.28) 100%)"
-              : "linear-gradient(118deg, rgba(2,6,23,0.72) 0%, rgba(2,6,23,0.48) 48%, rgba(2,6,23,0.22) 100%)"
-            : active
-              ? "linear-gradient(160deg, rgba(2,6,23,0.24) 0%, rgba(2,6,23,0.38) 100%)"
-              : "linear-gradient(160deg, rgba(2,6,23,0.18) 0%, rgba(2,6,23,0.32) 100%)",
-        }}
-      />
-
-      {/* Reflet haut : atténué en high pour ne pas éclaircir le texte */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: high
-            ? "linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 36%)"
-            : "linear-gradient(180deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.03) 28%, rgba(255,255,255,0) 62%)",
-        }}
-      />
-
-      <div className="relative">{children}</div>
-    </div>
-  );
-}
-
 function JusttripBrand({ size = "md", className = "" }) {
   const { t } = useI18n();
   const h =
@@ -14290,7 +14234,7 @@ function DestinationGuideView({
                     destination: String(displayGuide.city || ""),
                     start_date: startDate,
                     end_date: endDate,
-                    hero_image_url: heroUrl,
+                    guideHeroCandidateUrl: heroUrl,
                     selectedActivitiesWithSchedule,
                     selectedActivities: selectedActivitiesWithSchedule.map((r) => r.title),
                   });
@@ -15634,7 +15578,6 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
   const rawLabel = String(trip?.destination || trip?.title || "").trim();
   const { text: labelI18n } = useUiTranslatedCityName(rawLabel, language);
   const label = rawLabel ? labelI18n : t("modals.tripDefault");
-  const imageTitle = String(trip?.destination || trip?.title || "voyage");
   const dr =
     trip?.start_date && trip?.end_date
       ? `${formatDate(trip.start_date)} — ${formatDate(trip.end_date)}`
@@ -15647,7 +15590,7 @@ function BudgetTripSummaryCard({ trip, activities, groupExpenses, groupExpensesE
       className="group block w-full overflow-hidden rounded-[2rem] border-0 bg-transparent p-0 text-left shadow-[0_12px_26px_rgba(15,23,42,0.16)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_30px_rgba(15,23,42,0.2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-200"
     >
       <TripLiquidGlassShell
-        imageTitle={imageTitle}
+        trip={trip}
         active={false}
         contrast="high"
         className="rounded-[2rem] border border-white/42 text-white shadow-[0_12px_26px_rgba(15,23,42,0.16)] transition group-hover:border-white/55"
@@ -17559,11 +17502,6 @@ export default function App() {
         fixed_url: String(payload.fixed_url || ""),
         owner_id: ownerId,
       };
-      const heroFromPayload = String(payload?.hero_image_url || "").trim();
-      if (/^https?:\/\//i.test(heroFromPayload)) {
-        body.hero_image_url = heroFromPayload;
-      }
-
       // If the DB schema cache is stale or columns are missing,
       // retry the insert while removing the missing column from payload.
       for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -17571,9 +17509,8 @@ export default function App() {
         const { data: insertedRows, error } = await supabase.from("trips").insert(body).select("id");
         if (!error) {
           const newTripId = String(insertedRows?.[0]?.id || "").trim();
-          if (newTripId && /^https?:\/\//i.test(heroFromPayload)) {
-            writeTripHeroCache(newTripId, heroFromPayload);
-            void persistTripHeroUrl(newTripId, heroFromPayload);
+          if (newTripId) {
+            void applyCreateTripHeroCandidate(newTripId, payload);
           }
           const withSchedule = Array.isArray(payload?.selectedActivitiesWithSchedule)
             ? payload.selectedActivitiesWithSchedule
@@ -17659,7 +17596,6 @@ export default function App() {
             const optimisticTrip = {
               ...body,
               id: newTripId,
-              ...(heroFromPayload ? { hero_image_url: heroFromPayload } : {}),
             };
             setTrips((prev) => [...(prev || []), optimisticTrip]);
             const tripStart = toYMD(body.start_date, getTodayStr());
@@ -18591,9 +18527,7 @@ export default function App() {
             <div className="rounded-[2rem] bg-white/70 p-3 shadow-[0_14px_36px_rgba(2,6,23,0.07)] ring-1 ring-slate-200/55 backdrop-blur-lg sm:p-5">
               {selectedTrip ? (
                 <TripLiquidGlassShell
-                  imageTitle={String(
-                    selectedTrip?.destination || selectedTrip?.title || t("modals.tripDefault")
-                  )}
+                  trip={selectedTrip}
                   active
                   className="rounded-2xl border border-white/50 shadow-[0_12px_28px_rgba(2,6,23,0.12)]"
                 >

@@ -1,12 +1,17 @@
 /**
- * Backfill : résout et persiste hero_image_url pour les voyages sans URL en base.
- * Usage: node scripts/backfill-trip-hero-urls.mjs [--dry-run]
+ * Backfill / repair hero_image_url.
+ * Usage:
+ *   node scripts/backfill-trip-hero-urls.mjs [--dry-run]           — NULL → resolve + set_trip_hero
+ *   node scripts/backfill-trip-hero-urls.mjs --repair --dry-run    — liste les lignes empoisonnées
+ *   node scripts/backfill-trip-hero-urls.mjs --repair              — remet à NULL les URLs bloquées
  */
 import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { buildHeroResolveLabel } from "../lib/images/heroResolveLabel.js";
+import { isBlockedTripHeroUrl, isValidPersistedTripHeroUrl } from "../lib/trips/tripHeroQuality.js";
 
 const dryRun = process.argv.includes("--dry-run");
+const repairMode = process.argv.includes("--repair");
 
 const envPath = ".env.local";
 /** @type {Record<string, string>} */
@@ -23,6 +28,11 @@ const supabaseUrl = env.VITE_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || "";
 const role = env.SUPABASE_SERVICE_ROLE_KEY || "";
 const resolveBase = env.VITE_INVITE_API_BASE_URL || "http://localhost:5173";
 
+if (!supabaseUrl || !role) {
+  console.error("FAIL: VITE_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant");
+  process.exit(1);
+}
+
 const db = createClient(supabaseUrl, role, { auth: { persistSession: false, autoRefreshToken: false } });
 
 const { data: rows, error } = await db
@@ -33,6 +43,36 @@ const { data: rows, error } = await db
 if (error) {
   console.error("FAIL:", error.message);
   process.exit(1);
+}
+
+if (repairMode) {
+  const poisoned = (rows || []).filter((r) => {
+    const u = String(r?.hero_image_url || "").trim();
+    return u && isBlockedTripHeroUrl(u);
+  });
+
+  console.log(`\n=== Repair hero_image_url (${dryRun ? "dry-run" : "APPLY"}) ===\n`);
+  console.log(`${poisoned.length} ligne(s) empoisonnée(s) (garde qualité)\n`);
+
+  for (const trip of poisoned) {
+    const u = String(trip.hero_image_url || "").trim();
+    console.log(`  ${trip.id}`);
+    console.log(`    ${trip.destination || trip.title || "(sans titre)"}`);
+    console.log(`    ${u}\n`);
+  }
+
+  if (!dryRun) {
+    for (const trip of poisoned) {
+      // Ne doit JAMAIS écrire autre chose que null. Toute écriture d'URL passe par
+      // set_trip_hero (L.109) — sinon la garde qualité est contournée.
+      const { error: upErr } = await db.from("trips").update({ hero_image_url: null }).eq("id", trip.id);
+      if (upErr) console.warn("  FAIL", trip.id, upErr.message);
+    }
+    console.log("Repair terminé.");
+  } else {
+    console.log("Dry-run — aucune écriture. Relancer sans --dry-run pour appliquer.");
+  }
+  process.exit(0);
 }
 
 const pending = (rows || []).filter((r) => !String(r?.hero_image_url || "").trim());
@@ -59,8 +99,8 @@ for (const trip of pending) {
     continue;
   }
 
-  if (!/^https?:\/\//i.test(url)) {
-    console.warn("SKIP (pas d'URL):", trip.destination || trip.title);
+  if (!isValidPersistedTripHeroUrl(url)) {
+    console.warn("SKIP (URL invalide/bloquée):", trip.destination || trip.title);
     continue;
   }
 
@@ -68,9 +108,17 @@ for (const trip of pending) {
   console.log(`       ${url.slice(0, 90)}…`);
 
   if (!dryRun) {
-    const { error: upErr } = await db.from("trips").update({ hero_image_url: url }).eq("id", trip.id);
-    if (upErr) console.warn("  persist fail:", upErr.message);
+    const { data, error: rpcErr } = await db.rpc("set_trip_hero", {
+      p_trip_id: trip.id,
+      p_url: url,
+    });
+    if (rpcErr) {
+      console.warn("  set_trip_hero fail:", rpcErr.message);
+    } else if (data && data.ok !== true) {
+      console.warn("  set_trip_hero rejected:", data.reason || "unknown");
+    }
   }
 }
 
 console.log("Done.");
+process.exit(0);

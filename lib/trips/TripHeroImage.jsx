@@ -1,107 +1,25 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef } from "react";
 import { useI18n } from "../../i18n/I18nContext.jsx";
-import { getResolvedImage } from "../getResolvedImage.js";
-import { isResolveHeroEnabled } from "../images/featureFlags.js";
-import { buildHeroResolveLabel } from "../images/heroResolveLabel.js";
-import { resolveDestinationHeroFallbackBackground } from "../images/placeholder.js";
-import { persistTripHeroUrl } from "./persistTripHeroUrl.js";
-import { readTripHeroCache, writeTripHeroCache } from "./tripHeroCache.js";
-
-/** @param {object} trip */
-function readInlineTripHeroUrl(trip) {
-  const raw = String(trip?.hero_image_url || trip?.heroImageUrl || trip?.hero_url || "").trim();
-  return /^https?:\/\//i.test(raw) ? raw : "";
-}
-
-function notifyHeroPersisted(tripId, url) {
-  if (typeof window === "undefined" || !tripId || !url) return;
-  window.dispatchEvent(new CustomEvent("trip-hero-persisted", { detail: { tripId, url } }));
-}
+import { useTripHero } from "./useTripHero.js";
 
 /**
- * Photo héro d'un voyage — source de vérité : trips.hero_image_url (Supabase),
- * cache perf localStorage tp_trip_hero_v2_{tripId}.
+ * Photo héro d'un voyage — useTripHero (trips.hero_image_url + resolve unique).
  * @param {{ trip: object, frameClassName?: string }} props
  */
 export default function TripHeroImage({ trip, frameClassName = "" }) {
-  const { language, t } = useI18n();
+  const { t } = useI18n();
   const tripId = String(trip?.id || "").trim();
-  const label = buildHeroResolveLabel(String(trip?.destination || trip?.title || "").trim());
-  const fallbackBg = resolveDestinationHeroFallbackBackground(tripId || label);
   const imgRef = useRef(null);
-
-  const [url, setUrl] = useState(() => {
-    const inline = readInlineTripHeroUrl(trip);
-    if (inline) return inline;
-    if (tripId) {
-      const own = readTripHeroCache(tripId);
-      if (own) return own;
-    }
-    return "";
-  });
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [imgLoaded, setImgLoaded] = useState(false);
-
-  useEffect(() => {
-    setLoadFailed(false);
-    setImgLoaded(false);
-
-    const inline = readInlineTripHeroUrl(trip);
-    if (inline) {
-      setUrl(inline);
-      if (tripId) writeTripHeroCache(tripId, inline);
-      return undefined;
-    }
-
-    if (tripId) {
-      const own = readTripHeroCache(tripId);
-      if (own) {
-        setUrl(own);
-        void persistTripHeroUrl(tripId, own).then((ok) => {
-          if (ok) notifyHeroPersisted(tripId, own);
-        });
-        return undefined;
-      }
-    }
-
-    if (!isResolveHeroEnabled() || !label) {
-      setUrl("");
-      return undefined;
-    }
-
-    let cancelled = false;
-    (async () => {
-      const hit = await getResolvedImage({
-        kind: "hero",
-        label,
-        context: "",
-        uiLang: language,
-      });
-      if (cancelled) return;
-      const next = String(hit?.url || "").trim();
-      if (next) {
-        setUrl(next);
-        if (tripId) {
-          writeTripHeroCache(tripId, next);
-          const persisted = await persistTripHeroUrl(tripId, next);
-          if (persisted) notifyHeroPersisted(tripId, next);
-        }
-      } else {
-        setUrl("");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tripId, label, language, trip?.hero_image_url, trip?.heroImageUrl, trip?.hero_url]);
-
-  useLayoutEffect(() => {
-    setImgLoaded(false);
-  }, [url]);
-
-  const markLoaded = useCallback(() => {
-    setImgLoaded(true);
-  }, []);
+  const {
+    url,
+    loadFailed,
+    imgLoaded,
+    fallbackBg,
+    markLoaded,
+    onImageError,
+    eagerLoad,
+    showImg,
+  } = useTripHero(trip);
 
   useLayoutEffect(() => {
     const el = imgRef.current;
@@ -112,10 +30,9 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
     return () => el.removeEventListener("load", onLoad);
   }, [url, loadFailed, markLoaded]);
 
-  const showImg = url && !loadFailed;
-
   return (
     <div
+      data-trip-hero-root={tripId || undefined}
       className={`relative h-full w-full min-h-0 overflow-hidden ${frameClassName}`.trim()}
       style={!showImg ? { background: fallbackBg } : undefined}
     >
@@ -125,12 +42,13 @@ export default function TripHeroImage({ trip, frameClassName = "" }) {
           key={url}
           src={url}
           alt=""
-          className="h-full w-full min-h-0 object-cover object-[center_45%]"
+          className="absolute inset-0 h-full w-full min-h-[1px] object-cover object-[center_45%]"
           referrerPolicy="strict-origin-when-cross-origin"
-          loading="lazy"
+          loading={eagerLoad ? "eager" : "lazy"}
+          fetchPriority={eagerLoad ? "high" : "auto"}
           decoding="async"
           onLoad={markLoaded}
-          onError={() => setLoadFailed(true)}
+          onError={onImageError}
         />
       ) : null}
       {!imgLoaded && !loadFailed && url ? (
