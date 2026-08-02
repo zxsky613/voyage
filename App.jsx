@@ -181,6 +181,7 @@ import {
   addDaysToYmd,
 } from "./lib/planner/buildPlannerMapActivities.js";
 import { buildPlannerTripDayGroups } from "./lib/planner/buildPlannerTripDayGroups.js";
+import { planActivityDateShifts } from "./lib/trip/shiftActivityDatesForTripRange.js";
 import PlannerDayTimeline from "./lib/planner/PlannerDayTimeline.jsx";
 import PlannerDayOverviewList from "./lib/planner/PlannerDayOverviewList.jsx";
 import PlannerTimelineScopeToggle from "./lib/planner/PlannerTimelineScopeToggle.jsx";
@@ -18323,6 +18324,68 @@ export default function App() {
                 : t
             )
           );
+
+          // Keep activities inside the new range: shift by start-date delta, then clamp.
+          // Without this, buildPlannerTripDayGroups / calendar inTrip hide them permanently.
+          if (datesChanged) {
+            const tripIdStr = String(trip.id);
+            const tripActs = (activities || []).filter(
+              (a) => String(a?.trip_id || "") === tripIdStr
+            );
+            const shifts = planActivityDateShifts({
+              activities: tripActs,
+              prevStart,
+              newStart: nextStart,
+              newEnd: nextEnd,
+            });
+            if (shifts.length > 0) {
+              const persisted = await Promise.all(
+                shifts.map(async ({ id, to }) => {
+                  let datePayload = { date: to, date_key: to, activity_date: to };
+                  for (let att = 0; att < 6; att += 1) {
+                    if (!Object.keys(datePayload).length) return null;
+                    const { error: dateErr } = await supabase
+                      .from("activities")
+                      .update(datePayload)
+                      .eq("id", id);
+                    if (!dateErr) return { id: String(id), to };
+                    const missing = parseMissingSchemaColumnName(dateErr);
+                    if (missing && Object.prototype.hasOwnProperty.call(datePayload, missing)) {
+                      const { [missing]: _removed, ...rest } = datePayload;
+                      datePayload = rest;
+                      continue;
+                    }
+                    return null;
+                  }
+                  return null;
+                })
+              );
+              const shiftMap = new Map(
+                persisted.filter(Boolean).map((s) => [s.id, s.to])
+              );
+              if (shiftMap.size > 0) {
+                setActivities((prev) =>
+                  (prev || []).map((a) => {
+                    const to = shiftMap.get(String(a?.id || ""));
+                    if (!to) return a;
+                    return normalizeActivity({
+                      ...a,
+                      date: to,
+                      date_key: to,
+                      activity_date: to,
+                    });
+                  })
+                );
+                const shiftedActs = tripActs.map((a) => {
+                  const applied = shiftMap.get(String(a?.id || ""));
+                  return applied
+                    ? { ...a, date: applied, date_key: applied, activity_date: applied }
+                    : a;
+                });
+                void syncActivityRemindersForTrip(shiftedActs, tripIdStr);
+              }
+            }
+          }
 
           if (String(selectedTripId) === String(trip.id)) {
             setSelectedDate(nextStart);
