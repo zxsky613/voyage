@@ -18339,45 +18339,51 @@ export default function App() {
               newEnd: nextEnd,
             });
             if (shifts.length > 0) {
-              const shiftMap = new Map(shifts.map((s) => [String(s.id), s.to]));
-              await Promise.all(
+              const persisted = await Promise.all(
                 shifts.map(async ({ id, to }) => {
                   let datePayload = { date: to, date_key: to, activity_date: to };
                   for (let att = 0; att < 6; att += 1) {
+                    if (!Object.keys(datePayload).length) return null;
                     const { error: dateErr } = await supabase
                       .from("activities")
                       .update(datePayload)
                       .eq("id", id);
-                    if (!dateErr) return;
+                    if (!dateErr) return { id: String(id), to };
                     const missing = parseMissingSchemaColumnName(dateErr);
                     if (missing && Object.prototype.hasOwnProperty.call(datePayload, missing)) {
                       const { [missing]: _removed, ...rest } = datePayload;
                       datePayload = rest;
                       continue;
                     }
-                    return;
+                    return null;
                   }
+                  return null;
                 })
               );
-              setActivities((prev) =>
-                (prev || []).map((a) => {
-                  const to = shiftMap.get(String(a?.id || ""));
-                  if (!to) return a;
-                  return normalizeActivity({
-                    ...a,
-                    date: to,
-                    date_key: to,
-                    activity_date: to,
-                  });
-                })
+              const shiftMap = new Map(
+                persisted.filter(Boolean).map((s) => [s.id, s.to])
               );
-              const shiftedActs = tripActs.map((a) => {
-                const to = shiftMap.get(String(a?.id || ""));
-                return to
-                  ? { ...a, date: to, date_key: to, activity_date: to }
-                  : a;
-              });
-              void syncActivityRemindersForTrip(shiftedActs, tripIdStr);
+              if (shiftMap.size > 0) {
+                setActivities((prev) =>
+                  (prev || []).map((a) => {
+                    const to = shiftMap.get(String(a?.id || ""));
+                    if (!to) return a;
+                    return normalizeActivity({
+                      ...a,
+                      date: to,
+                      date_key: to,
+                      activity_date: to,
+                    });
+                  })
+                );
+                const shiftedActs = tripActs.map((a) => {
+                  const applied = shiftMap.get(String(a?.id || ""));
+                  return applied
+                    ? { ...a, date: applied, date_key: applied, activity_date: applied }
+                    : a;
+                });
+                void syncActivityRemindersForTrip(shiftedActs, tripIdStr);
+              }
             }
           }
 
