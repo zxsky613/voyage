@@ -89,6 +89,11 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'reason', 'invalid_url');
   END IF;
 
+  -- Rejette l'encodage % incomplet (ex. 100%organic) — aligné sur decodeURIComponent JS.
+  IF v_url ~ '%([^0-9a-fA-F]|$)' OR v_url ~ '%[0-9a-fA-F]([^0-9a-fA-F]|$)' THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'invalid_url_encoding');
+  END IF;
+
   IF public.is_blocked_hero_image_url(v_url) THEN
     RETURN jsonb_build_object('ok', false, 'reason', 'blocked_quality');
   END IF;
@@ -104,6 +109,7 @@ BEGIN
 
   IF v_cur <> ''
      AND v_cur ~* '^https?://'
+     AND NOT (v_cur ~ '%([^0-9a-fA-F]|$)' OR v_cur ~ '%[0-9a-fA-F]([^0-9a-fA-F]|$)')
      AND NOT public.is_blocked_hero_image_url(v_cur) THEN
     RETURN jsonb_build_object('ok', true, 'reason', 'already_set', 'url', v_cur);
   END IF;
