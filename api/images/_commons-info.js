@@ -8,7 +8,12 @@ export function commonsFileTitleFromUrl(url) {
   const path = u.split("?")[0];
   const parts = path.split("/").filter(Boolean);
   for (let i = parts.length - 1; i >= 0; i -= 1) {
-    let seg = decodeURIComponent(parts[i] || "");
+    let seg;
+    try {
+      seg = decodeURIComponent(parts[i] || "");
+    } catch {
+      seg = parts[i] || "";
+    }
     const px = seg.match(/^(\d+)px-(.+)$/i);
     if (px) seg = px[2];
     if (/\.(jpe?g|png|webp|gif|svg)$/i.test(seg)) return seg;

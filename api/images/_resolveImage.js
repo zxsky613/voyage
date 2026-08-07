@@ -4,6 +4,7 @@ import {
   ensureStoredHeroImageUrl,
   isCommonsThumbPath,
   isWikimediaUploadUrl,
+  safeDecodeURIComponent,
 } from "../../lib/images/commonsThumbUrl.js";
 import { isLikelyOrbitalOrMapImagery, isLikelyWikiBrandOrLogoImage, isLikelyNonScenicHeroImagery } from "../../lib/images/wikiImageFilters.js";
 import { passesEntityImageGuards, resetImageGeoMismatchLog } from "../../lib/images/imageEntityGuard.js";
@@ -63,7 +64,7 @@ function passesKindFilters(c, kind) {
   if (kind === "hero") {
     if (isLikelyOrbitalOrMapImagery(c.url, "", "")) return false;
     if (isLikelyWikiBrandOrLogoImage(c.url, "")) return false;
-    if (isLikelyNonScenicHeroImagery(c.url, decodeURIComponent(c.url), "")) return false;
+    if (isLikelyNonScenicHeroImagery(c.url, safeDecodeURIComponent(c.url), "")) return false;
   }
   return true;
 }
@@ -187,7 +188,7 @@ async function resolvePlaceFromEntity(entity, kind) {
 
 function isBlockedHeroCacheEntry(url, kind) {
   if (kind !== "hero") return false;
-  const decodedTitle = decodeURIComponent(String(url || ""));
+  const decodedTitle = safeDecodeURIComponent(String(url || ""));
   return (
     isLikelyOrbitalOrMapImagery(url, decodedTitle, "") ||
     isLikelyWikiBrandOrLogoImage(url, decodedTitle) ||
