@@ -103,7 +103,7 @@ import {
   formatDestinationHeroSubtitle,
   activityPlaceholderStyle,
 } from "./lib/images/placeholder.js";
-import { toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
+import { hasMalformedUriEncoding, safeDecodeURIComponent, toCommonsThumbUrl } from "./lib/images/commonsThumbUrl.js";
 import {
   stripItineraryBulletTimePrefix,
   buildActivityResolveParams,
@@ -634,7 +634,9 @@ purgeNegativeCityImageLocalStorageOnce();
 function isRejectedCachedHeroUrl(url) {
   const s = String(url || "").trim();
   if (!s) return false;
-  const decoded = decodeURIComponent(s);
+  // Incomplete percent-encoding must reject (never throw — localStorage / render paths).
+  if (hasMalformedUriEncoding(s)) return true;
+  const decoded = safeDecodeURIComponent(s);
   return (
     isLikelyOrbitalOrMapImagery(s, decoded) ||
     isLikelyWikiBrandOrLogoImage(s, decoded) ||
@@ -2443,7 +2445,9 @@ function getCityImageCacheKey(cityInput) {
 function isBlockedHeroImageUrl(url) {
   const s = String(url || "").trim();
   if (!s) return false;
-  const decoded = decodeURIComponent(s);
+  // Malformed % sequences used to URIError during destinationHeroSrc useMemo → white-screen.
+  if (hasMalformedUriEncoding(s)) return true;
+  const decoded = safeDecodeURIComponent(s);
   if (isLikelyWikiFlagOrSealThumb(s)) return true;
   if (isLikelyOrbitalOrMapImagery(s, decoded)) return true;
   if (isLikelyWikiBrandOrLogoImage(s, decoded)) return true;
@@ -7501,7 +7505,8 @@ function firstCuratedHeroCandidate(tripTitle) {
     list.find((u) => {
       const s = String(u || "").trim();
       if (!s || isLikelyWikiFlagOrSealThumb(s)) return false;
-      const decoded = decodeURIComponent(s);
+      if (hasMalformedUriEncoding(s)) return false;
+      const decoded = safeDecodeURIComponent(s);
       if (isLikelyOrbitalOrMapImagery(s, decoded)) return false;
       if (isLikelyWikiBrandOrLogoImage(s, decoded)) return false;
       return true;
