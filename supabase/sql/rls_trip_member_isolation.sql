@@ -136,6 +136,9 @@ CREATE POLICY "activities_member_insert" ON public.activities
   FOR INSERT TO authenticated
   WITH CHECK (public.trip_member_can_access(trip_id));
 
+-- NOTE: USING+WITH CHECK alone still allow trip_id reassignment across two
+-- accessible trips. Apply supabase/sql/rls_forbid_trip_id_reassign.sql
+-- (BEFORE UPDATE OF trip_id trigger) to freeze trip_id.
 CREATE POLICY "activities_member_update" ON public.activities
   FOR UPDATE TO authenticated
   USING (public.trip_member_can_access(trip_id))
