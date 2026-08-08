@@ -1,8 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
+import { cacheRawNameMatchesPlace, reasonableNameMatch } from "../../lib/planner/placeNameMatch.js";
 import { getSupabaseServiceRoleKey, getSupabaseUrl } from "../_helpers.js";
 
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const UNVERIFIED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** @param {string} status */
+function enrichmentQualityRank(status) {
+  const s = String(status || "").trim().toLowerCase();
+  if (s === "verified") return 3;
+  if (s === "partial") return 2;
+  if (s === "unverified") return 1;
+  return 0;
+}
 
 let supabaseAdmin = null;
 let cacheDisabledReason = null;
@@ -115,6 +125,20 @@ export async function readPlaceEnrichmentCache(name, city) {
     return null;
   }
   if (!data) return null;
+  const placeName = String(name || "").trim();
+  const rawName = String(data.raw_name || "").trim();
+  // Poison / mismatch name↔searchName : ne pas servir ni garder l’entrée.
+  if (rawName && !cacheRawNameMatchesPlace(placeName, rawName)) {
+    console.warn(
+      `[place-enrichment-cache] drop mismatched entry place=${JSON.stringify(placeName)} raw=${JSON.stringify(rawName)} city=${JSON.stringify(keys.city_normalized)}`
+    );
+    await db
+      .from("place_enrichment_cache")
+      .delete()
+      .eq("place_name_normalized", keys.place_name_normalized)
+      .eq("city_normalized", keys.city_normalized);
+    return null;
+  }
   return mapRow(data);
 }
 
@@ -127,10 +151,32 @@ export async function writePlaceEnrichmentCache(name, city, enrichment) {
   const db = getAdmin();
   const keys = normalizePlaceCacheKey(name, city);
   if (!db || !keys.place_name_normalized) return false;
+
+  const placeName = String(name || "").trim();
+  const status = String(enrichment?.status || "unverified").trim().toLowerCase() || "unverified";
+  const rawName = String(enrichment?.name || placeName).trim() || placeName;
+
+  // Ne jamais enregistrer sous la clé « name » un résultat qui désigne un autre lieu
+  // (ex. name=Louvre + searchName=McDonalds → Jardins des Champs-Élysées).
+  if (status !== "unverified" && rawName && !reasonableNameMatch(placeName, rawName)) {
+    console.warn(
+      `[place-enrichment-cache] refuse mismatched write place=${JSON.stringify(placeName)} raw=${JSON.stringify(rawName)}`
+    );
+    return false;
+  }
+
+  // Ne pas dégrader une entrée meilleure (verified/partial) en unverified via l’API publique.
+  if (status === "unverified") {
+    const existing = await readPlaceEnrichmentCache(placeName, city);
+    if (existing && enrichmentQualityRank(existing.status) > enrichmentQualityRank("unverified")) {
+      return false;
+    }
+  }
+
   const row = {
     ...keys,
     location_id: enrichment.locationId || null,
-    status: enrichment.status || "unverified",
+    status,
     source: enrichment.source || "none",
     rating: enrichment.rating ?? null,
     num_reviews: enrichment.numReviews ?? null,
@@ -140,7 +186,7 @@ export async function writePlaceEnrichmentCache(name, city, enrichment) {
     longitude: enrichment.longitude ?? null,
     tripadvisor_url: enrichment.tripadvisorUrl || null,
     photo_urls: enrichment.photos?.length ? enrichment.photos : null,
-    raw_name: enrichment.name || name,
+    raw_name: rawName,
     updated_at: new Date().toISOString(),
   };
   const fsqId = String(enrichment.fsqId || enrichment.fsq_place_id || "").trim();

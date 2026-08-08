@@ -1,4 +1,7 @@
 import { fetchWithRetry } from "../images/_fetchRetry.js";
+import { nameMatchScore, reasonableNameMatch } from "../../lib/planner/placeNameMatch.js";
+
+export { reasonableNameMatch };
 
 const TERRA_BASE = "https://terra.tripadvisor.com/api";
 
@@ -166,40 +169,6 @@ function parseSearchParts(searchQuery, options = {}) {
     };
   }
   return { query: raw, geoName: "" };
-}
-
-function normalizeTokens(s) {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function nameMatchScore(query, name) {
-  const qTokens = normalizeTokens(query).split(" ").filter((w) => w.length > 2);
-  const nTokens = new Set(normalizeTokens(name).split(" ").filter((w) => w.length > 2));
-  if (!qTokens.length || !nTokens.size) return 0;
-  let hit = 0;
-  for (const t of qTokens) if (nTokens.has(t)) hit += 1;
-  return hit / qTokens.length;
-}
-
-/**
- * @param {string} query
- * @param {string} name
- */
-export function reasonableNameMatch(query, name) {
-  const score = nameMatchScore(query, name);
-  if (score >= 0.35) return true;
-  const q = normalizeTokens(query);
-  const n = normalizeTokens(name);
-  if (!q || !n) return false;
-  if (q.length >= 4 && n.includes(q)) return true;
-  if (n.length >= 4 && q.includes(n)) return true;
-  return score >= 0.25;
 }
 
 /**
