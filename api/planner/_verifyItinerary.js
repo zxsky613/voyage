@@ -1,4 +1,5 @@
 import { parseBody, sendJson, handleCors, resolveUiLanguage } from "../_helpers.js";
+import { reasonableNameMatch } from "../../lib/planner/placeNameMatch.js";
 import {
   createTripAdvisorCallCounter,
   getLocationDetails,
@@ -96,24 +97,34 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
       const details = await getLocationDetails(hit.locationId, locale);
       if (details) {
         taCounter.inc();
-        const photos = await getLocationPhotos(hit.locationId, locale, 5);
-        const enrichment = {
-          ...details,
-          name: details.name || hit.name || placeName,
-          status: "verified",
-          source: "tripadvisor",
-          photos,
-        };
-        await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-        if (debugEntry) {
-          debugEntry.reason = "verified";
-          debugEntry.locationId = hit.locationId;
-          debugEntry.firstResult = hit.name;
-          debugEntry.results = trace?.attempts?.slice(-1)[0]?.results;
+        const resolvedName = String(details.name || hit.name || placeName).trim();
+        // searchName est contrôlé par le client : exiger un match avec le name affiché.
+        if (!reasonableNameMatch(placeName, resolvedName)) {
+          if (debugEntry) {
+            debugEntry.reason = "ta_name_mismatch";
+            debugEntry.firstResult = resolvedName;
+          }
+        } else {
+          const photos = await getLocationPhotos(hit.locationId, locale, 5);
+          const enrichment = {
+            ...details,
+            name: resolvedName,
+            status: "verified",
+            source: "tripadvisor",
+            photos,
+          };
+          await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
+          if (debugEntry) {
+            debugEntry.reason = "verified";
+            debugEntry.locationId = hit.locationId;
+            debugEntry.firstResult = hit.name;
+            debugEntry.results = trace?.attempts?.slice(-1)[0]?.results;
+          }
+          return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
         }
-        return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
+      } else if (debugEntry) {
+        debugEntry.reason = "details_failed";
       }
-      if (debugEntry) debugEntry.reason = "details_failed";
     } else {
       taThrottled = trace?.reason === "throttled";
       if (debugEntry) {
@@ -129,20 +140,28 @@ async function enrichPlaceByNameRemote(name, city, near, locale, taCounter, opts
   opts.fsqCounter?.inc();
   const fsq = await searchFoursquarePlace(searchName || placeName, near || cityNorm, locale);
   if (fsq && (Number.isFinite(fsq.latitude) || Number.isFinite(fsq.longitude))) {
-    const enrichment = {
-      name: fsq.name || placeName,
-      status: "partial",
-      source: "foursquare",
-      latitude: fsq.latitude,
-      longitude: fsq.longitude,
-      priceLevel: fsq.priceLevel,
-      foursquareUrl: fsq.foursquareUrl,
-      fsqId: fsq.fsqId,
-      fsqCategories: fsq.fsqCategories,
-    };
-    await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
-    if (debugEntry) debugEntry.reason = "partial_foursquare";
-    return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
+    const fsqName = String(fsq.name || "").trim() || placeName;
+    if (!reasonableNameMatch(placeName, fsqName)) {
+      if (debugEntry) {
+        debugEntry.reason = "fsq_name_mismatch";
+        debugEntry.firstResult = fsqName;
+      }
+    } else {
+      const enrichment = {
+        name: fsqName,
+        status: "partial",
+        source: "foursquare",
+        latitude: fsq.latitude,
+        longitude: fsq.longitude,
+        priceLevel: fsq.priceLevel,
+        foursquareUrl: fsq.foursquareUrl,
+        fsqId: fsq.fsqId,
+        fsqCategories: fsq.fsqCategories,
+      };
+      await writePlaceEnrichmentCache(placeName, cityNorm, enrichment);
+      if (debugEntry) debugEntry.reason = "partial_foursquare";
+      return opts.collectDebug ? { ...enrichment, _debug: debugEntry } : enrichment;
+    }
   }
 
   const unverified = { name: placeName, status: "unverified", source: "none" };
