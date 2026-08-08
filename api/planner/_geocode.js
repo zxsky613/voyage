@@ -1,5 +1,6 @@
 import { writePlaceEnrichmentCache } from "./_enrichCache.js";
 import { placeHasCoords } from "../../lib/planner/coordsSource.js";
+import { reasonableNameMatch } from "../../lib/planner/placeNameMatch.js";
 
 const NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search";
 
@@ -102,6 +103,13 @@ export function toGeocodableName(raw) {
 export function buildNominatimQueries(place, city, country) {
   const name = toGeocodableName(place?.name);
   const searchName = toGeocodableName(place?.searchName);
+  // searchName client/LLM : ne l'utiliser que s'il désigne le même lieu que name,
+  // sinon Nominatim peut résoudre un autre POI et empoisonner place_enrichment_cache
+  // sous la clé d'affichage (coords McDo sous « Musée du Louvre »).
+  const useSearchName =
+    Boolean(searchName) &&
+    searchName !== name &&
+    reasonableNameMatch(name, searchName);
   const suffixFr = [city, country].filter(Boolean).join(", ");
   // Nominatim résout souvent mieux l'orthographe EN de l'île/pays.
   const islandEn =
@@ -114,10 +122,12 @@ export function buildNominatimQueries(place, city, country) {
   };
   // Variante EN de l'île en premier : Nominatim la résout mieux que « Ténérife, Espagne ».
   if (islandEn) {
-    push(searchName, islandEn);
+    if (useSearchName) push(searchName, islandEn);
     push(name, islandEn);
   }
-  push(searchName, suffixFr);
+  if (useSearchName) push(searchName, suffixFr);
+  // searchName identique (après nettoyage) : une seule variante suffit.
+  else if (searchName && searchName === name) push(searchName, suffixFr);
   push(name, suffixFr);
   return queries;
 }
@@ -201,16 +211,34 @@ export async function geocodeCoordlessPlaces(places, options) {
       });
       continue;
     }
+    const placeName = String(p.name || "").trim();
+    const displayName = String(hit.displayName || "").trim();
+    // Refuser un hit Nominatim dont le libellé ne correspond pas au lieu affiché
+    // (évite coords hors-sujet même si la requête était basée sur name).
+    if (displayName && placeName && !reasonableNameMatch(placeName, displayName)) {
+      reasons.no_result = (reasons.no_result || 0) + 1;
+      failures.push({
+        id: pid || `idx${i}`,
+        name: placeName,
+        reason: "name_mismatch",
+      });
+      continue;
+    }
+
     succeeded += 1;
+    const prevStatus = String(p.status || "").trim().toLowerCase();
     const upgraded = {
       ...p,
       latitude: hit.latitude,
       longitude: hit.longitude,
-      status: String(p.status || "") === "unverified" ? "partial" : p.status,
+      // Succès géocode → toujours au moins partial (évite cache « unverified » + coords).
+      status: !prevStatus || prevStatus === "unverified" ? "partial" : p.status,
       source: "nominatim",
+      // raw_name = libellé fournisseur pour la garde writePlaceEnrichmentCache.
+      name: displayName || placeName,
     };
-    out[i] = upgraded;
-    await writePlaceEnrichmentCache(p.name, city, upgraded);
+    out[i] = { ...upgraded, name: placeName };
+    await writePlaceEnrichmentCache(placeName, city, upgraded);
   }
 
   return { places: out, attempted, succeeded, failed: attempted - succeeded, requests, reasons, failures, attemptedIds };
